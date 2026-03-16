@@ -40,9 +40,15 @@ var (
 	spinnerFrames          = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	statusOptions          = []string{"Active", "Inactive", "Pending", "Away"}
 	normalOptionStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
-	highlightedOptionStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("57")).Foreground(lipgloss.Color("15"))
-	optionNumStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	cellHighlightStyle     = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("57")).Foreground(lipgloss.Color("15"))
+	highlightedOptionStyle = lipgloss.NewStyle().
+				Bold(true).
+				Background(lipgloss.Color("57")).
+				Foreground(lipgloss.Color("15"))
+	optionNumStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	cellHighlightStyle = lipgloss.NewStyle().
+				Bold(true).
+				Background(lipgloss.Color("57")).
+				Foreground(lipgloss.Color("15"))
 )
 
 type bgColor struct {
@@ -589,7 +595,9 @@ func (m *model) renderStatusBar(out *strings.Builder) {
 		return
 	}
 
-	help := helpStyle.Render("Press q to quit | ↑/↓ to navigate | enter to expand/collapse | d to change status")
+	help := helpStyle.Render(
+		"Press q to quit | ↑/↓ to navigate" +
+			" | enter to expand/collapse | d to change status")
 
 	if m.status == "" {
 		out.WriteString(help)
