@@ -60,7 +60,7 @@ func BuildListURL(
 }
 
 func (c *Client) FetchListPage(ctx context.Context, pageURL string) (*ListPage, error) {
-	resp, err := c.doExternalRequest(ctx, http.MethodGet, pageURL, nil)
+	resp, err := c.doExternalRequest(ctx, http.MethodGet, pageURL, nil, true)
 	if err != nil {
 		return nil, err
 	}

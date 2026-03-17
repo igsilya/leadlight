@@ -4,12 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
 
 type DB struct {
-	conn *sql.DB
+	conn    *sql.DB
+	writeMu sync.Mutex
 }
 
 func Open(path string) (*DB, error) {
@@ -125,6 +127,8 @@ type MaintainerRow struct {
 }
 
 func (d *DB) SaveSeries(s SeriesRow) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		INSERT INTO series (id, name, date, version,
 			submitter, submitter_email,
@@ -152,6 +156,8 @@ func (d *DB) SaveSeries(s SeriesRow) error {
 func (d *DB) SaveSeriesSummary(
 	id int, name, date string, version int,
 ) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		INSERT INTO series (id, name, date, version)
 		VALUES (?,?,?,?)
@@ -166,6 +172,8 @@ func (d *DB) SaveSeriesSummary(
 }
 
 func (d *DB) SavePatch(p PatchRow) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		INSERT INTO patches (id, series_id, name, date,
 			state, submitter, submitter_email,
@@ -204,6 +212,8 @@ func (d *DB) SavePatchSummary(
 	id, seriesID int,
 	name, date, msgid, mboxURL, webURL string,
 ) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		INSERT INTO patches (id, series_id, name, date,
 			state, msgid, mbox_url, web_url,
@@ -230,6 +240,8 @@ func (d *DB) SavePatchSummary(
 }
 
 func (d *DB) UpdatePatchState(patchID int, state string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(
 		`UPDATE patches SET state = ? WHERE id = ?`,
 		state, patchID)
@@ -240,6 +252,8 @@ func (d *DB) UpdatePatchDelegate(
 	patchID, delegateID int,
 	name, email string,
 ) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE patches
 		SET delegate_id = ?, delegate = ?, delegate_email = ?
@@ -252,6 +266,8 @@ func (d *DB) UpdatePatchDetail(
 	patchID int,
 	content, diff, headers, prefixes string,
 ) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE patches
 		SET content = ?, diff = ?, headers = ?,
@@ -264,6 +280,8 @@ func (d *DB) UpdatePatchDetail(
 func (d *DB) UpdatePatchChecks(
 	patchID, pass, fail, pending int,
 ) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE patches
 		SET checks_pass = ?, checks_fail = ?,
@@ -276,6 +294,8 @@ func (d *DB) UpdatePatchChecks(
 func (d *DB) UpdatePatchTags(
 	patchID, acked, fixes, reviewed, tested int,
 ) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE patches
 		SET acked_by = ?, fixes = ?,
@@ -286,6 +306,8 @@ func (d *DB) UpdatePatchTags(
 }
 
 func (d *DB) UpdatePatchMbox(patchID int, content string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(
 		`UPDATE patches SET mbox_content = ? WHERE id = ?`,
 		content, patchID)
@@ -293,6 +315,8 @@ func (d *DB) UpdatePatchMbox(patchID int, content string) error {
 }
 
 func (d *DB) InsertCheck(c CheckRow) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		INSERT OR IGNORE INTO checks
 			(id, patch_id, context, state, target_url, date)
@@ -303,6 +327,8 @@ func (d *DB) InsertCheck(c CheckRow) error {
 }
 
 func (d *DB) RecountPatchChecks(patchID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE patches SET
 			checks_pass = (
@@ -322,6 +348,8 @@ func (d *DB) RecountPatchChecks(patchID int) error {
 }
 
 func (d *DB) InsertComment(c CommentRow) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		INSERT OR IGNORE INTO comments
 			(id, patch_id, cover_id, submitter,
@@ -333,6 +361,8 @@ func (d *DB) InsertComment(c CommentRow) error {
 }
 
 func (d *DB) SaveCover(c CoverRow) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		INSERT INTO covers (id, series_id, name, date,
 			submitter, submitter_email, msgid,
@@ -359,6 +389,8 @@ func (d *DB) SaveCover(c CoverRow) error {
 }
 
 func (d *DB) UpdateCoverDetail(coverID int, content, headers string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE covers
 		SET content = ?, headers = ?, detail_fetched = 1
@@ -368,6 +400,8 @@ func (d *DB) UpdateCoverDetail(coverID int, content, headers string) error {
 }
 
 func (d *DB) SaveMaintainers(maintainers []MaintainerRow) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	tx, err := d.conn.Begin()
 	if err != nil {
 		return err
@@ -391,6 +425,8 @@ func (d *DB) SaveMaintainers(maintainers []MaintainerRow) error {
 }
 
 func (d *DB) SetSyncState(key, value string) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	d.conn.Exec(`
 		INSERT INTO sync_state (key, value) VALUES (?,?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
@@ -623,6 +659,8 @@ func (d *DB) GetPatchesNeedingComments(
 }
 
 func (d *DB) MarkCommentsFetched(patchID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(
 		"UPDATE patches SET comments_fetched = 1 WHERE id = ?",
 		patchID)
@@ -630,6 +668,8 @@ func (d *DB) MarkCommentsFetched(patchID int) error {
 }
 
 func (d *DB) ResetCommentsFetched(patchID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(
 		"UPDATE patches SET comments_fetched = 0 WHERE id = ?",
 		patchID)
@@ -637,6 +677,8 @@ func (d *DB) ResetCommentsFetched(patchID int) error {
 }
 
 func (d *DB) ResetAllCommentsFetched(states []string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	if len(states) == 0 {
 		return nil
 	}

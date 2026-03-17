@@ -26,7 +26,7 @@ func BuildArchiveURL(baseURL string, year int, month time.Month) string {
 }
 
 func (c *Client) FetchArchiveMessages(ctx context.Context, pageURL string) ([]ArchiveMessage, error) {
-	resp, err := c.doExternalRequest(ctx, http.MethodGet, pageURL, nil)
+	resp, err := c.doExternalRequest(ctx, http.MethodGet, pageURL, nil, true)
 	if err != nil {
 		return nil, err
 	}

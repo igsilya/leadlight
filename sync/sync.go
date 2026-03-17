@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	gosync "sync"
 	"time"
 
 	"leadlight/api"
@@ -89,27 +90,6 @@ const (
 	maintainerRefresh = 24 * time.Hour
 )
 
-func (s *Syncer) handleUserRequests(ctx context.Context) bool {
-	select {
-	case req := <-s.mboxC:
-		log.Printf("SYNC: priority mbox request for patch %d",
-			req.PatchID)
-		req.ResultC <- s.fetchMbox(ctx, req.PatchID)
-		return true
-	case req := <-s.updateC:
-		log.Printf("SYNC: priority update request for patch %d",
-			req.PatchID)
-		req.ResultC <- s.handlePatchUpdate(ctx, req)
-		return true
-	case seriesID := <-s.priorityC:
-		s.fetchSeriesDetail(ctx, seriesID)
-		s.notify()
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *Syncer) needsArchiveMonitoring() bool {
 	return s.cfg.APIVersion < "1.3" && s.cfg.MailArchive != ""
 }
@@ -121,46 +101,53 @@ func (s *Syncer) Run(ctx context.Context) {
 		s.notify()
 	}
 
-	s.incrementalSync(ctx)
-	s.fetchNextDetail(ctx)
-	s.fetchNextComments(ctx)
-	if s.needsArchiveMonitoring() {
-		s.checkMailArchive(ctx)
-	}
-	s.notify()
+	var wg gosync.WaitGroup
+	wg.Add(4)
+	go s.runUserRequests(ctx, &wg)
+	go s.runSyncLoop(ctx, &wg)
+	go s.runCommentLoop(ctx, &wg)
+	go s.runArchiveLoop(ctx, &wg)
+	wg.Wait()
+}
 
-	syncTicker := time.NewTicker(syncInterval)
-	defer syncTicker.Stop()
-
-	commentTicker := time.NewTicker(commentInterval)
-	defer commentTicker.Stop()
-
-	archiveTicker := time.NewTicker(archiveInterval)
-	defer archiveTicker.Stop()
-
-	lastMaintainerRefresh := time.Now()
-
+func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
+	defer wg.Done()
 	for {
-		// Always handle user requests first
-		if s.handleUserRequests(ctx) {
-			continue
-		}
-
 		select {
 		case <-ctx.Done():
 			return
-		case seriesID := <-s.priorityC:
-			s.fetchSeriesDetail(ctx, seriesID)
-			s.notify()
 		case req := <-s.mboxC:
 			log.Printf("SYNC: mbox request for patch %d",
 				req.PatchID)
-			req.ResultC <- s.fetchMbox(ctx, req.PatchID)
+			req.ResultC <- s.fetchMbox(
+				ctx, req.PatchID, false)
 		case req := <-s.updateC:
 			log.Printf("SYNC: update request for patch %d",
 				req.PatchID)
 			req.ResultC <- s.handlePatchUpdate(ctx, req)
-		case <-syncTicker.C:
+		case seriesID := <-s.priorityC:
+			s.fetchSeriesDetail(ctx, seriesID)
+			s.notify()
+		}
+	}
+}
+
+func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
+	defer wg.Done()
+
+	s.incrementalSync(ctx)
+	s.fetchNextDetail(ctx)
+	s.notify()
+
+	ticker := time.NewTicker(syncInterval)
+	defer ticker.Stop()
+	lastMaintainerRefresh := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 			s.incrementalSync(ctx)
 			s.fetchNextDetail(ctx)
 			s.notify()
@@ -169,13 +156,48 @@ func (s *Syncer) Run(ctx context.Context) {
 				s.fetchMaintainers(ctx)
 				lastMaintainerRefresh = time.Now()
 			}
-		case <-commentTicker.C:
+		}
+	}
+}
+
+func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
+	defer wg.Done()
+
+	s.fetchNextComments(ctx)
+	s.notify()
+
+	ticker := time.NewTicker(commentInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 			s.fetchNextComments(ctx)
 			s.notify()
-		case <-archiveTicker.C:
-			if s.needsArchiveMonitoring() {
-				s.checkMailArchive(ctx)
-			}
+		}
+	}
+}
+
+func (s *Syncer) runArchiveLoop(ctx context.Context, wg *gosync.WaitGroup) {
+	defer wg.Done()
+	if !s.needsArchiveMonitoring() {
+		<-ctx.Done()
+		return
+	}
+
+	s.checkMailArchive(ctx)
+
+	ticker := time.NewTicker(archiveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkMailArchive(ctx)
 		}
 	}
 }
@@ -556,7 +578,7 @@ func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) 
 }
 
 func (s *Syncer) fetchMbox(
-	ctx context.Context, patchID int,
+	ctx context.Context, patchID int, rateLimit bool,
 ) MboxResult {
 	row, err := s.db.GetPatch(patchID)
 	if err != nil {
@@ -578,7 +600,7 @@ func (s *Syncer) fetchMbox(
 			s.cfg.LoreURL, "/") + "/" + msgid + "/raw"
 		log.Printf("SYNC: fetchMbox(%d): trying lore %s",
 			patchID, loreURL)
-		content, err := s.client.GetMbox(ctx, loreURL)
+		content, err := s.client.GetMbox(ctx, loreURL, rateLimit)
 		if err == nil && isValidMbox(content) {
 			log.Printf("SYNC: fetchMbox(%d): lore OK, %d bytes",
 				patchID, len(content))
@@ -607,7 +629,7 @@ func (s *Syncer) fetchMbox(
 		}
 		log.Printf("SYNC: fetchMbox(%d): trying patchwork %s",
 			patchID, mboxURL)
-		content, err := s.client.GetMbox(ctx, mboxURL)
+		content, err := s.client.GetMbox(ctx, mboxURL, rateLimit)
 		if err != nil {
 			log.Printf("SYNC: fetchMbox(%d): patchwork failed: %v",
 				patchID, err)

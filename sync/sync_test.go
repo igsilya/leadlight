@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	gosync "sync"
 	"testing"
 	"time"
 
@@ -270,7 +271,7 @@ func TestFetchMbox_Cached(t *testing.T) {
 	savePatch(d, 100, "test", "2026-03-10", "new")
 	d.UpdatePatchMbox(100, "cached mbox content")
 
-	result := s.fetchMbox(context.Background(), 100)
+	result := s.fetchMbox(context.Background(), 100, false)
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
@@ -318,7 +319,7 @@ func TestFetchMbox_FromLore(t *testing.T) {
 		Submitter: "Lorem",
 	})
 
-	result := s.fetchMbox(context.Background(), 100)
+	result := s.fetchMbox(context.Background(), 100, false)
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
@@ -365,7 +366,7 @@ func TestFetchMbox_FromPatchwork(t *testing.T) {
 		Submitter: "Lorem",
 	})
 
-	result := s.fetchMbox(context.Background(), 100)
+	result := s.fetchMbox(context.Background(), 100, false)
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
@@ -1104,7 +1105,7 @@ func TestFetchMbox_DoesNotCacheBotChallenge(t *testing.T) {
 		10*time.Millisecond)
 
 	s := NewSyncer(client, d, cfg, func() {})
-	result := s.fetchMbox(context.Background(), 100)
+	result := s.fetchMbox(context.Background(), 100, false)
 
 	if result.Err == nil {
 		t.Error("expected error for bot challenge response")
@@ -1117,7 +1118,7 @@ func TestFetchMbox_DoesNotCacheBotChallenge(t *testing.T) {
 	}
 }
 
-func TestHandleUserRequests_Preempts(t *testing.T) {
+func TestUserRequestLoop_HandlesMbox(t *testing.T) {
 	d, _ := db.Open(":memory:")
 	defer d.Close()
 
@@ -1140,27 +1141,24 @@ func TestHandleUserRequests_Preempts(t *testing.T) {
 
 	s := NewSyncer(client, d, cfg, func() {})
 
-	// Nothing pending — should return false
-	got := s.handleUserRequests(context.Background())
-	if got {
-		t.Error("should return false with empty channels")
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Send a mbox request
+	var wg gosync.WaitGroup
+	wg.Add(1)
+	go s.runUserRequests(ctx, &wg)
+
 	resultC := make(chan MboxResult, 1)
 	s.mboxC <- MboxRequest{
 		PatchID: 100,
 		ResultC: resultC,
 	}
 
-	// Should handle it and return true
-	got = s.handleUserRequests(context.Background())
-	if !got {
-		t.Error("should return true when mbox request pending")
-	}
-
 	result := <-resultC
 	if result.Content != "cached mbox content" {
 		t.Errorf("content = %q", result.Content)
 	}
+
+	cancel()
+	wg.Wait()
 }

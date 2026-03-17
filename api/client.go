@@ -149,8 +149,11 @@ func (c *Client) doExternalRequest(
 	ctx context.Context,
 	method, rawURL string,
 	body io.Reader,
+	rateLimit bool,
 ) (*http.Response, error) {
-	c.waitForRateLimit()
+	if rateLimit {
+		c.waitForRateLimit()
+	}
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
@@ -158,13 +161,17 @@ func (c *Client) doExternalRequest(
 	via := "curl"
 	log.Printf("HTTP %s %s (%s)", method, rawURL, via)
 	resp, err := execCurl(req)
-	c.markRequestDone()
+	if rateLimit {
+		c.markRequestDone()
+	}
 	if err != nil {
 		via = "go-fallback"
 		log.Printf("HTTP %s %s -> curl failed: %v, falling back to Go",
 			method, rawURL, err)
 		resp, err = c.httpClient.Do(req)
-		c.markRequestDone()
+		if rateLimit {
+			c.markRequestDone()
+		}
 	}
 	if err != nil {
 		log.Printf("HTTP %s %s (%s) -> error: %v",
@@ -503,8 +510,8 @@ func (c *Client) UpdatePatch(
 	return &pd, nil
 }
 
-func (c *Client) GetMbox(ctx context.Context, rawURL string) (string, error) {
-	resp, err := c.doExternalRequest(ctx, http.MethodGet, rawURL, nil)
+func (c *Client) GetMbox(ctx context.Context, rawURL string, rateLimit bool) (string, error) {
+	resp, err := c.doExternalRequest(ctx, http.MethodGet, rawURL, nil, rateLimit)
 	if err != nil {
 		return "", err
 	}
