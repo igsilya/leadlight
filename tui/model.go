@@ -204,6 +204,7 @@ func (m *Model) reloadData() {
 	m.mu.Lock()
 	m.RowData = rows
 	m.restoreSelection()
+	m.ensureSelectedVisible()
 	m.invalidateRowCache()
 	m.mu.Unlock()
 }
@@ -220,6 +221,19 @@ func (m *Model) restoreSelection() {
 		m.selectedRow = len(items) - 1
 	}
 	m.updateSelectedID()
+}
+
+func (m *Model) ensureSelectedVisible() {
+	maxRows := m.maxVisibleRows()
+	if m.selectedRow < m.scrollOffset {
+		m.scrollOffset = m.selectedRow
+	}
+	if m.selectedRow >= m.scrollOffset+maxRows {
+		m.scrollOffset = m.selectedRow - maxRows + 1
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
 }
 
 func (m *Model) invalidateRowCache() {

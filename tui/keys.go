@@ -46,6 +46,50 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.resetHighlight()
 		}
 
+	case "pgdown", "ctrl+d":
+		m.mu.Lock()
+		items := m.getVisibleItems()
+		m.mu.Unlock()
+		halfPage := m.maxVisibleRows() / 2
+		if halfPage < 1 {
+			halfPage = 1
+		}
+		m.selectedRow += halfPage
+		if m.selectedRow >= len(items) {
+			m.selectedRow = len(items) - 1
+		}
+		m.ensureSelectedVisible()
+		m.updateSelectedID()
+		return m, m.resetHighlight()
+
+	case "pgup", "ctrl+u":
+		halfPage := m.maxVisibleRows() / 2
+		if halfPage < 1 {
+			halfPage = 1
+		}
+		m.selectedRow -= halfPage
+		if m.selectedRow < 0 {
+			m.selectedRow = 0
+		}
+		m.ensureSelectedVisible()
+		m.updateSelectedID()
+		return m, m.resetHighlight()
+
+	case "home":
+		m.selectedRow = 0
+		m.scrollOffset = 0
+		m.updateSelectedID()
+		return m, m.resetHighlight()
+
+	case "end":
+		m.mu.Lock()
+		items := m.getVisibleItems()
+		m.mu.Unlock()
+		m.selectedRow = len(items) - 1
+		m.ensureSelectedVisible()
+		m.updateSelectedID()
+		return m, m.resetHighlight()
+
 	case "enter":
 		m.mu.Lock()
 		items := m.getVisibleItems()
@@ -61,6 +105,7 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				idx := item.parentIdx
 				m.RowData[idx].Expanded = !m.RowData[idx].Expanded
 				m.invalidateRowCache()
+				m.ensureSelectedVisible()
 				log.Printf("TUI: toggle expand row %d -> %v",
 					idx, m.RowData[idx].Expanded)
 			}
