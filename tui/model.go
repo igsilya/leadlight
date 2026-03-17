@@ -130,6 +130,8 @@ type Model struct {
 
 	selectedID string
 	showAll    bool
+	filterMode bool
+	filterText string
 	cachedRows []string
 	cacheValid bool
 
@@ -221,6 +223,53 @@ func (m *Model) restoreSelection() {
 		m.selectedRow = len(items) - 1
 	}
 	m.updateSelectedID()
+}
+
+func matchesFilter(data []string, filter string) bool {
+	for _, field := range data {
+		if strings.Contains(strings.ToLower(field), filter) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) startFilter() {
+	m.filterMode = true
+	m.filterText = ""
+	m.invalidateRowCache()
+}
+
+func (m *Model) applyFilter() {
+	m.selectedRow = 0
+	m.scrollOffset = 0
+	m.invalidateRowCache()
+	m.updateSelectedID()
+}
+
+func (m *Model) clearFilter() {
+	// Find which parent contains the selected item
+	// BEFORE collapsing, so we can re-expand it
+	expandParent := -1
+	items := m.getVisibleItems()
+	if m.selectedRow < len(items) {
+		expandParent = items[m.selectedRow].parentIdx
+	}
+
+	m.filterMode = false
+	m.filterText = ""
+
+	for i := range m.RowData {
+		m.RowData[i].Expanded = false
+	}
+
+	if expandParent >= 0 && expandParent < len(m.RowData) {
+		m.RowData[expandParent].Expanded = true
+	}
+
+	m.restoreSelection()
+	m.invalidateRowCache()
+	m.ensureSelectedVisible()
 }
 
 func (m *Model) ensureSelectedVisible() {
@@ -343,8 +392,25 @@ func splitLines(content string) []string {
 }
 
 func (m *Model) getVisibleItems() []visibleItem {
+	filter := strings.ToLower(m.filterText)
 	var items []visibleItem
+
 	for i, rd := range m.RowData {
+		seriesMatch := filter == "" || matchesFilter(rd.Data, filter)
+
+		var matchingSubs []int
+		if filter != "" {
+			for si, sub := range rd.SubRows {
+				if matchesFilter(sub, filter) {
+					matchingSubs = append(matchingSubs, si)
+				}
+			}
+		}
+
+		if filter != "" && !seriesMatch && len(matchingSubs) == 0 {
+			continue
+		}
+
 		items = append(items, visibleItem{
 			data:      rd.Data,
 			style:     rd.Style,
@@ -353,9 +419,23 @@ func (m *Model) getVisibleItems() []visibleItem {
 			subRowIdx: -1,
 			canExpand: len(rd.SubRows) > 0,
 		})
-		if rd.Expanded {
+
+		showSubs := rd.Expanded || (filter != "" && len(matchingSubs) > 0)
+		if showSubs {
 			subStyle := RowStyle{}
 			for si, sub := range rd.SubRows {
+				if filter != "" && !seriesMatch {
+					match := false
+					for _, mi := range matchingSubs {
+						if mi == si {
+							match = true
+							break
+						}
+					}
+					if !match {
+						continue
+					}
+				}
 				items = append(items, visibleItem{
 					data:      sub,
 					style:     subStyle,

@@ -21,9 +21,41 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+
+	if m.filterMode {
+		switch key {
+		case "esc":
+			m.clearFilter()
+			return m, nil
+		case "backspace":
+			if len(m.filterText) > 0 {
+				m.filterText = m.filterText[:len(m.filterText)-1]
+				m.applyFilter()
+			} else {
+				m.clearFilter()
+			}
+			return m, nil
+		default:
+			if len(key) == 1 && key[0] >= ' ' && key[0] <= '~' {
+				m.filterText += key
+				m.applyFilter()
+				return m, nil
+			}
+		}
+	}
+
+	switch key {
 	case "q", "ctrl+c":
+		if m.filterMode {
+			m.clearFilter()
+			return m, nil
+		}
 		return m, tea.Quit
+
+	case "/":
+		m.startFilter()
+		return m, nil
 
 	case "up", "k":
 		if m.selectedRow > 0 {

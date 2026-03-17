@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -495,6 +496,177 @@ func TestReloadData_SubRowSelectionPreserved(t *testing.T) {
 	if item.data[0] != savedID {
 		t.Errorf("selected item ID = %q, want %q",
 			item.data[0], savedID)
+	}
+}
+
+func TestFilterMode(t *testing.T) {
+	m := testModel()
+
+	m = pressKey(m, "/")
+	if !m.filterMode {
+		t.Error("filterMode should be true after /")
+	}
+
+	m = pressKey(m, "l")
+	m = pressKey(m, "o")
+	if m.filterText != "lo" {
+		t.Errorf("filterText = %q, want 'lo'", m.filterText)
+	}
+
+	// Should filter visible items
+	items := m.getVisibleItems()
+	for _, item := range items {
+		found := false
+		for _, field := range item.data {
+			if strings.Contains(strings.ToLower(field), "lo") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("item %v doesn't match filter 'lo'",
+				item.data)
+		}
+	}
+}
+
+func TestFilterMode_Backspace(t *testing.T) {
+	m := testModel()
+	m = pressKey(m, "/")
+	m = pressKey(m, "l")
+	m = pressKey(m, "o")
+	m = pressSpecialKey(m, tea.KeyBackspace)
+	if m.filterText != "l" {
+		t.Errorf("filterText = %q after backspace", m.filterText)
+	}
+}
+
+func TestFilterMode_Esc(t *testing.T) {
+	m := testModel()
+	m = pressKey(m, "/")
+	m = pressKey(m, "x")
+	m = pressSpecialKey(m, tea.KeyEsc)
+	if m.filterMode {
+		t.Error("filterMode should be false after esc")
+	}
+	if m.filterText != "" {
+		t.Errorf("filterText = %q, want empty", m.filterText)
+	}
+}
+
+func TestFilterMode_Navigation(t *testing.T) {
+	m := testModel()
+	m = pressKey(m, "/")
+	m = pressKey(m, "l") // filter to matching items
+
+	// Arrow keys navigate during filter mode
+	m = pressSpecialKey(m, tea.KeyDown)
+	if m.selectedRow != 1 {
+		t.Errorf("selectedRow = %d, want 1", m.selectedRow)
+	}
+}
+
+func TestFilterMode_AutoExpand(t *testing.T) {
+	m := testModel()
+	// Row 0 has sub-rows with "Sub A", "Sub B"
+	// Filter for "sub" should auto-expand to show them
+
+	m = pressKey(m, "/")
+	m = pressKey(m, "s")
+	m = pressKey(m, "u")
+	m = pressKey(m, "b")
+
+	items := m.getVisibleItems()
+	hasSubRow := false
+	for _, item := range items {
+		if item.isSubRow {
+			hasSubRow = true
+			break
+		}
+	}
+	if !hasSubRow {
+		t.Error("filter should auto-expand series with matching sub-rows")
+	}
+}
+
+func TestFilterMode_ClearPreservesSelection(t *testing.T) {
+	m := testModel()
+
+	// Row 0 has sub-rows "Sub A", "Sub B"
+	// Filter for "sub b" should show only Sub B
+	m = pressKey(m, "/")
+	m = pressKey(m, "s")
+	m = pressKey(m, "u")
+	m = pressKey(m, "b")
+	m = pressKey(m, " ")
+	m = pressKey(m, "b")
+
+	items := m.getVisibleItems()
+	if len(items) == 0 {
+		t.Fatal("no items after filter")
+	}
+
+	// Navigate to a sub-row in the filtered results
+	for i, item := range items {
+		if item.isSubRow {
+			m.selectedRow = i
+			m.updateSelectedID()
+			break
+		}
+	}
+
+	savedID := m.selectedID
+	if savedID == "" {
+		t.Fatal("no selectedID after navigation")
+	}
+
+	// Clear the filter
+	m = pressSpecialKey(m, tea.KeyEsc)
+
+	if m.filterMode {
+		t.Error("filterMode should be false")
+	}
+	if m.selectedID != savedID {
+		t.Errorf("selectedID changed: %q -> %q",
+			savedID, m.selectedID)
+	}
+
+	// The selected item should be visible
+	items = m.getVisibleItems()
+	if m.selectedRow >= len(items) {
+		t.Fatalf("selectedRow %d out of range %d",
+			m.selectedRow, len(items))
+	}
+	if items[m.selectedRow].data[0] != savedID {
+		t.Errorf("item at selectedRow has ID %q, want %q",
+			items[m.selectedRow].data[0], savedID)
+	}
+}
+
+func TestFilterMode_ClearCollapsesExceptSelected(t *testing.T) {
+	m := testModel()
+
+	// Expand multiple series
+	m = pressSpecialKey(m, tea.KeyEnter) // expand row 0
+	m = pressKey(m, "j")
+	m = pressKey(m, "j")
+	m = pressKey(m, "j")                 // now on row 1 (second series)
+	m = pressSpecialKey(m, tea.KeyEnter) // can't expand (no sub-rows)
+
+	// Start filter and navigate
+	m = pressKey(m, "/")
+	m = pressKey(m, "l")               // filter
+	m = pressSpecialKey(m, tea.KeyEsc) // clear
+
+	// All series should be collapsed except the selected one's parent
+	expandedCount := 0
+	for _, rd := range m.RowData {
+		if rd.Expanded {
+			expandedCount++
+		}
+	}
+	if expandedCount > 1 {
+		t.Errorf("expanded count = %d, want <= 1", expandedCount)
 	}
 }
 

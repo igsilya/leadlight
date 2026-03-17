@@ -376,16 +376,27 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		return
 	}
 
+	if m.filterMode {
+		label := helpStyle.Render("Filter: ")
+		text := normalOptionStyle.Render(m.filterText + "_")
+		hint := helpStyle.Render("  ↑/↓ navigate | esc clear")
+		out.WriteString(label + text + hint)
+		return
+	}
+
 	filterLabel := "[" + strings.Join(m.states, ", ") + "]"
 	toggleHint := "a all"
 	if m.showAll {
 		filterLabel = "[all]"
 		toggleHint = "a active"
 	}
+	if m.filterText != "" {
+		filterLabel += " /" + m.filterText
+	}
 
 	help := helpStyle.Render(
 		filterLabel + " q quit | ↑/↓ pgup/dn navigate" +
-			" | enter expand | s state | d delegate | " + toggleHint)
+			" | enter expand | / filter | " + toggleHint)
 
 	if m.status == "" {
 		out.WriteString(help)
