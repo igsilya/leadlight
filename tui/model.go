@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -27,13 +26,14 @@ type RowStyle struct {
 }
 
 func (rs RowStyle) lipgloss(faint bool) lipgloss.Style {
+	if cached, ok := bgStyles[rs.Background]; ok {
+		if faint {
+			return cached.rowFaint
+		}
+		return cached.row
+	}
 	s := lipgloss.NewStyle()
-	if c, ok := bgColors[rs.Background]; ok {
-		s = s.Background(lipgloss.Color(
-			fmt.Sprintf("#%02x%02x%02x", c.r, c.g, c.b)))
-		s = s.Foreground(lipgloss.Color(
-			fmt.Sprintf("#%02x%02x%02x", c.fgR, c.fgG, c.fgB)))
-	} else if rs.Foreground != "" {
+	if rs.Foreground != "" {
 		s = s.Foreground(lipgloss.Color(rs.Foreground))
 	}
 	if rs.Bold {
@@ -130,6 +130,8 @@ type Model struct {
 
 	selectedID string
 	showAll    bool
+	cachedRows []string
+	cacheValid bool
 
 	viewMode       viewMode
 	viewingPatchID int
@@ -202,6 +204,7 @@ func (m *Model) reloadData() {
 	m.mu.Lock()
 	m.RowData = rows
 	m.restoreSelection()
+	m.invalidateRowCache()
 	m.mu.Unlock()
 }
 
@@ -217,6 +220,10 @@ func (m *Model) restoreSelection() {
 		m.selectedRow = len(items) - 1
 	}
 	m.updateSelectedID()
+}
+
+func (m *Model) invalidateRowCache() {
+	m.cacheValid = false
 }
 
 func (m *Model) updateSelectedID() {
@@ -282,6 +289,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.invalidateRowCache()
 		if m.viewMode == viewPatch && m.viewingPatchID != 0 {
 			m.refreshViewport()
 		}

@@ -64,8 +64,33 @@ type gradientEntry struct{ bg, fg string }
 
 var gradientPalettes = map[string][256]gradientEntry{}
 
+type cachedBgStyle struct {
+	row       lipgloss.Style
+	rowFaint  lipgloss.Style
+	checkPass lipgloss.Style
+	checkFail lipgloss.Style
+	checkPend lipgloss.Style
+	checkZero lipgloss.Style
+}
+
+var bgStyles = map[string]*cachedBgStyle{}
+
 func init() {
 	for name, c := range bgColors {
+		bgHex := fmt.Sprintf("#%02x%02x%02x", c.r, c.g, c.b)
+		fgHex := fmt.Sprintf("#%02x%02x%02x", c.fgR, c.fgG, c.fgB)
+		bg := lipgloss.Color(bgHex)
+		fg := lipgloss.Color(fgHex)
+
+		bgStyles[name] = &cachedBgStyle{
+			row:       lipgloss.NewStyle().Background(bg).Foreground(fg),
+			rowFaint:  lipgloss.NewStyle().Background(bg).Foreground(fg).Faint(true),
+			checkPass: lipgloss.NewStyle().Background(bg).Foreground(checksPassStyle.GetForeground()),
+			checkFail: lipgloss.NewStyle().Background(bg).Foreground(checksFailStyle.GetForeground()),
+			checkPend: lipgloss.NewStyle().Background(bg).Foreground(checksPendingStyle.GetForeground()),
+			checkZero: lipgloss.NewStyle().Background(bg).Foreground(checksZeroStyle.GetForeground()),
+		}
+
 		var palette [256]gradientEntry
 		for i := range palette {
 			t := math.Pow(float64(i)/255.0, 0.35)

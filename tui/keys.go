@@ -60,6 +60,7 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if item.canExpand {
 				idx := item.parentIdx
 				m.RowData[idx].Expanded = !m.RowData[idx].Expanded
+				m.invalidateRowCache()
 				log.Printf("TUI: toggle expand row %d -> %v",
 					idx, m.RowData[idx].Expanded)
 			}

@@ -116,6 +116,11 @@ func (m *Model) renderRows(
 		checksWidth = widths[m.ChecksColIdx]
 	}
 
+	if !m.cacheValid {
+		m.cachedRows = make([]string, len(items))
+		m.cacheValid = true
+	}
+
 	for i := m.scrollOffset; i < len(items); i++ {
 		if rendered >= maxRows {
 			break
@@ -131,9 +136,13 @@ func (m *Model) renderRows(
 					items[i], widths, indicator,
 					checksStart, checksWidth)
 			}
+		} else if i < len(m.cachedRows) && m.cachedRows[i] != "" {
+			row = m.cachedRows[i]
 		} else {
-			row = m.buildStyledRow(
-				items[i], widths, blank)
+			row = m.buildStyledRow(items[i], widths, blank)
+			if i < len(m.cachedRows) {
+				m.cachedRows[i] = row
+			}
 		}
 
 		out.WriteString(row)
@@ -238,15 +247,8 @@ func (m *Model) renderSelectedRow(
 		checksText, checksWidth, bgName)
 	suffixPart := ""
 	if suffix != "" {
-		if c, ok := bgColors[bgName]; ok {
-			restStyle := lipgloss.NewStyle().
-				Background(lipgloss.Color(
-					fmt.Sprintf("#%02x%02x%02x",
-						c.r, c.g, c.b))).
-				Foreground(lipgloss.Color(
-					fmt.Sprintf("#%02x%02x%02x",
-						c.fgR, c.fgG, c.fgB)))
-			suffixPart = restStyle.Render(suffix)
+		if cached, ok := bgStyles[bgName]; ok {
+			suffixPart = cached.row.Render(suffix)
 		} else {
 			suffixPart = suffix
 		}
@@ -255,51 +257,67 @@ func (m *Model) renderSelectedRow(
 	return gradientPart + checksPart + suffixPart
 }
 
-func renderChecksCellWithBg(
-	text string, width int, bgName string,
-) string {
-	var bg lipgloss.Style
-	if c, ok := bgColors[bgName]; ok {
-		bg = lipgloss.NewStyle().Background(lipgloss.Color(
-			fmt.Sprintf("#%02x%02x%02x", c.r, c.g, c.b)))
-	}
+func renderChecksCellWithBg(text string, width int, bgName string) string {
+	cached := bgStyles[bgName]
 
 	if text == "-" || text == "" {
-		return bg.Foreground(checksZeroStyle.GetForeground()).
-			Render(renderCell("-", width))
+		if cached != nil {
+			return cached.checkZero.Render(
+				renderCell("-", width))
+		}
+		return checksZeroStyle.Render(renderCell("-", width))
 	}
 
 	parts := strings.SplitN(text, "/", 3)
 	if len(parts) != 3 {
-		return bg.Render(renderCell(text, width))
-	}
-
-	styles := []lipgloss.Style{
-		checksPassStyle, checksFailStyle, checksPendingStyle,
+		if cached != nil {
+			return cached.row.Render(renderCell(text, width))
+		}
+		return renderCell(text, width)
 	}
 
 	var b strings.Builder
 	for i, part := range parts {
 		if i > 0 {
-			s := bg.Foreground(
-				checksZeroStyle.GetForeground())
-			b.WriteString(s.Render("/"))
+			if cached != nil {
+				b.WriteString(cached.checkZero.Render("/"))
+			} else {
+				b.WriteString(checksZeroStyle.Render("/"))
+			}
 		}
 		if part == "0" {
-			s := bg.Foreground(
-				checksZeroStyle.GetForeground())
-			b.WriteString(s.Render(part))
+			if cached != nil {
+				b.WriteString(cached.checkZero.Render(part))
+			} else {
+				b.WriteString(checksZeroStyle.Render(part))
+			}
+		} else if cached != nil {
+			switch i {
+			case 0:
+				b.WriteString(cached.checkPass.Render(part))
+			case 1:
+				b.WriteString(cached.checkFail.Render(part))
+			case 2:
+				b.WriteString(cached.checkPend.Render(part))
+			}
 		} else {
-			s := bg.Foreground(styles[i].GetForeground())
-			b.WriteString(s.Render(part))
+			styles := []lipgloss.Style{
+				checksPassStyle, checksFailStyle,
+				checksPendingStyle,
+			}
+			b.WriteString(styles[i].Render(part))
 		}
 	}
 
 	rendered := b.String()
 	visualWidth := lipgloss.Width(rendered)
 	if visualWidth < width {
-		rendered += bg.Render(
-			strings.Repeat(" ", width-visualWidth))
+		if cached != nil {
+			rendered += cached.row.Render(
+				strings.Repeat(" ", width-visualWidth))
+		} else {
+			rendered += strings.Repeat(" ", width-visualWidth)
+		}
 	}
 	return rendered
 }
@@ -332,13 +350,8 @@ func (m *Model) renderGradientRow(
 		b.WriteString(style.Render(string(runes[pos : pos+1])))
 	}
 
-	if c, ok := bgColors[bgName]; ok && gradientWidth < total {
-		restStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color(
-				fmt.Sprintf("#%02x%02x%02x", c.r, c.g, c.b))).
-			Foreground(lipgloss.Color(
-				fmt.Sprintf("#%02x%02x%02x", c.fgR, c.fgG, c.fgB)))
-		b.WriteString(restStyle.Render(string(runes[gradientWidth:])))
+	if cached, ok := bgStyles[bgName]; ok && gradientWidth < total {
+		b.WriteString(cached.row.Render(string(runes[gradientWidth:])))
 	} else if gradientWidth < total {
 		b.WriteString(string(runes[gradientWidth:]))
 	}
