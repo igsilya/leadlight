@@ -1,0 +1,513 @@
+package sync
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"regexp"
+	"strings"
+	"time"
+
+	"leadlight/api"
+	"leadlight/config"
+	"leadlight/db"
+)
+
+type Syncer struct {
+	client    *api.Client
+	db        *db.DB
+	cfg       *config.Config
+	notify    func()
+	priorityC chan int
+	mboxC     chan MboxRequest
+}
+
+type MboxRequest struct {
+	PatchID int
+	ResultC chan<- MboxResult
+}
+
+type MboxResult struct {
+	Content string
+	Err     error
+}
+
+func NewSyncer(
+	client *api.Client,
+	d *db.DB,
+	cfg *config.Config,
+	notify func(),
+) *Syncer {
+	return &Syncer{
+		client:    client,
+		db:        d,
+		cfg:       cfg,
+		notify:    notify,
+		priorityC: make(chan int, 16),
+		mboxC:     make(chan MboxRequest, 4),
+	}
+}
+
+func (s *Syncer) PrioritizeSeries(seriesID int) {
+	select {
+	case s.priorityC <- seriesID:
+	default:
+	}
+}
+
+func (s *Syncer) RequestMbox(patchID int) MboxResult {
+	resultC := make(chan MboxResult, 1)
+	s.mboxC <- MboxRequest{
+		PatchID: patchID,
+		ResultC: resultC,
+	}
+	return <-resultC
+}
+
+const (
+	syncInterval      = 30 * time.Second
+	maintainerRefresh = time.Hour
+)
+
+func (s *Syncer) Run(ctx context.Context) {
+	complete := s.db.GetSyncState("initial_sync_complete")
+	if complete != "true" {
+		s.initialSync(ctx)
+		s.notify()
+	}
+
+	ticker := time.NewTicker(syncInterval)
+	defer ticker.Stop()
+
+	lastMaintainerRefresh := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case seriesID := <-s.priorityC:
+			s.fetchSeriesDetail(ctx, seriesID)
+			s.notify()
+		case req := <-s.mboxC:
+			req.ResultC <- s.fetchMbox(ctx, req.PatchID)
+		case <-ticker.C:
+			s.incrementalSync(ctx)
+			s.fetchNextDetail(ctx)
+			s.fetchNextComments(ctx)
+			s.notify()
+
+			elapsed := time.Since(lastMaintainerRefresh)
+			if elapsed > maintainerRefresh {
+				s.fetchMaintainers(ctx)
+				lastMaintainerRefresh = time.Now()
+			}
+		}
+	}
+}
+
+func (s *Syncer) initialSync(ctx context.Context) {
+	s.fetchListPages(ctx)
+	s.fetchMaintainers(ctx)
+	s.fetchAllPatches(ctx)
+	s.fetchInitialEvents(ctx)
+	s.db.SetSyncState("initial_sync_complete", "true")
+}
+
+func (s *Syncer) fetchListPages(ctx context.Context) {
+	if s.cfg.BaseURL == "" {
+		return
+	}
+	pageURL := api.BuildListURL(
+		s.cfg.BaseURL, s.cfg.Project, s.cfg.States)
+
+	for pageURL != "" {
+		page, err := s.client.FetchListPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("list page fetch: %v", err)
+			return
+		}
+		for _, p := range page.Patches {
+			s.db.SavePatchSummary(
+				p.PatchID, p.SeriesID,
+				p.Name, p.Date, "", "", "")
+
+			if p.SeriesID != 0 {
+				s.db.SaveSeriesSummary(
+					p.SeriesID, p.SeriesName, "", 0)
+			}
+
+			s.db.UpdatePatchTags(p.PatchID,
+				p.AckedBy, p.Fixes,
+				p.ReviewedBy, p.TestedBy)
+			s.db.UpdatePatchChecks(p.PatchID,
+				p.ChecksPass, p.ChecksFail, p.ChecksWarn)
+
+			if p.State != "" {
+				s.db.UpdatePatchState(p.PatchID, p.State)
+			}
+		}
+
+		pageURL = page.NextURL
+		if pageURL != "" &&
+			!strings.HasPrefix(pageURL, "http") {
+			pageURL = s.cfg.BaseURL + pageURL
+		}
+	}
+}
+
+func (s *Syncer) fetchMaintainers(ctx context.Context) {
+	project, err := s.client.GetProject(ctx, s.cfg.Project)
+	if err != nil {
+		log.Printf("fetch maintainers: %v", err)
+		return
+	}
+	rows := make([]db.MaintainerRow, len(project.Maintainers))
+	for i, u := range project.Maintainers {
+		rows[i] = db.MaintainerRow{
+			ID:        u.ID,
+			Username:  u.Username,
+			FirstName: u.FirstName,
+			LastName:  u.LastName,
+			Email:     u.Email,
+		}
+	}
+	s.db.SaveMaintainers(rows)
+}
+
+func (s *Syncer) fetchAllPatches(ctx context.Context) {
+	patches, err := s.client.GetPatches(
+		ctx, api.PatchListParams{
+			State:   s.cfg.States,
+			Project: s.cfg.Project,
+		})
+	if err != nil {
+		log.Printf("fetch patches: %v", err)
+		return
+	}
+
+	for _, p := range patches {
+		s.db.SavePatch(patchToRow(p))
+		for _, ss := range p.Series {
+			s.db.SaveSeriesSummary(
+				ss.ID, ss.Name, ss.Date, ss.Version)
+		}
+	}
+}
+
+func (s *Syncer) fetchInitialEvents(ctx context.Context) {
+	oldest := s.db.GetOldestPatchDate()
+	if oldest == "" {
+		return
+	}
+	s.fetchEventsSince(ctx, oldest)
+}
+
+func (s *Syncer) incrementalSync(ctx context.Context) {
+	since := s.db.GetSyncState("last_event_date")
+	if since == "" {
+		return
+	}
+	s.fetchEventsSince(ctx, since)
+}
+
+func (s *Syncer) fetchEventsSince(ctx context.Context, since string) {
+	events, err := s.client.GetEvents(
+		ctx, api.EventListParams{
+			Since:   since,
+			Project: s.cfg.Project,
+			Order:   "date",
+		})
+	if err != nil {
+		log.Printf("fetch events: %v", err)
+		return
+	}
+
+	for _, ev := range events {
+		seriesID := seriesIDFromEvent(ev)
+		if err := s.processEvent(ev, seriesID); err != nil {
+			log.Printf("process event %d: %v",
+				ev.ID, err)
+		}
+		s.db.SetSyncState("last_event_date", ev.Date)
+	}
+}
+
+func seriesIDFromEvent(ev api.Event) int {
+	switch p := ev.Payload.(type) {
+	case *api.PatchCompletedPayload:
+		return p.Series.ID
+	case *api.SeriesCreatedPayload:
+		return p.Series.ID
+	case *api.SeriesCompletedPayload:
+		return p.Series.ID
+	}
+	return 0
+}
+
+func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
+	switch p := ev.Payload.(type) {
+	case *api.PatchCreatedPayload:
+		return s.db.SavePatchSummary(
+			p.Patch.ID, seriesID,
+			p.Patch.Name, p.Patch.Date,
+			p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
+	case *api.PatchStateChangedPayload:
+		return s.db.UpdatePatchState(p.Patch.ID, p.CurrentState)
+	case *api.PatchDelegatedPayload:
+		id, name, email := 0, "", ""
+		if p.CurrentDelegate != nil {
+			id = p.CurrentDelegate.ID
+			name = p.CurrentDelegate.Username
+			email = p.CurrentDelegate.Email
+		}
+		return s.db.UpdatePatchDelegate(p.Patch.ID, id, name, email)
+	case *api.CheckCreatedPayload:
+		return s.db.InsertCheck(db.CheckRow{
+			ID:        p.Check.ID,
+			PatchID:   p.Patch.ID,
+			Context:   p.Check.Context,
+			State:     p.Check.State,
+			TargetURL: ptrStr(p.Check.TargetURL),
+			Date:      p.Check.Date,
+		})
+	case *api.SeriesCreatedPayload:
+		return s.db.SaveSeriesSummary(
+			p.Series.ID, p.Series.Name,
+			p.Series.Date, p.Series.Version)
+	case *api.SeriesCompletedPayload:
+		return s.db.SaveSeriesSummary(
+			p.Series.ID, p.Series.Name,
+			p.Series.Date, p.Series.Version)
+	case *api.PatchCompletedPayload:
+		s.db.SavePatchSummary(
+			p.Patch.ID, p.Series.ID,
+			p.Patch.Name, p.Patch.Date,
+			p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
+		return s.db.SaveSeriesSummary(
+			p.Series.ID, p.Series.Name,
+			p.Series.Date, p.Series.Version)
+	case *api.CoverCreatedPayload:
+		return s.db.SavePatchSummary(
+			p.Cover.ID, seriesID,
+			p.Cover.Name, p.Cover.Date,
+			p.Cover.MsgID, p.Cover.Mbox, p.Cover.WebURL)
+	case *api.PatchCommentCreatedPayload:
+		return nil
+	case *api.CoverCommentCreatedPayload:
+		return nil
+	}
+	return nil
+}
+
+func (s *Syncer) fetchNextDetail(ctx context.Context) {
+	ids := s.db.GetPatchesNeedingDetail()
+	if len(ids) == 0 {
+		return
+	}
+	id := ids[0]
+	detail, err := s.client.GetPatch(ctx, id)
+	if err != nil {
+		log.Printf("fetch detail %d: %v", id, err)
+		return
+	}
+	prefixes, _ := json.Marshal(detail.Prefixes)
+	headers, _ := json.Marshal(detail.Headers)
+	s.db.UpdatePatchDetail(id,
+		detail.Content, detail.Diff,
+		string(headers), string(prefixes))
+}
+
+func (s *Syncer) fetchSeriesDetail(
+	ctx context.Context, seriesID int,
+) {
+	patches := s.db.GetPatchesForSeries(seriesID)
+	for _, p := range patches {
+		if p.DetailFetched {
+			continue
+		}
+		detail, err := s.client.GetPatch(ctx, p.ID)
+		if err != nil {
+			log.Printf("fetch detail %d: %v", p.ID, err)
+			continue
+		}
+		prefixes, _ := json.Marshal(detail.Prefixes)
+		headers, _ := json.Marshal(detail.Headers)
+		s.db.UpdatePatchDetail(p.ID,
+			detail.Content, detail.Diff,
+			string(headers), string(prefixes))
+	}
+}
+
+func (s *Syncer) fetchNextComments(ctx context.Context) {
+	activeSeries := s.db.GetActiveSeries(s.cfg.States)
+	if len(activeSeries) == 0 {
+		return
+	}
+	patches := s.db.GetPatchesForSeries(
+		activeSeries[0].ID)
+	if len(patches) == 0 {
+		return
+	}
+
+	patchID := patches[0].ID
+	comments, err := s.client.GetPatchComments(
+		ctx, patchID)
+	if err != nil {
+		log.Printf("fetch comments %d: %v", patchID, err)
+		return
+	}
+
+	for _, c := range comments {
+		s.db.InsertComment(db.CommentRow{
+			ID:        c.ID,
+			PatchID:   patchID,
+			Submitter: c.Submitter.Name,
+			Date:      c.Date,
+			Subject:   c.Subject,
+			Content:   c.Content,
+			MsgID:     c.MsgID,
+		})
+	}
+	s.updatePatchTagsFromComments(patchID)
+}
+
+func (s *Syncer) updatePatchTagsFromComments(
+	patchID int,
+) {
+	comments := s.db.GetComments(patchID)
+	merged := tagMap{}
+
+	for _, c := range comments {
+		tags := extractReviewTags(c.Content)
+		merged = mergeTagMaps(merged, tags)
+	}
+
+	s.db.UpdatePatchTags(patchID,
+		len(merged["acked"]),
+		len(merged["fixes"]),
+		len(merged["reviewed"]),
+		len(merged["tested"]),
+	)
+}
+
+func (s *Syncer) fetchMbox(
+	ctx context.Context, patchID int,
+) MboxResult {
+	row, err := s.db.GetPatch(patchID)
+	if err != nil {
+		return MboxResult{Err: err}
+	}
+	if row.MboxContent != "" {
+		return MboxResult{Content: row.MboxContent}
+	}
+
+	if s.cfg.LoreURL != "" && row.MsgID != "" {
+		msgid := strings.Trim(row.MsgID, "<>")
+		loreURL := strings.TrimRight(
+			s.cfg.LoreURL, "/") + "/" + msgid + "/raw"
+		content, err := s.client.GetMbox(ctx, loreURL)
+		if err == nil {
+			s.db.UpdatePatchMbox(patchID, content)
+			return MboxResult{Content: content}
+		}
+	}
+
+	if row.MboxURL != "" {
+		content, err := s.client.GetMbox(ctx, row.MboxURL)
+		if err != nil {
+			return MboxResult{Err: err}
+		}
+		s.db.UpdatePatchMbox(patchID, content)
+		return MboxResult{Content: content}
+	}
+
+	return MboxResult{Err: err}
+}
+
+func patchToRow(p api.Patch) db.PatchRow {
+	r := db.PatchRow{
+		ID:             p.ID,
+		Name:           p.Name,
+		Date:           p.Date,
+		State:          p.State,
+		Submitter:      p.Submitter.Name,
+		SubmitterEmail: p.Submitter.Email,
+		WebURL:         p.WebURL,
+		MsgID:          p.MsgID,
+		MboxURL:        p.Mbox,
+		Archived:       p.Archived,
+	}
+	if p.CommitRef != nil {
+		r.CommitRef = *p.CommitRef
+	}
+	if p.Delegate != nil {
+		r.DelegateID = p.Delegate.ID
+		r.Delegate = p.Delegate.Username
+		r.DelegateEmail = p.Delegate.Email
+	}
+	if len(p.Series) > 0 {
+		r.SeriesID = p.Series[0].ID
+	}
+	return r
+}
+
+func ptrStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+var (
+	ackedByRe    = regexp.MustCompile(`(?i)^Acked-by:\s*(.+)`)
+	fixesRe      = regexp.MustCompile(`(?i)^Fixes:\s*(.+)`)
+	reviewedByRe = regexp.MustCompile(`(?i)^Reviewed-by:\s*(.+)`)
+	testedByRe   = regexp.MustCompile(`(?i)^Tested-by:\s*(.+)`)
+)
+
+type tagMap = map[string]map[string]bool
+
+func extractReviewTags(content string) tagMap {
+	tags := tagMap{}
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, ">") {
+			continue
+		}
+		if m := ackedByRe.FindStringSubmatch(line); m != nil {
+			addTag(tags, "acked", strings.TrimSpace(m[1]))
+		}
+		if m := fixesRe.FindStringSubmatch(line); m != nil {
+			addTag(tags, "fixes", strings.TrimSpace(m[1]))
+		}
+		if m := reviewedByRe.FindStringSubmatch(line); m != nil {
+			addTag(tags, "reviewed", strings.TrimSpace(m[1]))
+		}
+		if m := testedByRe.FindStringSubmatch(line); m != nil {
+			addTag(tags, "tested", strings.TrimSpace(m[1]))
+		}
+	}
+	return tags
+}
+
+func addTag(tags tagMap, category, identity string) {
+	if tags[category] == nil {
+		tags[category] = map[string]bool{}
+	}
+	tags[category][identity] = true
+}
+
+func mergeTagMaps(maps ...tagMap) tagMap {
+	result := tagMap{}
+	for _, m := range maps {
+		for cat, identities := range m {
+			if result[cat] == nil {
+				result[cat] = map[string]bool{}
+			}
+			for id := range identities {
+				result[cat][id] = true
+			}
+		}
+	}
+	return result
+}
