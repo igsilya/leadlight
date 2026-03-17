@@ -129,6 +129,7 @@ type Model struct {
 	selectorFilter  string
 
 	selectedID string
+	showAll    bool
 
 	viewMode       viewMode
 	viewingPatchID int
@@ -181,7 +182,12 @@ func (m *Model) reloadData() {
 		}
 	}
 
-	seriesList := m.db.GetActiveSeries(m.states)
+	var seriesList []db.SeriesRow
+	if m.showAll {
+		seriesList = m.db.GetAllSeries()
+	} else {
+		seriesList = m.db.GetActiveSeries(m.states)
+	}
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		patches := m.db.GetPatchesForSeries(s.ID)

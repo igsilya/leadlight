@@ -355,9 +355,16 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		return
 	}
 
+	filterLabel := "[" + strings.Join(m.states, ", ") + "]"
+	toggleHint := "a all"
+	if m.showAll {
+		filterLabel = "[all]"
+		toggleHint = "a active"
+	}
+
 	help := helpStyle.Render(
-		"q quit | ↑/↓ navigate | enter expand" +
-			" | s state | d delegate")
+		filterLabel + " q quit | ↑/↓ navigate | enter expand" +
+			" | s state | d delegate | " + toggleHint)
 
 	if m.status == "" {
 		out.WriteString(help)

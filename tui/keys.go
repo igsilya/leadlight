@@ -74,6 +74,10 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		log.Println("TUI: key 'd' pressed")
 		m.openDelegateSelector()
+
+	case "a":
+		m.showAll = !m.showAll
+		m.reloadData()
 	}
 
 	return m, nil

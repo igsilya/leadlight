@@ -497,3 +497,42 @@ func TestReloadData_SubRowSelectionPreserved(t *testing.T) {
 			item.data[0], savedID)
 	}
 }
+
+func TestToggleShowAll(t *testing.T) {
+	m, d := testModelWithDB(t)
+
+	// Add an accepted patch in a different series
+	now := time.Now()
+	d.SaveSeriesSummary(
+		52, "Accepted series",
+		now.Add(-10*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
+	d.SavePatch(db.PatchRow{
+		ID: 300, SeriesID: 52,
+		Name: "Accepted patch", State: "accepted",
+		Date:      now.Add(-10 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem",
+	})
+
+	// Default: only active (new) patches
+	initialRows := len(m.RowData)
+
+	// Toggle to show all
+	m = pressKey(m, "a")
+	if !m.showAll {
+		t.Error("showAll should be true after pressing 'a'")
+	}
+	if len(m.RowData) <= initialRows {
+		t.Errorf("should show more rows in 'all' mode: %d vs %d",
+			len(m.RowData), initialRows)
+	}
+
+	// Toggle back to active only
+	m = pressKey(m, "a")
+	if m.showAll {
+		t.Error("showAll should be false after second 'a'")
+	}
+	if len(m.RowData) != initialRows {
+		t.Errorf("should show same rows as before: %d vs %d",
+			len(m.RowData), initialRows)
+	}
+}

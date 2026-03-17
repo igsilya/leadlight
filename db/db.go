@@ -493,6 +493,35 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	return result
 }
 
+func (d *DB) GetAllSeries() []SeriesRow {
+	rows, err := d.conn.Query(`
+		SELECT DISTINCT s.id, s.name, s.date, s.version,
+			s.submitter, s.submitter_email,
+			s.web_url, s.mbox_url, s.complete,
+			s.total_patches, s.received_patches,
+			COALESCE(s.updated_at, '')
+		FROM series s
+		JOIN patches p ON p.series_id = s.id
+		ORDER BY s.date DESC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var result []SeriesRow
+	for rows.Next() {
+		var r SeriesRow
+		rows.Scan(
+			&r.ID, &r.Name, &r.Date, &r.Version,
+			&r.Submitter, &r.SubmitterEmail,
+			&r.WebURL, &r.MboxURL, &r.Complete,
+			&r.TotalPatches, &r.ReceivedPatches,
+			&r.UpdatedAt)
+		result = append(result, r)
+	}
+	return result
+}
+
 func (d *DB) GetPatchesForSeries(seriesID int) []PatchRow {
 	rows, err := d.conn.Query(patchSelectSQL+
 		` WHERE series_id = ? ORDER BY date ASC`,

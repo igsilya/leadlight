@@ -866,3 +866,30 @@ func TestGetIncompletePatches_AllComplete(t *testing.T) {
 		t.Errorf("got %v, want empty", ids)
 	}
 }
+
+func TestGetAllSeries(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "Active series", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "Old series", "2026-01-01", 1)
+
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 51,
+		Name: "p2", Date: "2026-01-01",
+		State: "accepted", Submitter: "Lorem",
+	})
+
+	active := d.GetActiveSeries([]string{"new"})
+	if len(active) != 1 {
+		t.Errorf("active = %d, want 1", len(active))
+	}
+
+	all := d.GetAllSeries()
+	if len(all) != 2 {
+		t.Errorf("all = %d, want 2", len(all))
+	}
+}
