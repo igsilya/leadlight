@@ -65,8 +65,9 @@ func (s *Syncer) RequestMbox(patchID int) MboxResult {
 }
 
 const (
-	syncInterval      = 30 * time.Second
-	maintainerRefresh = time.Hour
+	syncInterval          = 30 * time.Second
+	maintainerRefresh     = time.Hour
+	commentRepollInterval = 6 * time.Hour
 )
 
 func (s *Syncer) Run(ctx context.Context) {
@@ -80,6 +81,7 @@ func (s *Syncer) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	lastMaintainerRefresh := time.Now()
+	lastCommentRepoll := time.Now()
 
 	for {
 		select {
@@ -96,10 +98,14 @@ func (s *Syncer) Run(ctx context.Context) {
 			s.fetchNextComments(ctx)
 			s.notify()
 
-			elapsed := time.Since(lastMaintainerRefresh)
-			if elapsed > maintainerRefresh {
+			if time.Since(lastMaintainerRefresh) > maintainerRefresh {
 				s.fetchMaintainers(ctx)
 				lastMaintainerRefresh = time.Now()
+			}
+			if time.Since(lastCommentRepoll) > commentRepollInterval {
+				s.db.ResetAllCommentsFetched(s.cfg.States)
+				lastCommentRepoll = time.Now()
+				log.Printf("reset comments_fetched for active patches")
 			}
 		}
 	}
@@ -312,7 +318,7 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 			WebURL:   p.Cover.WebURL,
 		})
 	case *api.PatchCommentCreatedPayload:
-		return nil
+		return s.db.ResetCommentsFetched(p.Patch.ID)
 	case *api.CoverCommentCreatedPayload:
 		return nil
 	}

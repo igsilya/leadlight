@@ -702,3 +702,70 @@ func TestGetPatchesNeedingComments_Priority(t *testing.T) {
 			ids[2])
 	}
 }
+
+func TestResetCommentsFetched(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.MarkCommentsFetched(100)
+
+	states := []string{"new"}
+	ids := d.GetPatchesNeedingComments(states)
+	if len(ids) != 0 {
+		t.Fatalf("should be empty after mark")
+	}
+
+	d.ResetCommentsFetched(100)
+
+	ids = d.GetPatchesNeedingComments(states)
+	if len(ids) != 1 || ids[0] != 100 {
+		t.Errorf("got %v, want [100] after reset", ids)
+	}
+}
+
+func TestResetAllCommentsFetched(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, Name: "p2", Date: "2026-03-10",
+		State: "accepted", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 102, Name: "p3", Date: "2026-03-10",
+		State: "under-review", Submitter: "Lorem",
+	})
+
+	d.MarkCommentsFetched(100)
+	d.MarkCommentsFetched(101)
+	d.MarkCommentsFetched(102)
+
+	// Reset only active states
+	d.ResetAllCommentsFetched([]string{"new", "under-review"})
+
+	states := []string{"new", "under-review", "accepted"}
+	ids := d.GetPatchesNeedingComments(states)
+
+	// 100 (new) and 102 (under-review) should be reset
+	// 101 (accepted) should still be marked
+	if len(ids) != 2 {
+		t.Fatalf("got %d, want 2", len(ids))
+	}
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got[100] {
+		t.Error("patch 100 (new) should be reset")
+	}
+	if !got[102] {
+		t.Error("patch 102 (under-review) should be reset")
+	}
+	if got[101] {
+		t.Error("patch 101 (accepted) should NOT be reset")
+	}
+}

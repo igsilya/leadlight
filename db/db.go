@@ -611,6 +611,30 @@ func (d *DB) MarkCommentsFetched(patchID int) error {
 	return err
 }
 
+func (d *DB) ResetCommentsFetched(patchID int) error {
+	_, err := d.conn.Exec(
+		"UPDATE patches SET comments_fetched = 0 WHERE id = ?",
+		patchID)
+	return err
+}
+
+func (d *DB) ResetAllCommentsFetched(states []string) error {
+	if len(states) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(states))
+	args := make([]interface{}, len(states))
+	for i, s := range states {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := fmt.Sprintf(
+		"UPDATE patches SET comments_fetched = 0 WHERE state IN (%s)",
+		strings.Join(placeholders, ","))
+	_, err := d.conn.Exec(query, args...)
+	return err
+}
+
 func (d *DB) GetComments(patchID int) []CommentRow {
 	rows, err := d.conn.Query(`
 		SELECT id, patch_id, cover_id, submitter,

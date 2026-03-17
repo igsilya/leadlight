@@ -812,3 +812,37 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 		t.Error("never fetched comments for 101")
 	}
 }
+
+func TestProcessEvent_PatchCommentCreated(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	savePatch(d, 100, "test", "2026-03-10", "new")
+	d.MarkCommentsFetched(100)
+
+	// Verify it's marked as fetched
+	ids := d.GetPatchesNeedingComments([]string{"new"})
+	if len(ids) != 0 {
+		t.Fatal("should be fetched before event")
+	}
+
+	ev := api.Event{
+		Category: "patch-comment-created",
+		Payload: &api.PatchCommentCreatedPayload{
+			Patch: api.PatchSummary{ID: 100},
+			Comment: api.CommentSummary{
+				ID:   301,
+				Name: "Re: test",
+			},
+		},
+	}
+
+	if err := s.processEvent(ev, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be reset — needs re-fetch
+	ids = d.GetPatchesNeedingComments([]string{"new"})
+	if len(ids) != 1 || ids[0] != 100 {
+		t.Errorf("got %v, want [100] (reset by event)",
+			ids)
+	}
+}
