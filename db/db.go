@@ -302,6 +302,25 @@ func (d *DB) InsertCheck(c CheckRow) error {
 	return err
 }
 
+func (d *DB) RecountPatchChecks(patchID int) error {
+	_, err := d.conn.Exec(`
+		UPDATE patches SET
+			checks_pass = (
+				SELECT COUNT(*) FROM checks
+				WHERE patch_id = ? AND state = 'success'),
+			checks_fail = (
+				SELECT COUNT(*) FROM checks
+				WHERE patch_id = ? AND state = 'fail'),
+			checks_pending = (
+				SELECT COUNT(*) FROM checks
+				WHERE patch_id = ? AND state = 'pending')
+			+ (SELECT COUNT(*) FROM checks
+				WHERE patch_id = ? AND state = 'warning')
+		WHERE id = ?`,
+		patchID, patchID, patchID, patchID, patchID)
+	return err
+}
+
 func (d *DB) InsertComment(c CommentRow) error {
 	_, err := d.conn.Exec(`
 		INSERT OR IGNORE INTO comments

@@ -107,6 +107,7 @@ func (s *Syncer) Run(ctx context.Context) {
 
 func (s *Syncer) initialSync(ctx context.Context) {
 	s.fetchListPages(ctx)
+	s.notify()
 	s.fetchMaintainers(ctx)
 	s.fetchAllPatches(ctx)
 	s.fetchInitialEvents(ctx)
@@ -123,7 +124,9 @@ func (s *Syncer) fetchListPages(ctx context.Context) {
 	for pageURL != "" {
 		page, err := s.client.FetchListPage(ctx, pageURL)
 		if err != nil {
-			log.Printf("list page fetch: %v", err)
+			log.Printf(
+				"list page fetch skipped: %v"+
+					" (will use API instead)", err)
 			return
 		}
 		for _, p := range page.Patches {
@@ -175,22 +178,26 @@ func (s *Syncer) fetchMaintainers(ctx context.Context) {
 }
 
 func (s *Syncer) fetchAllPatches(ctx context.Context) {
-	patches, err := s.client.GetPatches(
-		ctx, api.PatchListParams{
-			State:   s.cfg.States,
-			Project: s.cfg.Project,
-		})
-	if err != nil {
-		log.Printf("fetch patches: %v", err)
-		return
-	}
+	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
+		State:   s.cfg.States,
+		Project: s.cfg.Project,
+	})
 
-	for _, p := range patches {
-		s.db.SavePatch(patchToRow(p))
-		for _, ss := range p.Series {
-			s.db.SaveSeriesSummary(
-				ss.ID, ss.Name, ss.Date, ss.Version)
+	for pageURL != "" {
+		page, err := s.client.GetPatchesPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("fetch patches: %v", err)
+			return
 		}
+		for _, p := range page.Items {
+			s.db.SavePatch(patchToRow(p))
+			for _, ss := range p.Series {
+				s.db.SaveSeriesSummary(
+					ss.ID, ss.Name, ss.Date, ss.Version)
+			}
+		}
+		s.notify()
+		pageURL = page.NextURL
 	}
 }
 
@@ -211,24 +218,28 @@ func (s *Syncer) incrementalSync(ctx context.Context) {
 }
 
 func (s *Syncer) fetchEventsSince(ctx context.Context, since string) {
-	events, err := s.client.GetEvents(
-		ctx, api.EventListParams{
-			Since:   since,
-			Project: s.cfg.Project,
-			Order:   "date",
-		})
-	if err != nil {
-		log.Printf("fetch events: %v", err)
-		return
-	}
+	pageURL := s.client.BuildEventsURL(api.EventListParams{
+		Since:   since,
+		Project: s.cfg.Project,
+		Order:   "date",
+	})
 
-	for _, ev := range events {
-		seriesID := seriesIDFromEvent(ev)
-		if err := s.processEvent(ev, seriesID); err != nil {
-			log.Printf("process event %d: %v",
-				ev.ID, err)
+	for pageURL != "" {
+		page, err := s.client.GetEventsPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("fetch events: %v", err)
+			return
 		}
-		s.db.SetSyncState("last_event_date", ev.Date)
+		for _, ev := range page.Items {
+			seriesID := seriesIDFromEvent(ev)
+			if err := s.processEvent(ev, seriesID); err != nil {
+				log.Printf("process event %d: %v",
+					ev.ID, err)
+			}
+			s.db.SetSyncState("last_event_date", ev.Date)
+		}
+		s.notify()
+		pageURL = page.NextURL
 	}
 }
 
@@ -262,7 +273,7 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 		}
 		return s.db.UpdatePatchDelegate(p.Patch.ID, id, name, email)
 	case *api.CheckCreatedPayload:
-		return s.db.InsertCheck(db.CheckRow{
+		err := s.db.InsertCheck(db.CheckRow{
 			ID:        p.Check.ID,
 			PatchID:   p.Patch.ID,
 			Context:   p.Check.Context,
@@ -270,6 +281,10 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 			TargetURL: ptrStr(p.Check.TargetURL),
 			Date:      p.Check.Date,
 		})
+		if err != nil {
+			return err
+		}
+		return s.db.RecountPatchChecks(p.Patch.ID)
 	case *api.SeriesCreatedPayload:
 		return s.db.SaveSeriesSummary(
 			p.Series.ID, p.Series.Name,
@@ -287,10 +302,15 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 			p.Series.ID, p.Series.Name,
 			p.Series.Date, p.Series.Version)
 	case *api.CoverCreatedPayload:
-		return s.db.SavePatchSummary(
-			p.Cover.ID, seriesID,
-			p.Cover.Name, p.Cover.Date,
-			p.Cover.MsgID, p.Cover.Mbox, p.Cover.WebURL)
+		return s.db.SaveCover(db.CoverRow{
+			ID:       p.Cover.ID,
+			SeriesID: seriesID,
+			Name:     p.Cover.Name,
+			Date:     p.Cover.Date,
+			MsgID:    p.Cover.MsgID,
+			MboxURL:  p.Cover.Mbox,
+			WebURL:   p.Cover.WebURL,
+		})
 	case *api.PatchCommentCreatedPayload:
 		return nil
 	case *api.CoverCommentCreatedPayload:
@@ -308,6 +328,10 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 	detail, err := s.client.GetPatch(ctx, id)
 	if err != nil {
 		log.Printf("fetch detail %d: %v", id, err)
+		// Mark as fetched to avoid infinite retry on
+		// permanently missing patches (e.g. covers
+		// mistakenly saved as patches)
+		s.db.UpdatePatchDetail(id, "", "", "", "")
 		return
 	}
 	prefixes, _ := json.Marshal(detail.Prefixes)
@@ -328,6 +352,7 @@ func (s *Syncer) fetchSeriesDetail(
 		detail, err := s.client.GetPatch(ctx, p.ID)
 		if err != nil {
 			log.Printf("fetch detail %d: %v", p.ID, err)
+			s.db.UpdatePatchDetail(p.ID, "", "", "", "")
 			continue
 		}
 		prefixes, _ := json.Marshal(detail.Prefixes)

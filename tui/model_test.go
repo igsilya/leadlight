@@ -35,7 +35,7 @@ func testModel() *Model {
 		},
 	}
 	opts := []string{"Active", "Inactive", "Pending", "Away"}
-	m := NewModel(columns, rows, opts, 2)
+	m := NewModelWithData(columns, rows, opts, 2)
 	m.width = 120
 	m.height = 30
 	return m

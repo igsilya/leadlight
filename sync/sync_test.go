@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -501,5 +502,240 @@ func TestInitialSync(t *testing.T) {
 	maintainers := d.GetMaintainers()
 	if len(maintainers) != 1 {
 		t.Errorf("maintainers = %d", len(maintainers))
+	}
+}
+
+func TestProcessEvent_CoverCreated(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	d.SaveSeriesSummary(50, "Lorem", "2026-03-10", 1)
+
+	ev := api.Event{
+		Category: "cover-created",
+		Payload: &api.CoverCreatedPayload{
+			Cover: api.CoverSummary{
+				ID:   200,
+				Name: "[PATCH 0/3] Lorem cover",
+				Date: "2026-03-10T12:00:00",
+			},
+		},
+	}
+
+	if err := s.processEvent(ev, 50); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cover should be in covers table, not patches
+	cover, err := d.GetCover(50)
+	if err != nil {
+		t.Fatal("cover not found:", err)
+	}
+	if cover.Name != "[PATCH 0/3] Lorem cover" {
+		t.Errorf("cover.Name = %q", cover.Name)
+	}
+
+	// Should NOT be in patches table
+	_, err = d.GetPatch(200)
+	if err == nil {
+		t.Error("cover ID should not be in patches table")
+	}
+}
+
+func TestFetchNextDetail_404MarksAsFetched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"detail":"Not found."}`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+
+	savePatch(d, 100, "test", "2026-03-10", "new")
+
+	// Verify it needs detail
+	ids := d.GetPatchesNeedingDetail()
+	if len(ids) != 1 || ids[0] != 100 {
+		t.Fatalf("needs detail = %v, want [100]", ids)
+	}
+
+	// Fetch detail — will get 404
+	s.fetchNextDetail(context.Background())
+
+	// Should be marked as fetched despite 404
+	ids = d.GetPatchesNeedingDetail()
+	if len(ids) != 0 {
+		t.Errorf("needs detail = %v, want empty (404 should mark as fetched)",
+			ids)
+	}
+}
+
+func TestFetchEvents_NotifiesPerPage(t *testing.T) {
+	pageNum := 0
+	var srvURL string
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/events/" {
+				w.WriteHeader(404)
+				return
+			}
+			pageNum++
+			switch pageNum {
+			case 1:
+				w.Header().Set("Link",
+					fmt.Sprintf(
+						`<%s/events/?page=2>; rel="next"`,
+						srvURL))
+				w.Write([]byte(`[{
+					"id":1,
+					"category":"patch-state-changed",
+					"project":` + testProjectJSON + `,
+					"date":"2026-03-11T01:00:00",
+					"actor":null,
+					"payload":{
+						"patch":{"id":100,"url":"",
+							"web_url":"","msgid":"",
+							"list_archive_url":null,
+							"date":"","name":"","mbox":""},
+						"previous_state":"new",
+						"current_state":"under-review"
+					}
+				}]`))
+			case 2:
+				w.Write([]byte(`[{
+					"id":2,
+					"category":"patch-state-changed",
+					"project":` + testProjectJSON + `,
+					"date":"2026-03-11T02:00:00",
+					"actor":null,
+					"payload":{
+						"patch":{"id":101,"url":"",
+							"web_url":"","msgid":"",
+							"list_archive_url":null,
+							"date":"","name":"","mbox":""},
+						"previous_state":"new",
+						"current_state":"accepted"
+					}
+				}]`))
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	savePatch(d, 101, "p2", "2026-03-10", "new")
+	d.SetSyncState("last_event_date", "2026-03-10")
+	srvURL = srv.URL
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test-project",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test-project", srv.Client(),
+		10*time.Millisecond)
+
+	notifyCount := 0
+	s := NewSyncer(client, d, cfg, func() {
+		notifyCount++
+	})
+
+	s.fetchEventsSince(context.Background(), "2026-03-10")
+
+	if notifyCount != 2 {
+		t.Errorf("notify count = %d, want 2 (one per page)",
+			notifyCount)
+	}
+
+	// Verify both events were processed
+	r1, _ := d.GetPatch(100)
+	if r1.State != "under-review" {
+		t.Errorf("patch 100 state = %q", r1.State)
+	}
+	r2, _ := d.GetPatch(101)
+	if r2.State != "accepted" {
+		t.Errorf("patch 101 state = %q", r2.State)
+	}
+}
+
+func TestFetchPatches_NotifiesPerPage(t *testing.T) {
+	pageNum := 0
+	var srvURL string
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/patches/" {
+				w.WriteHeader(404)
+				return
+			}
+			pageNum++
+			switch pageNum {
+			case 1:
+				w.Header().Set("Link",
+					fmt.Sprintf(
+						`<%s/patches/?page=2>; rel="next"`,
+						srvURL))
+				json.NewEncoder(w).Encode([]api.Patch{{
+					ID: 100, Name: "p1",
+					Date: "2026-03-10", State: "new",
+					Submitter: api.Person{Name: "Lorem"},
+				}})
+			case 2:
+				json.NewEncoder(w).Encode([]api.Patch{{
+					ID: 200, Name: "p2",
+					Date: "2026-03-10", State: "new",
+					Submitter: api.Person{Name: "Ipsum"},
+				}})
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	srvURL = srv.URL
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test-project",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test-project", srv.Client(),
+		10*time.Millisecond)
+
+	notifyCount := 0
+	s := NewSyncer(client, d, cfg, func() {
+		notifyCount++
+	})
+
+	s.fetchAllPatches(context.Background())
+
+	if notifyCount != 2 {
+		t.Errorf("notify count = %d, want 2 (one per page)",
+			notifyCount)
+	}
+
+	// Verify both patches saved
+	_, err := d.GetPatch(100)
+	if err != nil {
+		t.Error("patch 100 not found")
+	}
+	_, err = d.GetPatch(200)
+	if err != nil {
+		t.Error("patch 200 not found")
 	}
 }

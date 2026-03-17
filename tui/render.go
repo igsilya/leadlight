@@ -53,21 +53,29 @@ func (m *Model) renderRows(
 	indicator := "▸ "
 	blank := strings.Repeat(" ", indicatorWidth)
 
-	for i := m.scrollOffset; i < len(items); i++ {
-		raw := m.buildRawRow(items[i], widths)
+	checksStart := indicatorWidth
+	for c := 0; c < m.ChecksColIdx && c < len(widths); c++ {
+		checksStart += widths[c]
+	}
+	checksWidth := 0
+	if m.ChecksColIdx >= 0 && m.ChecksColIdx < len(widths) {
+		checksWidth = widths[m.ChecksColIdx]
+	}
 
+	for i := m.scrollOffset; i < len(items); i++ {
 		var row string
 		if i == m.selectedRow {
 			if m.selectorOpen {
 				row = indicator + m.buildRow(
 					items[i], widths, m.StatusColIdx)
 			} else {
-				row = m.renderGradientRow(
-					indicator+raw, items[i].style.Background)
+				row = m.renderSelectedRow(
+					items[i], widths, indicator,
+					checksStart, checksWidth)
 			}
 		} else {
-			row = items[i].style.lipgloss(items[i].isSubRow).
-				Render(blank + raw)
+			row = m.buildStyledRow(
+				items[i], widths, blank)
 		}
 
 		test := base + rows.String() + row + "\n"
@@ -88,7 +96,15 @@ func (m *Model) renderRows(
 func (m *Model) buildRawRow(
 	item visibleItem, widths []int,
 ) string {
-	return m.buildRow(item, widths, -1)
+	var b strings.Builder
+	for j, cellData := range item.data {
+		text := cellData
+		if item.isSubRow && j == 0 {
+			text = subRowIndent + text
+		}
+		b.WriteString(renderCell(text, widths[j]))
+	}
+	return b.String()
 }
 
 func (m *Model) buildRow(
@@ -100,14 +116,141 @@ func (m *Model) buildRow(
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
-		cell := renderCell(text, widths[j])
 		if j == highlightCol {
+			cell := renderCell(text, widths[j])
 			b.WriteString(cellHighlightStyle.Render(cell))
+		} else if j == m.ChecksColIdx {
+			b.WriteString(renderChecksCellWithBg(
+				text, widths[j], item.style.Background))
 		} else {
-			b.WriteString(cell)
+			b.WriteString(renderCell(text, widths[j]))
 		}
 	}
 	return b.String()
+}
+
+func (m *Model) buildStyledRow(
+	item visibleItem, widths []int, prefix string,
+) string {
+	rowStyle := item.style.lipgloss(item.isSubRow)
+	var b strings.Builder
+	b.WriteString(rowStyle.Render(prefix))
+	for j, cellData := range item.data {
+		text := cellData
+		if item.isSubRow && j == 0 {
+			text = subRowIndent + text
+		}
+		if j == m.ChecksColIdx {
+			b.WriteString(renderChecksCellWithBg(
+				text, widths[j], item.style.Background))
+		} else {
+			cell := renderCell(text, widths[j])
+			b.WriteString(rowStyle.Render(cell))
+		}
+	}
+	return b.String()
+}
+
+func (m *Model) renderSelectedRow(
+	item visibleItem, widths []int, indicator string,
+	checksStart, checksWidth int,
+) string {
+	raw := m.buildRawRow(item, widths)
+	fullRaw := indicator + raw
+	bgName := item.style.Background
+
+	if m.ChecksColIdx < 0 || checksWidth == 0 {
+		return m.renderGradientRow(fullRaw, bgName)
+	}
+
+	runes := []rune(fullRaw)
+	total := len(runes)
+
+	if checksStart >= total {
+		return m.renderGradientRow(fullRaw, bgName)
+	}
+
+	checksEnd := checksStart + checksWidth
+	if checksEnd > total {
+		checksEnd = total
+	}
+
+	prefix := string(runes[:checksStart])
+	checksText := item.data[m.ChecksColIdx]
+	suffix := ""
+	if checksEnd < total {
+		suffix = string(runes[checksEnd:])
+	}
+
+	gradientPart := m.renderGradientRow(prefix, bgName)
+	checksPart := renderChecksCellWithBg(
+		checksText, checksWidth, bgName)
+	suffixPart := ""
+	if suffix != "" {
+		if c, ok := bgColors[bgName]; ok {
+			restStyle := lipgloss.NewStyle().
+				Background(lipgloss.Color(
+					fmt.Sprintf("#%02x%02x%02x",
+						c.r, c.g, c.b))).
+				Foreground(lipgloss.Color(
+					fmt.Sprintf("#%02x%02x%02x",
+						c.fgR, c.fgG, c.fgB)))
+			suffixPart = restStyle.Render(suffix)
+		} else {
+			suffixPart = suffix
+		}
+	}
+
+	return gradientPart + checksPart + suffixPart
+}
+
+func renderChecksCellWithBg(
+	text string, width int, bgName string,
+) string {
+	var bg lipgloss.Style
+	if c, ok := bgColors[bgName]; ok {
+		bg = lipgloss.NewStyle().Background(lipgloss.Color(
+			fmt.Sprintf("#%02x%02x%02x", c.r, c.g, c.b)))
+	}
+
+	if text == "-" || text == "" {
+		return bg.Foreground(checksZeroStyle.GetForeground()).
+			Render(renderCell("-", width))
+	}
+
+	parts := strings.SplitN(text, "/", 3)
+	if len(parts) != 3 {
+		return bg.Render(renderCell(text, width))
+	}
+
+	styles := []lipgloss.Style{
+		checksPassStyle, checksFailStyle, checksPendingStyle,
+	}
+
+	var b strings.Builder
+	for i, part := range parts {
+		if i > 0 {
+			s := bg.Foreground(
+				checksZeroStyle.GetForeground())
+			b.WriteString(s.Render("/"))
+		}
+		if part == "0" {
+			s := bg.Foreground(
+				checksZeroStyle.GetForeground())
+			b.WriteString(s.Render(part))
+		} else {
+			s := bg.Foreground(styles[i].GetForeground())
+			b.WriteString(s.Render(part))
+		}
+	}
+
+	rendered := b.String()
+	visualWidth := lipgloss.Width(rendered)
+	if visualWidth < width {
+		rendered += bg.Render(
+			strings.Repeat(" ", width-visualWidth))
+	}
+	return rendered
 }
 
 func (m *Model) renderGradientRow(

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -81,7 +82,12 @@ func (c *Client) waitForRateLimit() {
 			time.Sleep(c.minDelay - elapsed)
 		}
 	}
+}
+
+func (c *Client) markRequestDone() {
+	c.mu.Lock()
 	c.lastReq = time.Now()
+	c.mu.Unlock()
 }
 
 func (c *Client) newRequest(
@@ -111,11 +117,21 @@ func (c *Client) doRequest(
 	body io.Reader,
 ) (*http.Response, error) {
 	c.waitForRateLimit()
+	log.Printf("HTTP %s %s", method, rawURL)
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
 	}
-	return c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
+	c.markRequestDone()
+	if err != nil {
+		log.Printf("HTTP %s %s -> error: %v",
+			method, rawURL, err)
+		return nil, err
+	}
+	log.Printf("HTTP %s %s -> %d",
+		method, rawURL, resp.StatusCode)
+	return resp, nil
 }
 
 func (c *Client) get(
@@ -214,10 +230,25 @@ func getAll[T any](
 		}
 
 		all = append(all, page...)
-		u = parseLinkNext(resp.Header.Get("Link"))
+		u = c.fixScheme(
+			parseLinkNext(resp.Header.Get("Link")))
 	}
 
 	return all, nil
+}
+
+// Patchwork sometimes returns http:// URLs in Link headers
+// even when accessed over https://. This preserves the
+// original scheme from the configured base URL.
+func (c *Client) fixScheme(u string) string {
+	if u == "" {
+		return u
+	}
+	if strings.HasPrefix(c.baseURL, "https://") &&
+		strings.HasPrefix(u, "http://") {
+		return "https://" + u[len("http://"):]
+	}
+	return u
 }
 
 func parseLinkNext(header string) string {
@@ -248,6 +279,81 @@ func (c *Client) GetProject(
 		return nil, err
 	}
 	return &p, nil
+}
+
+type PageResult[T any] struct {
+	Items   []T
+	NextURL string
+}
+
+func getPage[T any](
+	c *Client, ctx context.Context, rawURL string,
+) (*PageResult[T], error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf(
+			"HTTP %d: %s", resp.StatusCode, body)
+	}
+	var items []T
+	err = json.NewDecoder(resp.Body).Decode(&items)
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	next := c.fixScheme(
+		parseLinkNext(resp.Header.Get("Link")))
+	return &PageResult[T]{Items: items, NextURL: next}, nil
+}
+
+func (c *Client) GetPatchesPage(
+	ctx context.Context, pageURL string,
+) (*PageResult[Patch], error) {
+	return getPage[Patch](c, ctx, pageURL)
+}
+
+func (c *Client) BuildPatchesURL(
+	params PatchListParams,
+) string {
+	v := url.Values{}
+	v.Set("per_page", "100")
+	if params.Project != "" {
+		v.Set("project", params.Project)
+	}
+	for _, s := range params.State {
+		v.Add("state", s)
+	}
+	if params.Since != "" {
+		v.Set("since", params.Since)
+	}
+	return c.baseURL + "/patches/?" + v.Encode()
+}
+
+func (c *Client) GetEventsPage(
+	ctx context.Context, pageURL string,
+) (*PageResult[Event], error) {
+	return getPage[Event](c, ctx, pageURL)
+}
+
+func (c *Client) BuildEventsURL(
+	params EventListParams,
+) string {
+	v := url.Values{}
+	v.Set("per_page", "100")
+	if params.Project != "" {
+		v.Set("project", params.Project)
+	}
+	if params.Since != "" {
+		v.Set("since", params.Since)
+	}
+	if params.Order != "" {
+		v.Set("order", params.Order)
+	}
+	return c.baseURL + "/events/?" + v.Encode()
 }
 
 func (c *Client) GetPatches(
@@ -366,6 +472,7 @@ func (c *Client) GetMbox(
 		return "", err
 	}
 	resp, err := c.httpClient.Do(req)
+	c.markRequestDone()
 	if err != nil {
 		return "", err
 	}

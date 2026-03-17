@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -64,16 +65,20 @@ func (c *Client) FetchListPage(
 	pageURL string,
 ) (*ListPage, error) {
 	c.waitForRateLimit()
+	log.Printf("FETCH %s", pageURL)
 	req, err := http.NewRequestWithContext(
 		ctx, http.MethodGet, pageURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := c.httpClient.Do(req)
+	c.markRequestDone()
 	if err != nil {
+		log.Printf("FETCH %s -> error: %v", pageURL, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
+	log.Printf("FETCH %s -> %d", pageURL, resp.StatusCode)
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf(
@@ -84,12 +89,13 @@ func (c *Client) FetchListPage(
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("FETCH body length: %d bytes", len(body))
 
-	// Detect Anubis/non-Patchwork pages by checking for
-	// the patch list table structure. An empty table with
-	// <tbody> is valid (no patches); a page without any
-	// table structure at all is not.
 	if !bytes.Contains(body, []byte("<tbody>")) {
+		if bytes.Contains(body, []byte("not a bot")) {
+			return nil, fmt.Errorf(
+				"blocked by bot protection (Anubis)")
+		}
 		return nil, fmt.Errorf(
 			"page does not contain patch data")
 	}

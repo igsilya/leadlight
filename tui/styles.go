@@ -39,6 +39,10 @@ var (
 				Bold(true).
 				Background(lipgloss.Color("57")).
 				Foreground(lipgloss.Color("15"))
+	checksPassStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
+	checksFailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	checksPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	checksZeroStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
 type bgColor struct {

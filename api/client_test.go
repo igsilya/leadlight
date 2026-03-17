@@ -508,3 +508,53 @@ func TestContextCancellation(t *testing.T) {
 		t.Error("expected error for cancelled context")
 	}
 }
+
+func TestFixScheme_HttpToHttps(t *testing.T) {
+	c := &Client{baseURL: "https://pw.example.com/api/1.2"}
+	got := c.fixScheme(
+		"http://pw.example.com/api/1.2/patches/?page=2")
+	want := "https://pw.example.com/api/1.2/patches/?page=2"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFixScheme_AlreadyHttps(t *testing.T) {
+	c := &Client{baseURL: "https://pw.example.com/api/1.2"}
+	got := c.fixScheme(
+		"https://pw.example.com/api/1.2/patches/?page=2")
+	want := "https://pw.example.com/api/1.2/patches/?page=2"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFixScheme_HttpBaseStaysHttp(t *testing.T) {
+	c := &Client{baseURL: "http://pw.example.com/api/1.2"}
+	got := c.fixScheme(
+		"http://pw.example.com/api/1.2/patches/?page=2")
+	want := "http://pw.example.com/api/1.2/patches/?page=2"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFixScheme_Empty(t *testing.T) {
+	c := &Client{baseURL: "https://pw.example.com"}
+	got := c.fixScheme("")
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestFixScheme_InPagination(t *testing.T) {
+	c := &Client{
+		baseURL: "https://patchwork.example.com/api/1.2",
+	}
+	input := "http://patchwork.example.com/api/1.2/patches/?page=2"
+	got := c.fixScheme(input)
+	want := "https://patchwork.example.com/api/1.2/patches/?page=2"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

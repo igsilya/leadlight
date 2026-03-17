@@ -594,3 +594,46 @@ func TestGetPatchesNeedingDetail(t *testing.T) {
 		t.Errorf("got %v, want [101]", ids)
 	}
 }
+
+func TestRecountPatchChecks(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	d.InsertCheck(CheckRow{
+		ID: 1, PatchID: 100,
+		State: "success", Context: "ci/build",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 2, PatchID: 100,
+		State: "success", Context: "ci/lint",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 3, PatchID: 100,
+		State: "fail", Context: "ci/test",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 4, PatchID: 100,
+		State: "pending", Context: "ci/deploy",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 5, PatchID: 100,
+		State: "warning", Context: "ci/style",
+	})
+
+	d.RecountPatchChecks(100)
+
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 2 {
+		t.Errorf("pass = %d, want 2", row.ChecksPass)
+	}
+	if row.ChecksFail != 1 {
+		t.Errorf("fail = %d, want 1", row.ChecksFail)
+	}
+	// pending + warning = 2
+	if row.ChecksPending != 2 {
+		t.Errorf("pending = %d, want 2", row.ChecksPending)
+	}
+}

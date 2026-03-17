@@ -101,7 +101,32 @@ CREATE TABLE IF NOT EXISTS sync_state (
 );
 `
 
+const recountChecks = `
+UPDATE patches SET
+  checks_pass = (
+    SELECT COUNT(*) FROM checks
+    WHERE checks.patch_id = patches.id
+    AND state = 'success'),
+  checks_fail = (
+    SELECT COUNT(*) FROM checks
+    WHERE checks.patch_id = patches.id
+    AND state = 'fail'),
+  checks_pending = (
+    SELECT COUNT(*) FROM checks
+    WHERE checks.patch_id = patches.id
+    AND state = 'pending')
+  + (SELECT COUNT(*) FROM checks
+    WHERE checks.patch_id = patches.id
+    AND state = 'warning')
+WHERE id IN (
+  SELECT DISTINCT patch_id FROM checks
+);
+`
+
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(schema)
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	_, err := db.Exec(recountChecks)
 	return err
 }

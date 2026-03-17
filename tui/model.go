@@ -2,11 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"leadlight/db"
 )
 
 type ColumnDef struct {
@@ -81,6 +84,9 @@ type Model struct {
 	RowData         []RowData
 	StatusOptions   []string
 	StatusColIdx    int
+	ChecksColIdx    int
+	db              *db.DB
+	states          []string
 	selectedRow     int
 	width           int
 	height          int
@@ -97,7 +103,21 @@ type Model struct {
 	selectorCursor int
 }
 
-func NewModel(
+func NewModel(d *db.DB, states []string) *Model {
+	m := &Model{
+		ColumnDefs:         PatchworkColumns,
+		StatusOptions:      states,
+		StatusColIdx:       ColState,
+		ChecksColIdx:       ColChecks,
+		db:                 d,
+		states:             states,
+		highlightAnimating: true,
+	}
+	m.reloadData()
+	return m
+}
+
+func NewModelWithData(
 	columns []ColumnDef,
 	rows []RowData,
 	statusOptions []string,
@@ -108,8 +128,26 @@ func NewModel(
 		RowData:            rows,
 		StatusOptions:      statusOptions,
 		StatusColIdx:       statusColIdx,
+		ChecksColIdx:       -1,
 		highlightAnimating: true,
 	}
+}
+
+func (m *Model) reloadData() {
+	if m.db == nil {
+		return
+	}
+	rows, err := LoadFromDB(m.db, m.states)
+	if err != nil {
+		log.Printf("reload data: %v", err)
+		return
+	}
+	m.mu.Lock()
+	m.RowData = rows
+	if m.selectedRow >= len(rows) && len(rows) > 0 {
+		m.selectedRow = len(rows) - 1
+	}
+	m.mu.Unlock()
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -138,6 +176,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, highlightAnimTickCmd()
 
 	case SyncUpdateMsg:
+		m.reloadData()
 		return m, nil
 
 	case tea.WindowSizeMsg:
