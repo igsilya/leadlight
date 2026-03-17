@@ -84,14 +84,25 @@ func (m *Model) renderHeader(out *strings.Builder, widths []int) {
 	out.WriteByte('\n')
 }
 
+func (m *Model) maxVisibleRows() int {
+	bottomLines := 1
+	if m.selectorMode != selectorNone {
+		bottomLines = 2
+	}
+	rows := m.height - 3 - bottomLines
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
 func (m *Model) renderRows(
 	out *strings.Builder,
 	items []visibleItem,
 	widths []int,
 ) {
-	var rows strings.Builder
 	rendered := 0
-	base := out.String()
+	maxRows := m.maxVisibleRows()
 
 	indicator := "▸ "
 	blank := strings.Repeat(" ", indicatorWidth)
@@ -106,6 +117,10 @@ func (m *Model) renderRows(
 	}
 
 	for i := m.scrollOffset; i < len(items); i++ {
+		if rendered >= maxRows {
+			break
+		}
+
 		var row string
 		if i == m.selectedRow {
 			if m.selectorMode != selectorNone {
@@ -121,19 +136,12 @@ func (m *Model) renderRows(
 				items[i], widths, blank)
 		}
 
-		test := base + rows.String() + row + "\n"
-		if lipgloss.Height(test) >= m.height-1 &&
-			i > m.scrollOffset {
-			break
-		}
-
-		rows.WriteString(row)
-		rows.WriteByte('\n')
+		out.WriteString(row)
+		out.WriteByte('\n')
 		rendered++
 	}
 
 	m.lastRowsVisible = rendered
-	out.WriteString(rows.String())
 }
 
 func (m *Model) buildRawRow(
