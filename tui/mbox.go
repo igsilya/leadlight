@@ -98,29 +98,29 @@ func FormatMbox(p ParsedMbox, width int) string {
 		valWidth = 20
 	}
 
+	writeHeader := func(label, value string) {
+		b.WriteString(mboxHeaderLabel.Render(label))
+		lines := wrapHeaderValue(value, valWidth)
+		for i, line := range lines {
+			if i > 0 {
+				b.WriteString(strings.Repeat(" ", labelWidth))
+			}
+			b.WriteString(mboxHeaderValue.Render(line))
+			b.WriteByte('\n')
+		}
+	}
+
 	if p.Subject != "" {
-		b.WriteString(mboxHeaderLabel.Render("Subject: "))
-		b.WriteString(mboxHeaderValue.Render(
-			truncateLine(p.Subject, valWidth)))
-		b.WriteByte('\n')
+		writeHeader("Subject: ", p.Subject)
 	}
 	if p.From != "" {
-		b.WriteString(mboxHeaderLabel.Render("From:    "))
-		b.WriteString(mboxHeaderValue.Render(
-			truncateLine(p.From, valWidth)))
-		b.WriteByte('\n')
+		writeHeader("From:    ", p.From)
 	}
 	if p.Cc != "" {
-		b.WriteString(mboxHeaderLabel.Render("Cc:      "))
-		b.WriteString(mboxHeaderValue.Render(
-			truncateLine(p.Cc, valWidth)))
-		b.WriteByte('\n')
+		writeHeader("Cc:      ", p.Cc)
 	}
 	if p.Date != "" {
-		b.WriteString(mboxHeaderLabel.Render("Date:    "))
-		b.WriteString(mboxHeaderValue.Render(
-			truncateLine(p.Date, valWidth)))
-		b.WriteByte('\n')
+		writeHeader("Date:    ", p.Date)
 	}
 
 	if p.Body != "" {
@@ -161,6 +161,32 @@ func formatDiff(diff string, width int) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+func wrapHeaderValue(s string, width int) []string {
+	runes := []rune(s)
+	if len(runes) <= width {
+		return []string{s}
+	}
+	var lines []string
+	for len(runes) > 0 {
+		end := width
+		if end > len(runes) {
+			end = len(runes)
+		}
+		// Try to break at a comma or space
+		if end < len(runes) {
+			for i := end; i > end-20 && i > 0; i-- {
+				if runes[i] == ',' || runes[i] == ' ' {
+					end = i + 1
+					break
+				}
+			}
+		}
+		lines = append(lines, string(runes[:end]))
+		runes = runes[end:]
+	}
+	return lines
 }
 
 func truncateLine(s string, width int) string {

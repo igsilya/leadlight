@@ -276,6 +276,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.viewMode == viewPatch && m.viewingPatchID != 0 {
+			m.refreshViewport()
+		}
 		return m, nil
 
 	case tea.KeyMsg:
