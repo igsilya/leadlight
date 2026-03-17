@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -60,41 +59,26 @@ func BuildListURL(
 	return u
 }
 
-func (c *Client) FetchListPage(
-	ctx context.Context,
-	pageURL string,
-) (*ListPage, error) {
-	c.waitForRateLimit()
-	log.Printf("FETCH %s", pageURL)
-	req, err := http.NewRequestWithContext(
-		ctx, http.MethodGet, pageURL, nil)
+func (c *Client) FetchListPage(ctx context.Context, pageURL string) (*ListPage, error) {
+	resp, err := c.doExternalRequest(ctx, http.MethodGet, pageURL, nil)
 	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(req)
-	c.markRequestDone()
-	if err != nil {
-		log.Printf("FETCH %s -> error: %v", pageURL, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
-	log.Printf("FETCH %s -> %d", pageURL, resp.StatusCode)
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf(
-			"HTTP %d fetching list page", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d fetching list page", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("FETCH body length: %d bytes", len(body))
 
 	if !bytes.Contains(body, []byte("<tbody>")) {
 		if bytes.Contains(body, []byte("not a bot")) {
 			return nil, fmt.Errorf(
-				"blocked by bot protection (Anubis)")
+				"page is not accessible")
 		}
 		return nil, fmt.Errorf(
 			"page does not contain patch data")

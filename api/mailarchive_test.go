@@ -298,7 +298,7 @@ func TestFetchArchiveMessages(t *testing.T) {
 	}
 }
 
-func TestFetchArchiveMessages_Anubis(t *testing.T) {
+func TestFetchArchiveMessages_BotChallenge(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("Making sure you're not a bot!"))
@@ -313,7 +313,7 @@ func TestFetchArchiveMessages_Anubis(t *testing.T) {
 	_, err := c.FetchArchiveMessages(
 		context.Background(), srv.URL+"/date.html")
 	if err == nil {
-		t.Error("expected error for Anubis page")
+		t.Error("expected error for bot challenge page")
 	}
 }
 

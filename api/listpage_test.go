@@ -431,7 +431,7 @@ func TestFetchListPage_NotHTML(t *testing.T) {
 	_, err := c.FetchListPage(
 		context.Background(), srv.URL+"/list/")
 	if err == nil {
-		t.Error("expected error for non-HTML/Anubis page")
+		t.Error("expected error for non-patchwork page")
 	}
 }
 

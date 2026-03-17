@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -27,22 +26,14 @@ func BuildArchiveURL(baseURL string, year int, month time.Month) string {
 }
 
 func (c *Client) FetchArchiveMessages(ctx context.Context, pageURL string) ([]ArchiveMessage, error) {
-	c.waitForRateLimit()
-	log.Printf("ARCHIVE %s", pageURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(req)
-	c.markRequestDone()
+	resp, err := c.doExternalRequest(ctx, http.MethodGet, pageURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf(
-			"HTTP %d fetching archive", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d fetching archive", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -51,8 +42,7 @@ func (c *Client) FetchArchiveMessages(ctx context.Context, pageURL string) ([]Ar
 	}
 
 	if bytes.Contains(body, []byte("not a bot")) {
-		return nil, fmt.Errorf(
-			"blocked by bot protection (Anubis)")
+		return nil, fmt.Errorf("archive is not accessible")
 	}
 
 	return parseArchiveMessages(body)

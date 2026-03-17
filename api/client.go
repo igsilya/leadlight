@@ -3,12 +3,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"sync"
@@ -32,7 +32,11 @@ type Client struct {
 }
 
 func NewClient(cfg *config.Config) *Client {
-	jar, _ := cookiejar.New(nil)
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			NextProtos: []string{"http/1.1"},
+		},
+	}
 	return &Client{
 		baseURL:  strings.TrimRight(cfg.Server, "/"),
 		project:  cfg.Project,
@@ -40,8 +44,8 @@ func NewClient(cfg *config.Config) *Client {
 		username: cfg.Username,
 		password: cfg.Password,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Jar:     jar,
+			Timeout:   30 * time.Second,
+			Transport: transport,
 		},
 		minDelay: defaultMinDelay,
 	}
@@ -105,6 +109,8 @@ func (c *Client) newRequest(
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "leadlight/1.0")
+	req.Header.Set("Accept", "*/*")
 	if c.token != "" {
 		req.Header.Set("Authorization", "Token "+c.token)
 	} else if c.username != "" {
@@ -122,7 +128,7 @@ func (c *Client) doRequest(
 	body io.Reader,
 ) (*http.Response, error) {
 	c.waitForRateLimit()
-	log.Printf("HTTP %s %s", method, rawURL)
+	log.Printf("HTTP %s %s (go)", method, rawURL)
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
@@ -130,12 +136,43 @@ func (c *Client) doRequest(
 	resp, err := c.httpClient.Do(req)
 	c.markRequestDone()
 	if err != nil {
-		log.Printf("HTTP %s %s -> error: %v",
+		log.Printf("HTTP %s %s (go) -> error: %v",
 			method, rawURL, err)
 		return nil, err
 	}
-	log.Printf("HTTP %s %s -> %d",
+	log.Printf("HTTP %s %s (go) -> %d",
 		method, rawURL, resp.StatusCode)
+	return resp, nil
+}
+
+func (c *Client) doExternalRequest(
+	ctx context.Context,
+	method, rawURL string,
+	body io.Reader,
+) (*http.Response, error) {
+	c.waitForRateLimit()
+	req, err := c.newRequest(ctx, method, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	via := "curl"
+	log.Printf("HTTP %s %s (%s)", method, rawURL, via)
+	resp, err := execCurl(req)
+	c.markRequestDone()
+	if err != nil {
+		via = "go-fallback"
+		log.Printf("HTTP %s %s -> curl failed: %v, falling back to Go",
+			method, rawURL, err)
+		resp, err = c.httpClient.Do(req)
+		c.markRequestDone()
+	}
+	if err != nil {
+		log.Printf("HTTP %s %s (%s) -> error: %v",
+			method, rawURL, via, err)
+		return nil, err
+	}
+	log.Printf("HTTP %s %s (%s) -> %d",
+		method, rawURL, via, resp.StatusCode)
 	return resp, nil
 }
 
@@ -466,27 +503,15 @@ func (c *Client) UpdatePatch(
 	return &pd, nil
 }
 
-func (c *Client) GetMbox(
-	ctx context.Context,
-	rawURL string,
-) (string, error) {
-	c.waitForRateLimit()
-	req, err := http.NewRequestWithContext(
-		ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := c.httpClient.Do(req)
-	c.markRequestDone()
+func (c *Client) GetMbox(ctx context.Context, rawURL string) (string, error) {
+	resp, err := c.doExternalRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err

@@ -279,11 +279,16 @@ func TestFetchMbox_Cached(t *testing.T) {
 	}
 }
 
+const testMboxContent = "From patchwork Mon Mar 10 12:00:00 2026\n" +
+	"Subject: [PATCH] Lorem ipsum\n" +
+	"From: Lorem <lorem@ipsum.example>\n" +
+	"\nLorem ipsum dolor sit amet.\n"
+
 func TestFetchMbox_FromLore(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/lorem-001@ipsum.example/raw" {
-				w.Write([]byte("lore mbox content"))
+				w.Write([]byte(testMboxContent))
 				return
 			}
 			w.WriteHeader(404)
@@ -317,12 +322,12 @@ func TestFetchMbox_FromLore(t *testing.T) {
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
-	if result.Content != "lore mbox content" {
+	if result.Content != testMboxContent {
 		t.Errorf("Content = %q", result.Content)
 	}
 
 	row, _ := d.GetPatch(100)
-	if row.MboxContent != "lore mbox content" {
+	if row.MboxContent != testMboxContent {
 		t.Errorf("cached = %q", row.MboxContent)
 	}
 }
@@ -331,7 +336,7 @@ func TestFetchMbox_FromPatchwork(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/patch/100/mbox/" {
-				w.Write([]byte("patchwork mbox"))
+				w.Write([]byte(testMboxContent))
 				return
 			}
 			w.WriteHeader(404)
@@ -364,7 +369,7 @@ func TestFetchMbox_FromPatchwork(t *testing.T) {
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
-	if result.Content != "patchwork mbox" {
+	if result.Content != testMboxContent {
 		t.Errorf("Content = %q", result.Content)
 	}
 }
@@ -1026,39 +1031,57 @@ func TestNeedsArchiveMonitoring(t *testing.T) {
 
 func TestIsValidMbox(t *testing.T) {
 	tests := []struct {
+		name    string
 		content string
 		want    bool
 	}{
-		{"From patchwork Sun Nov 30 15:49:21 2025\n" +
-			"Content-Type: text/plain\n", true},
-		{"Subject: [PATCH] Lorem ipsum\n\nbody\n", true},
-		{"", true},
-		{`<!doctype html><html><head>` +
-			`<title>Making sure you're not a bot!</title>` +
-			`</head></html>`, false},
-		{`<html><body>Oh noes!</body></html>`, false},
-		{`<HTML><BODY>blocked</BODY></HTML>`, false},
-		{`<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">` +
-			`<html><body>301 Moved</body></html>`, false},
+		{"mbox envelope",
+			"From patchwork Sun Nov 30 15:49:21 2025\n" +
+				"Content-Type: text/plain\n", true},
+		{"email headers",
+			"Subject: [PATCH] Lorem ipsum\n\nbody\n", true},
+		{"content type header",
+			"Content-Type: text/plain; charset=utf-8\n" +
+				"Subject: test\n", true},
+		{"message id header",
+			"Message-ID: <lorem@ipsum.example>\n" +
+				"Subject: test\n", true},
+		{"received header",
+			"Received: from smtp.example.com\n" +
+				"Subject: test\n", true},
+		{"return path header",
+			"Return-Path: <lorem@ipsum.example>\n", true},
+		{"dkim header",
+			"DKIM-Signature: v=1; a=rsa-sha256\n", true},
+		{"bot challenge page",
+			`<!doctype html><html><head>` +
+				`<title>Making sure you're not a bot!</title>` +
+				`</head></html>`, false},
+		{"html page",
+			`<html><body>Oh noes!</body></html>`, false},
+		{"301 redirect",
+			`<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">` +
+				`<html><body>301 Moved</body></html>`, false},
+		{"empty string", "", false},
+		{"random garbage", "asdfghjkl", false},
 	}
 	for _, tt := range tests {
 		got := isValidMbox(tt.content)
 		if got != tt.want {
-			t.Errorf("isValidMbox(%q...) = %v, want %v",
-				tt.content[:min(40, len(tt.content))],
-				got, tt.want)
+			t.Errorf("%s: isValidMbox = %v, want %v",
+				tt.name, got, tt.want)
 		}
 	}
 }
 
-func TestFetchMbox_DoesNotCacheAnubis(t *testing.T) {
-	anubisHTML := `<!doctype html><html><head>` +
+func TestFetchMbox_DoesNotCacheBotChallenge(t *testing.T) {
+	challengeHTML := `<!doctype html><html><head>` +
 		`<title>Making sure you're not a bot!</title>` +
 		`</head><body>challenge</body></html>`
 
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(anubisHTML))
+			w.Write([]byte(challengeHTML))
 		}))
 	defer srv.Close()
 
@@ -1084,12 +1107,12 @@ func TestFetchMbox_DoesNotCacheAnubis(t *testing.T) {
 	result := s.fetchMbox(context.Background(), 100)
 
 	if result.Err == nil {
-		t.Error("expected error for Anubis response")
+		t.Error("expected error for bot challenge response")
 	}
 
 	row, _ := d.GetPatch(100)
 	if row.MboxContent != "" {
-		t.Errorf("mbox_content = %q, want empty (Anubis cached!)",
+		t.Errorf("mbox_content = %q, want empty (should not cache)",
 			row.MboxContent[:min(40, len(row.MboxContent))])
 	}
 }

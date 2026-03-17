@@ -589,8 +589,13 @@ func (s *Syncer) fetchMbox(
 			log.Printf("SYNC: fetchMbox(%d): lore failed: %v",
 				patchID, err)
 		} else {
+			preview := content
+			if len(preview) > 200 {
+				preview = preview[:200]
+			}
 			log.Printf("SYNC: fetchMbox(%d): lore returned "+
-				"non-mbox content (bot protection?)", patchID)
+				"non-mbox content (%d bytes): %q",
+				patchID, len(content), preview)
 		}
 	}
 
@@ -609,10 +614,15 @@ func (s *Syncer) fetchMbox(
 			return MboxResult{Err: err}
 		}
 		if !isValidMbox(content) {
+			preview := content
+			if len(preview) > 200 {
+				preview = preview[:200]
+			}
 			log.Printf("SYNC: fetchMbox(%d): patchwork returned "+
-				"non-mbox content (bot protection?)", patchID)
+				"non-mbox content (%d bytes): %q",
+				patchID, len(content), preview)
 			return MboxResult{
-				Err: fmt.Errorf("blocked by bot protection"),
+				Err: fmt.Errorf("unexpected response from server"),
 			}
 		}
 		log.Printf("SYNC: fetchMbox(%d): patchwork OK, %d bytes",
@@ -626,15 +636,26 @@ func (s *Syncer) fetchMbox(
 }
 
 func isValidMbox(content string) bool {
-	if strings.Contains(content, "not a bot") {
-		return false
+	if strings.HasPrefix(content, "From ") {
+		return true
 	}
-	if strings.HasPrefix(content, "<!") ||
-		strings.HasPrefix(content, "<html") ||
-		strings.HasPrefix(content, "<HTML") {
-		return false
+	firstChunk := content
+	if len(firstChunk) > 1000 {
+		firstChunk = firstChunk[:1000]
 	}
-	return true
+	emailHeaders := []string{
+		"Subject:", "From:", "Date:",
+		"Content-Type:", "MIME-Version:",
+		"Message-Id:", "Message-ID:",
+		"Received:", "Return-Path:",
+		"Delivered-To:", "DKIM-Signature:",
+	}
+	for _, h := range emailHeaders {
+		if strings.Contains(firstChunk, h) {
+			return true
+		}
+	}
+	return false
 }
 
 func patchToRow(p api.Patch) db.PatchRow {
