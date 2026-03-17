@@ -846,3 +846,180 @@ func TestProcessEvent_PatchCommentCreated(t *testing.T) {
 			ids)
 	}
 }
+
+func TestCheckMailArchive(t *testing.T) {
+	archiveHTML := `<HTML><BODY><ul>
+<LI><A HREF="100.html">[dev] [PATCH] Lorem ipsum dolor
+</A><A NAME="100">&nbsp;</A>
+<I>Lorem</I>
+<LI><A HREF="101.html">Re: [dev] [PATCH] Lorem ipsum dolor
+</A><A NAME="101">&nbsp;</A>
+<I>Dolor</I>
+<LI><A HREF="102.html">[dev] [PATCH] Unrelated subject
+</A><A NAME="102">&nbsp;</A>
+<I>Amet</I>
+</ul></BODY></HTML>`
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(archiveHTML))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 1000, SeriesID: 50,
+		Name:      "[dev,v1] Lorem ipsum dolor",
+		Date:      "2026-03-10",
+		State:     "new",
+		Submitter: "Lorem",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 1001, SeriesID: 50,
+		Name:      "[dev] Something completely different",
+		Date:      "2026-03-10",
+		State:     "new",
+		Submitter: "Lorem",
+	})
+	// Non-active patch that still matches the archive
+	d.SaveSeriesSummary(51, "Old series", "2026-01-01", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 1002, SeriesID: 51,
+		Name:      "[dev] Unrelated subject",
+		Date:      "2026-01-01",
+		State:     "accepted",
+		Submitter: "Lorem",
+	})
+	d.MarkCommentsFetched(1000)
+	d.MarkCommentsFetched(1001)
+	d.MarkCommentsFetched(1002)
+
+	cfg := &config.Config{
+		Server:      srv.URL,
+		Project:     "test",
+		APIVersion:  "1.2",
+		MailArchive: srv.URL + "/",
+		States:      []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+
+	s.checkMailArchive(context.Background())
+
+	// Patch 1000 should be reset (subject matches)
+	ids := d.GetPatchesNeedingComments([]string{"new"})
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got[1000] {
+		t.Error("patch 1000 should be reset (matches archive)")
+	}
+	if got[1001] {
+		t.Error("patch 1001 should NOT be reset (no match)")
+	}
+	// Non-active patch should also be matched
+	if !got[1002] {
+		t.Error("patch 1002 (accepted) should be reset" +
+			" (matches 'Unrelated subject' in archive)")
+	}
+
+	// Last seen should be updated
+	lastSeen := d.GetSyncState(
+		fmt.Sprintf("last_archive_msg:%d-%s",
+			time.Now().Year(), time.Now().Month()))
+	if lastSeen != "102" {
+		t.Errorf("last_archive_msg = %q, want 102",
+			lastSeen)
+	}
+}
+
+func TestCheckMailArchive_SkipsOldMessages(t *testing.T) {
+	archiveHTML := `<HTML><BODY><ul>
+<LI><A HREF="100.html">[dev] Old message
+</A><A NAME="100">&nbsp;</A>
+<LI><A HREF="200.html">[dev] New message matching Lorem
+</A><A NAME="200">&nbsp;</A>
+</ul></BODY></HTML>`
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(archiveHTML))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "Lorem", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 1000, SeriesID: 50,
+		Name:      "[dev] Lorem",
+		Date:      "2026-03-10",
+		State:     "new",
+		Submitter: "Lorem",
+	})
+	d.MarkCommentsFetched(1000)
+
+	// Set last seen to 150 — so only message 200 is new
+	monthKey := fmt.Sprintf("last_archive_msg:%d-%s",
+		time.Now().Year(), time.Now().Month())
+	d.SetSyncState(monthKey, "150")
+
+	cfg := &config.Config{
+		Server:      srv.URL,
+		Project:     "test",
+		APIVersion:  "1.2",
+		MailArchive: srv.URL + "/",
+		States:      []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	s.checkMailArchive(context.Background())
+
+	// Patch 1000 should be reset (new message 200 matches)
+	ids := d.GetPatchesNeedingComments([]string{"new"})
+	if len(ids) != 1 || ids[0] != 1000 {
+		t.Errorf("got %v, want [1000]", ids)
+	}
+
+	lastSeen := d.GetSyncState(monthKey)
+	if lastSeen != "200" {
+		t.Errorf("last_archive_msg = %q, want 200",
+			lastSeen)
+	}
+}
+
+func TestNeedsArchiveMonitoring(t *testing.T) {
+	tests := []struct {
+		version string
+		archive string
+		want    bool
+	}{
+		{"1.2", "https://mail.example.org/", true},
+		{"1.3", "https://mail.example.org/", false},
+		{"1.2", "", false},
+		{"1.3", "", false},
+	}
+	for _, tt := range tests {
+		cfg := &config.Config{
+			APIVersion:  tt.version,
+			MailArchive: tt.archive,
+		}
+		s := &Syncer{cfg: cfg}
+		got := s.needsArchiveMonitoring()
+		if got != tt.want {
+			t.Errorf("v=%s archive=%q: got %v, want %v",
+				tt.version, tt.archive, got, tt.want)
+		}
+	}
+}

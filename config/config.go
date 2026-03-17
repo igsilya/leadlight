@@ -8,27 +8,29 @@ import (
 )
 
 type Config struct {
-	Server     string
-	Project    string
-	Token      string
-	Username   string
-	Password   string
-	DBPath     string
-	States     []string
-	LoreURL    string
-	BaseURL    string
-	APIVersion string
+	Server      string
+	Project     string
+	Token       string
+	Username    string
+	Password    string
+	DBPath      string
+	States      []string
+	LoreURL     string
+	MailArchive string
+	BaseURL     string
+	APIVersion  string
 }
 
 func Load(dir string) (*Config, error) {
 	cfg := &Config{
-		Server:   getWithFallback(dir, "leadlight.server", "pw.server"),
-		Project:  getWithFallback(dir, "leadlight.project", "pw.project"),
-		Token:    getWithFallback(dir, "leadlight.token", "pw.token"),
-		Username: getWithFallback(dir, "leadlight.username", "pw.username"),
-		Password: getWithFallback(dir, "leadlight.password", "pw.password"),
-		DBPath:   gitConfigGet(dir, "leadlight.db"),
-		LoreURL:  gitConfigGet(dir, "leadlight.lore"),
+		Server:      getWithFallback(dir, "leadlight.server", "pw.server"),
+		Project:     getWithFallback(dir, "leadlight.project", "pw.project"),
+		Token:       getWithFallback(dir, "leadlight.token", "pw.token"),
+		Username:    getWithFallback(dir, "leadlight.username", "pw.username"),
+		Password:    getWithFallback(dir, "leadlight.password", "pw.password"),
+		DBPath:      gitConfigGet(dir, "leadlight.db"),
+		LoreURL:     gitConfigGet(dir, "leadlight.lore"),
+		MailArchive: gitConfigGet(dir, "leadlight.mailarchive"),
 	}
 
 	if cfg.DBPath == "" {

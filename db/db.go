@@ -543,6 +543,24 @@ func (d *DB) GetMaintainers() []MaintainerRow {
 	return result
 }
 
+func (d *DB) GetAllPatchNames() map[int]string {
+	rows, err := d.conn.Query(
+		"SELECT id, name FROM patches")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := map[int]string{}
+	for rows.Next() {
+		var id int
+		var name string
+		rows.Scan(&id, &name)
+		result[id] = name
+	}
+	return result
+}
+
 func (d *DB) GetOldestPatchDate() string {
 	var date string
 	d.conn.QueryRow(

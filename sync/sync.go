@@ -3,8 +3,10 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,10 +67,15 @@ func (s *Syncer) RequestMbox(patchID int) MboxResult {
 }
 
 const (
-	syncInterval          = 30 * time.Second
-	maintainerRefresh     = time.Hour
-	commentRepollInterval = 6 * time.Hour
+	syncInterval      = 30 * time.Second
+	commentInterval   = 5 * time.Second
+	archiveInterval   = 5 * time.Minute
+	maintainerRefresh = 24 * time.Hour
 )
+
+func (s *Syncer) needsArchiveMonitoring() bool {
+	return s.cfg.APIVersion < "1.3" && s.cfg.MailArchive != ""
+}
 
 func (s *Syncer) Run(ctx context.Context) {
 	complete := s.db.GetSyncState("initial_sync_complete")
@@ -77,11 +84,24 @@ func (s *Syncer) Run(ctx context.Context) {
 		s.notify()
 	}
 
-	ticker := time.NewTicker(syncInterval)
-	defer ticker.Stop()
+	s.incrementalSync(ctx)
+	s.fetchNextDetail(ctx)
+	s.fetchNextComments(ctx)
+	if s.needsArchiveMonitoring() {
+		s.checkMailArchive(ctx)
+	}
+	s.notify()
+
+	syncTicker := time.NewTicker(syncInterval)
+	defer syncTicker.Stop()
+
+	commentTicker := time.NewTicker(commentInterval)
+	defer commentTicker.Stop()
+
+	archiveTicker := time.NewTicker(archiveInterval)
+	defer archiveTicker.Stop()
 
 	lastMaintainerRefresh := time.Now()
-	lastCommentRepoll := time.Now()
 
 	for {
 		select {
@@ -92,20 +112,21 @@ func (s *Syncer) Run(ctx context.Context) {
 			s.notify()
 		case req := <-s.mboxC:
 			req.ResultC <- s.fetchMbox(ctx, req.PatchID)
-		case <-ticker.C:
+		case <-syncTicker.C:
 			s.incrementalSync(ctx)
 			s.fetchNextDetail(ctx)
-			s.fetchNextComments(ctx)
 			s.notify()
 
 			if time.Since(lastMaintainerRefresh) > maintainerRefresh {
 				s.fetchMaintainers(ctx)
 				lastMaintainerRefresh = time.Now()
 			}
-			if time.Since(lastCommentRepoll) > commentRepollInterval {
-				s.db.ResetAllCommentsFetched(s.cfg.States)
-				lastCommentRepoll = time.Now()
-				log.Printf("reset comments_fetched for active patches")
+		case <-commentTicker.C:
+			s.fetchNextComments(ctx)
+			s.notify()
+		case <-archiveTicker.C:
+			if s.needsArchiveMonitoring() {
+				s.checkMailArchive(ctx)
 			}
 		}
 	}
@@ -396,6 +417,57 @@ func (s *Syncer) fetchNextComments(ctx context.Context) {
 	}
 	s.updatePatchTagsFromComments(patchID)
 	s.db.MarkCommentsFetched(patchID)
+}
+
+func (s *Syncer) checkMailArchive(ctx context.Context) {
+	now := time.Now()
+	s.checkArchiveMonth(ctx, now.Year(), now.Month())
+	if now.Day() <= 2 {
+		prev := now.AddDate(0, -1, 0)
+		s.checkArchiveMonth(
+			ctx, prev.Year(), prev.Month())
+	}
+}
+
+func (s *Syncer) checkArchiveMonth(
+	ctx context.Context, year int, month time.Month,
+) {
+	monthKey := fmt.Sprintf(
+		"last_archive_msg:%d-%s", year, month)
+	lastSeenStr := s.db.GetSyncState(monthKey)
+	lastSeen, _ := strconv.Atoi(lastSeenStr)
+
+	pageURL := api.BuildArchiveURL(
+		s.cfg.MailArchive, year, month)
+	msgs, err := s.client.FetchArchiveMessages(ctx, pageURL)
+	if err != nil {
+		log.Printf("archive check: %v", err)
+		return
+	}
+
+	newMsgs := api.FilterNewMessages(msgs, lastSeen)
+	if len(newMsgs) == 0 {
+		return
+	}
+
+	patchNames := s.db.GetAllPatchNames()
+	matchedIDs := api.MatchPatchSubjects(newMsgs, patchNames)
+	for _, id := range matchedIDs {
+		s.db.ResetCommentsFetched(id)
+	}
+
+	if len(matchedIDs) > 0 {
+		log.Printf("archive: %d new messages, %d patches to re-check",
+			len(newMsgs), len(matchedIDs))
+	}
+
+	maxNum := lastSeen
+	for _, m := range newMsgs {
+		if m.Number > maxNum {
+			maxNum = m.Number
+		}
+	}
+	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
 }
 
 func (s *Syncer) updatePatchTagsFromComments(
