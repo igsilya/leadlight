@@ -137,7 +137,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 
 	s.incrementalSync(ctx)
 	s.fetchNextDetail(ctx)
-	s.fixOrphanPatches(ctx)
+	s.fixIncompletePatches(ctx)
 	s.notify()
 
 	ticker := time.NewTicker(syncInterval)
@@ -151,7 +151,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		case <-ticker.C:
 			s.incrementalSync(ctx)
 			s.fetchNextDetail(ctx)
-			s.fixOrphanPatches(ctx)
+			s.fixIncompletePatches(ctx)
 			s.notify()
 
 			if time.Since(lastMaintainerRefresh) > maintainerRefresh {
@@ -418,24 +418,62 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 	return nil
 }
 
-func (s *Syncer) fixOrphanPatches(ctx context.Context) {
-	ids := s.db.GetPatchesWithoutSeries()
+func (s *Syncer) fixIncompletePatches(ctx context.Context) {
+	ids := s.db.GetIncompletePatches()
 	if len(ids) == 0 {
 		return
 	}
 	id := ids[0]
-	detail, err := s.client.GetPatch(ctx, id)
+	row, err := s.db.GetPatch(id)
 	if err != nil {
-		log.Printf("SYNC: fixOrphanPatch(%d): %v", id, err)
-		s.db.UpdatePatchDetail(id, "", "", "", "")
 		return
 	}
-	log.Printf("SYNC: fixOrphanPatch(%d) %q -> series %v",
-		id, detail.Name, detail.Series)
-	s.db.SavePatch(patchToRow(detail.Patch))
-	for _, ss := range detail.Series {
-		s.db.SaveSeriesSummary(
-			ss.ID, ss.Name, ss.Date, ss.Version)
+
+	if row.SeriesID != 0 && row.Submitter == "" {
+		series, err := s.client.GetSeries(ctx, row.SeriesID)
+		if err != nil {
+			log.Printf("SYNC: fixIncomplete series %d: %v",
+				row.SeriesID, err)
+			return
+		}
+		log.Printf("SYNC: fixIncomplete series %d %q, %d patches, submitter %q",
+			series.ID, series.Name, len(series.Patches),
+			series.Submitter.Name)
+		s.db.SaveSeries(db.SeriesRow{
+			ID:              series.ID,
+			Name:            series.Name,
+			Date:            series.Date,
+			Version:         series.Version,
+			Submitter:       series.Submitter.Name,
+			SubmitterEmail:  series.Submitter.Email,
+			WebURL:          series.WebURL,
+			MboxURL:         series.Mbox,
+			Complete:        series.ReceivedAll,
+			TotalPatches:    series.Total,
+			ReceivedPatches: series.ReceivedTotal,
+		})
+		s.db.UpdateSeriesPatches(
+			series.ID,
+			series.Submitter.Name,
+			series.Submitter.Email)
+		return
+	}
+
+	if row.SeriesID == 0 {
+		detail, err := s.client.GetPatch(ctx, id)
+		if err != nil {
+			log.Printf("SYNC: fixIncomplete patch %d: %v",
+				id, err)
+			s.db.UpdatePatchDetail(id, "", "", "", "")
+			return
+		}
+		log.Printf("SYNC: fixIncomplete patch %d %q -> series %v",
+			id, detail.Name, detail.Series)
+		s.db.SavePatch(patchToRow(detail.Patch))
+		for _, ss := range detail.Series {
+			s.db.SaveSeriesSummary(
+				ss.ID, ss.Name, ss.Date, ss.Version)
+		}
 	}
 }
 

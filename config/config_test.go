@@ -39,11 +39,11 @@ func setupGitRepo(t *testing.T, configs map[string]string) string {
 
 func TestGitConfigGet_KeyExists(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server": "https://patchwork.ozlabs.org/api/1.2",
+		"pw.server": "https://pw.example.com/api/1.2",
 	})
 	got := gitConfigGet(dir, "pw.server")
-	if got != "https://patchwork.ozlabs.org/api/1.2" {
-		t.Errorf("got %q, want %q", got, "https://patchwork.ozlabs.org/api/1.2")
+	if got != "https://pw.example.com/api/1.2" {
+		t.Errorf("got %q, want %q", got, "https://pw.example.com/api/1.2")
 	}
 }
 
@@ -229,15 +229,15 @@ func TestDefaults_StatesWhitespace(t *testing.T) {
 }
 
 func TestBaseURL_Standard(t *testing.T) {
-	got := deriveBaseURL("https://patchwork.ozlabs.org/api/1.2")
-	if got != "https://patchwork.ozlabs.org" {
+	got := deriveBaseURL("https://pw.example.com/api/1.2")
+	if got != "https://pw.example.com" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestBaseURL_TrailingSlash(t *testing.T) {
-	got := deriveBaseURL("https://patchwork.ozlabs.org/api/1.2/")
-	if got != "https://patchwork.ozlabs.org" {
+	got := deriveBaseURL("https://pw.example.com/api/1.2/")
+	if got != "https://pw.example.com" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -257,14 +257,14 @@ func TestBaseURL_NoAPI(t *testing.T) {
 }
 
 func TestAPIVersion_12(t *testing.T) {
-	got := parseAPIVersion("https://patchwork.ozlabs.org/api/1.2")
+	got := parseAPIVersion("https://pw.example.com/api/1.2")
 	if got != "1.2" {
 		t.Errorf("got %q, want 1.2", got)
 	}
 }
 
 func TestAPIVersion_13(t *testing.T) {
-	got := parseAPIVersion("https://patches.dpdk.org/api/1.3")
+	got := parseAPIVersion("https://pw2.example.com/api/1.3")
 	if got != "1.3" {
 		t.Errorf("got %q, want 1.3", got)
 	}
@@ -325,23 +325,23 @@ func TestValidation_BothMissing(t *testing.T) {
 
 func TestLoad_FullConfig(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":        "https://patchwork.ozlabs.org/api/1.2",
-		"pw.project":       "openvswitch",
+		"pw.server":        "https://pw.example.com/api/1.2",
+		"pw.project":       "lorem-project",
 		"pw.token":         "abc123",
 		"pw.username":      "user",
 		"pw.password":      "pass",
 		"leadlight.db":     "/tmp/test.db",
 		"leadlight.states": "new,accepted",
-		"leadlight.lore":   "https://lore.kernel.org/ovs-dev/",
+		"leadlight.lore":   "https://lore.example.com/lorem-dev/",
 	})
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server != "https://patchwork.ozlabs.org/api/1.2" {
+	if cfg.Server != "https://pw.example.com/api/1.2" {
 		t.Errorf("Server = %q", cfg.Server)
 	}
-	if cfg.Project != "openvswitch" {
+	if cfg.Project != "lorem-project" {
 		t.Errorf("Project = %q", cfg.Project)
 	}
 	if cfg.Token != "abc123" {
@@ -356,10 +356,10 @@ func TestLoad_FullConfig(t *testing.T) {
 	if cfg.DBPath != "/tmp/test.db" {
 		t.Errorf("DBPath = %q", cfg.DBPath)
 	}
-	if cfg.LoreURL != "https://lore.kernel.org/ovs-dev/" {
+	if cfg.LoreURL != "https://lore.example.com/lorem-dev/" {
 		t.Errorf("LoreURL = %q", cfg.LoreURL)
 	}
-	if cfg.BaseURL != "https://patchwork.ozlabs.org" {
+	if cfg.BaseURL != "https://pw.example.com" {
 		t.Errorf("BaseURL = %q", cfg.BaseURL)
 	}
 	if cfg.APIVersion != "1.2" {
@@ -372,17 +372,17 @@ func TestLoad_FullConfig(t *testing.T) {
 
 func TestLoad_MinimalConfig(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":  "https://patches.dpdk.org/api/1.3/",
-		"pw.project": "dpdk",
+		"pw.server":  "https://pw2.example.com/api/1.3/",
+		"pw.project": "dolor-project",
 	})
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server != "https://patches.dpdk.org/api/1.3/" {
+	if cfg.Server != "https://pw2.example.com/api/1.3/" {
 		t.Errorf("Server = %q", cfg.Server)
 	}
-	if cfg.Project != "dpdk" {
+	if cfg.Project != "dolor-project" {
 		t.Errorf("Project = %q", cfg.Project)
 	}
 	if cfg.Token != "" {
@@ -391,7 +391,7 @@ func TestLoad_MinimalConfig(t *testing.T) {
 	if cfg.DBPath != ".leadlight.db" {
 		t.Errorf("DBPath = %q, want default", cfg.DBPath)
 	}
-	if cfg.BaseURL != "https://patches.dpdk.org" {
+	if cfg.BaseURL != "https://pw2.example.com" {
 		t.Errorf("BaseURL = %q", cfg.BaseURL)
 	}
 	if cfg.APIVersion != "1.3" {

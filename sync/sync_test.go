@@ -1163,7 +1163,7 @@ func TestUserRequestLoop_HandlesMbox(t *testing.T) {
 	wg.Wait()
 }
 
-func TestFixOrphanPatches(t *testing.T) {
+func TestFixIncompletePatches_FixesOrphan(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/patches/100/" {
@@ -1195,7 +1195,7 @@ func TestFixOrphanPatches(t *testing.T) {
 	d.SavePatch(db.PatchRow{
 		ID: 100, SeriesID: 0,
 		Name: "Lorem orphan patch", Date: "2026-03-10",
-		State: "new", Submitter: "Lorem",
+		State: "new", Submitter: "",
 	})
 
 	cfg := &config.Config{
@@ -1208,20 +1208,88 @@ func TestFixOrphanPatches(t *testing.T) {
 		10*time.Millisecond)
 
 	s := NewSyncer(client, d, cfg, func() {})
-	s.fixOrphanPatches(context.Background())
+	s.fixIncompletePatches(context.Background())
 
 	row, _ := d.GetPatch(100)
 	if row.SeriesID != 50 {
 		t.Errorf("SeriesID = %d, want 50", row.SeriesID)
 	}
-
-	ids := d.GetPatchesWithoutSeries()
-	if len(ids) != 0 {
-		t.Errorf("still orphaned: %v", ids)
+	if row.Submitter != "Lorem" {
+		t.Errorf("Submitter = %q", row.Submitter)
 	}
 }
 
-func TestFixOrphanPatches_NoneToFix(t *testing.T) {
+func TestFixIncompletePatches_FixesViaSeries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/series/50/" {
+				json.NewEncoder(w).Encode(api.Series{
+					ID:            50,
+					Name:          "Lorem series",
+					Date:          "2026-03-10",
+					Version:       1,
+					Total:         2,
+					ReceivedTotal: 2,
+					ReceivedAll:   true,
+					Submitter: api.Person{
+						Name:  "Lorem Ipsum",
+						Email: "lorem@ipsum.example"},
+					Patches: []api.PatchSummary{
+						{ID: 100, Name: "p1"},
+						{ID: 101, Name: "p2"},
+					},
+				})
+				return
+			}
+			w.WriteHeader(404)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 101, SeriesID: 50,
+		Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	s.fixIncompletePatches(context.Background())
+
+	// Both patches should have submitter set
+	r1, _ := d.GetPatch(100)
+	if r1.Submitter != "Lorem Ipsum" {
+		t.Errorf("patch 100 Submitter = %q", r1.Submitter)
+	}
+	r2, _ := d.GetPatch(101)
+	if r2.Submitter != "Lorem Ipsum" {
+		t.Errorf("patch 101 Submitter = %q", r2.Submitter)
+	}
+
+	// No more incomplete patches
+	ids := d.GetIncompletePatches()
+	if len(ids) != 0 {
+		t.Errorf("still incomplete: %v", ids)
+	}
+}
+
+func TestFixIncompletePatches_NoneToFix(t *testing.T) {
 	s, d := setupSyncer(t, http.NotFoundHandler())
 	d.SavePatch(db.PatchRow{
 		ID: 100, SeriesID: 50,
@@ -1230,5 +1298,5 @@ func TestFixOrphanPatches_NoneToFix(t *testing.T) {
 	})
 
 	// Should not make any API calls or error
-	s.fixOrphanPatches(context.Background())
+	s.fixIncompletePatches(context.Background())
 }

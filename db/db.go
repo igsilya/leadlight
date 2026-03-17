@@ -314,6 +314,16 @@ func (d *DB) UpdatePatchMbox(patchID int, content string) error {
 	return err
 }
 
+func (d *DB) UpdateSeriesPatches(seriesID int, submitter, email string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(`
+		UPDATE patches SET submitter = ?, submitter_email = ?
+		WHERE series_id = ? AND submitter = ''`,
+		submitter, email, seriesID)
+	return err
+}
+
 func (d *DB) InsertCheck(c CheckRow) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -579,9 +589,9 @@ func (d *DB) GetMaintainers() []MaintainerRow {
 	return result
 }
 
-func (d *DB) GetPatchesWithoutSeries() []int {
+func (d *DB) GetIncompletePatches() []int {
 	rows, err := d.conn.Query(
-		"SELECT id FROM patches WHERE series_id = 0 ORDER BY id LIMIT 10")
+		"SELECT id FROM patches WHERE series_id = 0 OR submitter = '' ORDER BY id DESC LIMIT 10")
 	if err != nil {
 		return nil
 	}

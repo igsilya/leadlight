@@ -3,6 +3,7 @@ package api
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -108,12 +109,18 @@ func TestCurlAvailable(t *testing.T) {
 	}
 }
 
-func TestExecCurl_Real(t *testing.T) {
+func TestExecCurl_Integration(t *testing.T) {
 	if !curlAvailable() {
 		t.Skip("curl not installed")
 	}
-	req, _ := http.NewRequest("GET",
-		"https://patchwork.ozlabs.org/api/1.2/projects/47/", nil)
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"name":"lorem","id":1}`))
+		}))
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/test", nil)
 	req.Header.Set("User-Agent", "leadlight/1.0")
 	req.Header.Set("Accept", "*/*")
 
@@ -127,7 +134,7 @@ func TestExecCurl_Real(t *testing.T) {
 		t.Errorf("StatusCode = %d", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "openvswitch") {
-		t.Errorf("body doesn't contain openvswitch")
+	if !strings.Contains(string(body), "lorem") {
+		t.Errorf("body = %q", string(body))
 	}
 }

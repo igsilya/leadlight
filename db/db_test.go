@@ -770,7 +770,7 @@ func TestResetAllCommentsFetched(t *testing.T) {
 	}
 }
 
-func TestGetPatchesWithoutSeries(t *testing.T) {
+func TestGetIncompletePatches(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{
 		ID: 100, SeriesID: 50,
@@ -788,16 +788,72 @@ func TestGetPatchesWithoutSeries(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 
-	ids := d.GetPatchesWithoutSeries()
+	ids := d.GetIncompletePatches()
 	if len(ids) != 2 {
 		t.Fatalf("got %d, want 2", len(ids))
 	}
-	if ids[0] != 101 || ids[1] != 102 {
-		t.Errorf("got %v, want [101, 102]", ids)
+	// Ordered by id DESC
+	if ids[0] != 102 || ids[1] != 101 {
+		t.Errorf("got %v, want [102, 101]", ids)
 	}
 }
 
-func TestGetPatchesWithoutSeries_AllHaveSeries(t *testing.T) {
+func TestGetIncompletePatches_EmptySubmitter(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50,
+		Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+
+	ids := d.GetIncompletePatches()
+	if len(ids) != 1 || ids[0] != 101 {
+		t.Errorf("got %v, want [101]", ids)
+	}
+}
+
+func TestUpdateSeriesPatches(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50,
+		Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+	d.SavePatch(PatchRow{
+		ID: 102, SeriesID: 51,
+		Name: "p3", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+
+	d.UpdateSeriesPatches(50, "Lorem Ipsum", "lorem@ipsum.example")
+
+	r1, _ := d.GetPatch(100)
+	if r1.Submitter != "Lorem Ipsum" {
+		t.Errorf("patch 100 submitter = %q", r1.Submitter)
+	}
+	r2, _ := d.GetPatch(101)
+	if r2.Submitter != "Lorem Ipsum" {
+		t.Errorf("patch 101 submitter = %q", r2.Submitter)
+	}
+	r3, _ := d.GetPatch(102)
+	if r3.Submitter != "" {
+		t.Errorf("patch 102 (different series) submitter = %q, want empty",
+			r3.Submitter)
+	}
+}
+
+func TestGetIncompletePatches_AllComplete(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{
 		ID: 100, SeriesID: 50,
@@ -805,7 +861,7 @@ func TestGetPatchesWithoutSeries_AllHaveSeries(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 
-	ids := d.GetPatchesWithoutSeries()
+	ids := d.GetIncompletePatches()
 	if len(ids) != 0 {
 		t.Errorf("got %v, want empty", ids)
 	}
