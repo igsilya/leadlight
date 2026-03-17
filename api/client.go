@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"sync"
@@ -31,14 +32,18 @@ type Client struct {
 }
 
 func NewClient(cfg *config.Config) *Client {
+	jar, _ := cookiejar.New(nil)
 	return &Client{
-		baseURL:    strings.TrimRight(cfg.Server, "/"),
-		project:    cfg.Project,
-		token:      cfg.Token,
-		username:   cfg.Username,
-		password:   cfg.Password,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		minDelay:   defaultMinDelay,
+		baseURL:  strings.TrimRight(cfg.Server, "/"),
+		project:  cfg.Project,
+		token:    cfg.Token,
+		username: cfg.Username,
+		password: cfg.Password,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Jar:     jar,
+		},
+		minDelay: defaultMinDelay,
 	}
 }
 

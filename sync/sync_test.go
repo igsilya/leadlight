@@ -1023,3 +1023,121 @@ func TestNeedsArchiveMonitoring(t *testing.T) {
 		}
 	}
 }
+
+func TestIsValidMbox(t *testing.T) {
+	tests := []struct {
+		content string
+		want    bool
+	}{
+		{"From patchwork Sun Nov 30 15:49:21 2025\n" +
+			"Content-Type: text/plain\n", true},
+		{"Subject: [PATCH] Lorem ipsum\n\nbody\n", true},
+		{"", true},
+		{`<!doctype html><html><head>` +
+			`<title>Making sure you're not a bot!</title>` +
+			`</head></html>`, false},
+		{`<html><body>Oh noes!</body></html>`, false},
+		{`<HTML><BODY>blocked</BODY></HTML>`, false},
+		{`<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">` +
+			`<html><body>301 Moved</body></html>`, false},
+	}
+	for _, tt := range tests {
+		got := isValidMbox(tt.content)
+		if got != tt.want {
+			t.Errorf("isValidMbox(%q...) = %v, want %v",
+				tt.content[:min(40, len(tt.content))],
+				got, tt.want)
+		}
+	}
+}
+
+func TestFetchMbox_DoesNotCacheAnubis(t *testing.T) {
+	anubisHTML := `<!doctype html><html><head>` +
+		`<title>Making sure you're not a bot!</title>` +
+		`</head><body>challenge</body></html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(anubisHTML))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(db.PatchRow{
+		ID: 100, Name: "Lorem patch",
+		Date: "2026-03-10", State: "new",
+		MboxURL:   srv.URL + "/patch/100/mbox/",
+		Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	result := s.fetchMbox(context.Background(), 100)
+
+	if result.Err == nil {
+		t.Error("expected error for Anubis response")
+	}
+
+	row, _ := d.GetPatch(100)
+	if row.MboxContent != "" {
+		t.Errorf("mbox_content = %q, want empty (Anubis cached!)",
+			row.MboxContent[:min(40, len(row.MboxContent))])
+	}
+}
+
+func TestHandleUserRequests_Preempts(t *testing.T) {
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(db.PatchRow{
+		ID: 100, Name: "Lorem patch",
+		Date: "2026-03-10", State: "new",
+		MboxURL:   "http://example.com/mbox/",
+		Submitter: "Lorem",
+	})
+	d.UpdatePatchMbox(100, "cached mbox content")
+
+	cfg := &config.Config{
+		Server:  "https://example.com",
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		"https://example.com", "test", nil,
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+
+	// Nothing pending — should return false
+	got := s.handleUserRequests(context.Background())
+	if got {
+		t.Error("should return false with empty channels")
+	}
+
+	// Send a mbox request
+	resultC := make(chan MboxResult, 1)
+	s.mboxC <- MboxRequest{
+		PatchID: 100,
+		ResultC: resultC,
+	}
+
+	// Should handle it and return true
+	got = s.handleUserRequests(context.Background())
+	if !got {
+		t.Error("should return true when mbox request pending")
+	}
+
+	result := <-resultC
+	if result.Content != "cached mbox content" {
+		t.Errorf("content = %q", result.Content)
+	}
+}

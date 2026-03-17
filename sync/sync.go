@@ -22,6 +22,7 @@ type Syncer struct {
 	notify    func()
 	priorityC chan int
 	mboxC     chan MboxRequest
+	updateC   chan PatchUpdateRequest
 }
 
 type MboxRequest struct {
@@ -32,6 +33,13 @@ type MboxRequest struct {
 type MboxResult struct {
 	Content string
 	Err     error
+}
+
+type PatchUpdateRequest struct {
+	PatchID    int
+	State      *string
+	DelegateID *int
+	ResultC    chan<- error
 }
 
 func NewSyncer(
@@ -47,6 +55,7 @@ func NewSyncer(
 		notify:    notify,
 		priorityC: make(chan int, 16),
 		mboxC:     make(chan MboxRequest, 4),
+		updateC:   make(chan PatchUpdateRequest, 4),
 	}
 }
 
@@ -55,6 +64,13 @@ func (s *Syncer) PrioritizeSeries(seriesID int) {
 	case s.priorityC <- seriesID:
 	default:
 	}
+}
+
+func (s *Syncer) RequestPatchUpdate(req PatchUpdateRequest) error {
+	resultC := make(chan error, 1)
+	req.ResultC = resultC
+	s.updateC <- req
+	return <-resultC
 }
 
 func (s *Syncer) RequestMbox(patchID int) MboxResult {
@@ -72,6 +88,27 @@ const (
 	archiveInterval   = 5 * time.Minute
 	maintainerRefresh = 24 * time.Hour
 )
+
+func (s *Syncer) handleUserRequests(ctx context.Context) bool {
+	select {
+	case req := <-s.mboxC:
+		log.Printf("SYNC: priority mbox request for patch %d",
+			req.PatchID)
+		req.ResultC <- s.fetchMbox(ctx, req.PatchID)
+		return true
+	case req := <-s.updateC:
+		log.Printf("SYNC: priority update request for patch %d",
+			req.PatchID)
+		req.ResultC <- s.handlePatchUpdate(ctx, req)
+		return true
+	case seriesID := <-s.priorityC:
+		s.fetchSeriesDetail(ctx, seriesID)
+		s.notify()
+		return true
+	default:
+		return false
+	}
+}
 
 func (s *Syncer) needsArchiveMonitoring() bool {
 	return s.cfg.APIVersion < "1.3" && s.cfg.MailArchive != ""
@@ -104,6 +141,11 @@ func (s *Syncer) Run(ctx context.Context) {
 	lastMaintainerRefresh := time.Now()
 
 	for {
+		// Always handle user requests first
+		if s.handleUserRequests(ctx) {
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
 			return
@@ -111,7 +153,13 @@ func (s *Syncer) Run(ctx context.Context) {
 			s.fetchSeriesDetail(ctx, seriesID)
 			s.notify()
 		case req := <-s.mboxC:
+			log.Printf("SYNC: mbox request for patch %d",
+				req.PatchID)
 			req.ResultC <- s.fetchMbox(ctx, req.PatchID)
+		case req := <-s.updateC:
+			log.Printf("SYNC: update request for patch %d",
+				req.PatchID)
+			req.ResultC <- s.handlePatchUpdate(ctx, req)
 		case <-syncTicker.C:
 			s.incrementalSync(ctx)
 			s.fetchNextDetail(ctx)
@@ -489,14 +537,38 @@ func (s *Syncer) updatePatchTagsFromComments(
 	)
 }
 
+func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) error {
+	log.Printf("SYNC: handlePatchUpdate patch %d state=%v delegate=%v",
+		req.PatchID, req.State, req.DelegateID)
+	update := api.PatchUpdate{
+		State:    req.State,
+		Delegate: req.DelegateID,
+	}
+	_, err := s.client.UpdatePatch(ctx, req.PatchID, update)
+	if err != nil {
+		log.Printf("SYNC: patch update %d failed: %v", req.PatchID, err)
+		return err
+	}
+	log.Printf("SYNC: patch update %d success, syncing events", req.PatchID)
+	s.incrementalSync(ctx)
+	s.notify()
+	return nil
+}
+
 func (s *Syncer) fetchMbox(
 	ctx context.Context, patchID int,
 ) MboxResult {
 	row, err := s.db.GetPatch(patchID)
 	if err != nil {
+		log.Printf("SYNC: fetchMbox(%d): GetPatch error: %v",
+			patchID, err)
 		return MboxResult{Err: err}
 	}
+	log.Printf("SYNC: fetchMbox(%d) %q mboxURL=%q msgID=%q cached=%d",
+		patchID, row.Name, row.MboxURL, row.MsgID,
+		len(row.MboxContent))
 	if row.MboxContent != "" {
+		log.Printf("SYNC: fetchMbox(%d): returning cached", patchID)
 		return MboxResult{Content: row.MboxContent}
 	}
 
@@ -504,23 +576,65 @@ func (s *Syncer) fetchMbox(
 		msgid := strings.Trim(row.MsgID, "<>")
 		loreURL := strings.TrimRight(
 			s.cfg.LoreURL, "/") + "/" + msgid + "/raw"
+		log.Printf("SYNC: fetchMbox(%d): trying lore %s",
+			patchID, loreURL)
 		content, err := s.client.GetMbox(ctx, loreURL)
-		if err == nil {
+		if err == nil && isValidMbox(content) {
+			log.Printf("SYNC: fetchMbox(%d): lore OK, %d bytes",
+				patchID, len(content))
 			s.db.UpdatePatchMbox(patchID, content)
 			return MboxResult{Content: content}
+		}
+		if err != nil {
+			log.Printf("SYNC: fetchMbox(%d): lore failed: %v",
+				patchID, err)
+		} else {
+			log.Printf("SYNC: fetchMbox(%d): lore returned "+
+				"non-mbox content (bot protection?)", patchID)
 		}
 	}
 
 	if row.MboxURL != "" {
-		content, err := s.client.GetMbox(ctx, row.MboxURL)
+		mboxURL := row.MboxURL
+		if strings.HasPrefix(s.cfg.Server, "https://") &&
+			strings.HasPrefix(mboxURL, "http://") {
+			mboxURL = "https://" + mboxURL[len("http://"):]
+		}
+		log.Printf("SYNC: fetchMbox(%d): trying patchwork %s",
+			patchID, mboxURL)
+		content, err := s.client.GetMbox(ctx, mboxURL)
 		if err != nil {
+			log.Printf("SYNC: fetchMbox(%d): patchwork failed: %v",
+				patchID, err)
 			return MboxResult{Err: err}
 		}
+		if !isValidMbox(content) {
+			log.Printf("SYNC: fetchMbox(%d): patchwork returned "+
+				"non-mbox content (bot protection?)", patchID)
+			return MboxResult{
+				Err: fmt.Errorf("blocked by bot protection"),
+			}
+		}
+		log.Printf("SYNC: fetchMbox(%d): patchwork OK, %d bytes",
+			patchID, len(content))
 		s.db.UpdatePatchMbox(patchID, content)
 		return MboxResult{Content: content}
 	}
 
+	log.Printf("SYNC: fetchMbox(%d): no URL available", patchID)
 	return MboxResult{Err: err}
+}
+
+func isValidMbox(content string) bool {
+	if strings.Contains(content, "not a bot") {
+		return false
+	}
+	if strings.HasPrefix(content, "<!") ||
+		strings.HasPrefix(content, "<html") ||
+		strings.HasPrefix(content, "<HTML") {
+		return false
+	}
+	return true
 }
 
 func patchToRow(p api.Patch) db.PatchRow {

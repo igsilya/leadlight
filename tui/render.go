@@ -12,6 +12,10 @@ func (m *Model) View() string {
 		return "Loading..."
 	}
 
+	if m.viewMode == viewPatch {
+		return m.renderPatchView()
+	}
+
 	widths := m.columnWidths()
 	var out strings.Builder
 
@@ -25,6 +29,42 @@ func (m *Model) View() string {
 	m.padToBottom(&out)
 	m.renderStatusBar(&out)
 
+	return out.String()
+}
+
+func (m *Model) renderPatchView() string {
+	var out strings.Builder
+	lines := strings.Split(m.viewportContent, "\n")
+	end := m.viewportOffset + m.height - 2
+	if end > len(lines) {
+		end = len(lines)
+	}
+	start := m.viewportOffset
+	if start > len(lines) {
+		start = len(lines)
+	}
+	for i := start; i < end; i++ {
+		out.WriteString(lines[i])
+		out.WriteByte('\n')
+	}
+
+	current := lipgloss.Height(out.String())
+	for i := current; i < m.height-1; i++ {
+		out.WriteByte('\n')
+	}
+
+	pos := ""
+	if len(lines) > 0 {
+		pct := 100
+		if len(lines) > m.height-2 {
+			pct = (m.viewportOffset * 100) /
+				(len(lines) - m.height + 2)
+		}
+		pos = fmt.Sprintf(" %d%% ", pct)
+	}
+	help := helpStyle.Render(
+		"↑/↓ scroll | pgup/pgdn page | esc back" + pos)
+	out.WriteString(help)
 	return out.String()
 }
 
@@ -65,7 +105,7 @@ func (m *Model) renderRows(
 	for i := m.scrollOffset; i < len(items); i++ {
 		var row string
 		if i == m.selectedRow {
-			if m.selectorOpen {
+			if m.selectorMode != selectorNone {
 				row = indicator + m.buildRow(
 					items[i], widths, m.StatusColIdx)
 			} else {
@@ -296,7 +336,7 @@ func (m *Model) renderGradientRow(
 
 func (m *Model) padToBottom(out *strings.Builder) {
 	bottomLines := 1
-	if m.selectorOpen {
+	if m.selectorMode != selectorNone {
 		bottomLines = 2
 	}
 	current := lipgloss.Height(out.String())
@@ -307,14 +347,14 @@ func (m *Model) padToBottom(out *strings.Builder) {
 }
 
 func (m *Model) renderStatusBar(out *strings.Builder) {
-	if m.selectorOpen {
+	if m.selectorMode != selectorNone {
 		m.renderSelectorBar(out)
 		return
 	}
 
 	help := helpStyle.Render(
-		"Press q to quit | ↑/↓ to navigate" +
-			" | enter to expand/collapse | d to change status")
+		"q quit | ↑/↓ navigate | enter expand" +
+			" | s state | d delegate")
 
 	if m.status == "" {
 		out.WriteString(help)
@@ -336,8 +376,19 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 }
 
 func (m *Model) renderSelectorBar(out *strings.Builder) {
+	prefix := "Status"
+	if m.selectorMode == selectorDelegate {
+		prefix = "Delegate"
+	}
+	if m.selectorFilter != "" {
+		prefix += " [" + m.selectorFilter + "]"
+	}
+	prefix += ": "
+
+	filtered, _ := m.filteredOptions()
+
 	var parts []string
-	for i, opt := range m.StatusOptions {
+	for i, opt := range filtered {
 		num := optionNumStyle.Render(fmt.Sprintf("%d", i+1))
 		label := " " + opt + " "
 		if i == m.selectorCursor {
@@ -350,10 +401,18 @@ func (m *Model) renderSelectorBar(out *strings.Builder) {
 	}
 	sep := helpStyle.Render(" │ ")
 	out.WriteString(
-		helpStyle.Render("Status: ") + strings.Join(parts, sep))
+		helpStyle.Render(prefix) + strings.Join(parts, sep))
 	out.WriteByte('\n')
-	out.WriteString(helpStyle.Render(
-		"←/→ or 1-4 to select, enter confirm, esc cancel"))
+	hint := "←/→ select, enter confirm, esc "
+	if m.selectorFilter != "" {
+		hint += "clear filter"
+	} else {
+		hint += "cancel"
+	}
+	if m.selectorMode == selectorDelegate {
+		hint += ", type to filter"
+	}
+	out.WriteString(helpStyle.Render(hint))
 }
 
 func renderCell(text string, width int) string {

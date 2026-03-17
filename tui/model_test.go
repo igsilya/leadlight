@@ -2,8 +2,11 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"leadlight/db"
 )
 
 func testModel() *Model {
@@ -34,8 +37,9 @@ func testModel() *Model {
 			},
 		},
 	}
-	opts := []string{"Active", "Inactive", "Pending", "Away"}
-	m := NewModelWithData(columns, rows, opts, 2)
+	m := NewModelWithData(columns, rows, 2)
+	m.states = []string{"Active", "Inactive", "Pending", "Away"}
+	m.token = "test-token"
 	m.width = 120
 	m.height = 30
 	return m
@@ -136,120 +140,134 @@ func TestKeyEnter_NoExpandOnLeafRow(t *testing.T) {
 	}
 }
 
-func TestKeyD_OpenSelector(t *testing.T) {
+func TestKeyS_OpenStateSelector(t *testing.T) {
 	m := testModel()
-	if m.selectorOpen {
+	if m.selectorMode != selectorNone {
 		t.Error("selector should start closed")
 	}
 
-	m = pressKey(m, "d")
-	if !m.selectorOpen {
-		t.Error("selector should be open after d")
+	m = pressKey(m, "s")
+	if m.selectorMode != selectorState {
+		t.Errorf("selectorMode = %d, want selectorState",
+			m.selectorMode)
 	}
 
-	// Cursor should match current status value ("Active" = index 0)
 	if m.selectorCursor != 0 {
-		t.Errorf("selectorCursor = %d, want 0", m.selectorCursor)
+		t.Errorf("selectorCursor = %d, want 0",
+			m.selectorCursor)
 	}
 }
 
-func TestKeyD_CursorMatchesCurrentValue(t *testing.T) {
+func TestKeyS_CursorMatchesCurrentValue(t *testing.T) {
 	m := testModel()
 	m = pressKey(m, "j") // row 1, status = "Pending"
-	m = pressKey(m, "d")
-	// "Pending" is index 2 in the options
+	m = pressKey(m, "s")
+	// "Pending" is index 2 in the states
 	if m.selectorCursor != 2 {
-		t.Errorf("selectorCursor = %d, want 2", m.selectorCursor)
+		t.Errorf("selectorCursor = %d, want 2",
+			m.selectorCursor)
 	}
 }
 
 func TestSelectorLeftRight(t *testing.T) {
 	m := testModel()
-	m = pressKey(m, "d")
+	m = pressKey(m, "s")
 
-	m = pressKey(m, "l") // right
+	m = pressSpecialKey(m, tea.KeyRight)
 	if m.selectorCursor != 1 {
 		t.Errorf("cursor = %d, want 1", m.selectorCursor)
 	}
 
-	m = pressKey(m, "h") // left back to 0
+	m = pressSpecialKey(m, tea.KeyLeft)
 	if m.selectorCursor != 0 {
 		t.Errorf("cursor = %d, want 0", m.selectorCursor)
 	}
 
 	// Wrap left from 0 → last
-	m = pressKey(m, "h")
+	m = pressSpecialKey(m, tea.KeyLeft)
 	if m.selectorCursor != 3 {
-		t.Errorf("cursor = %d, want 3 (wrapped)", m.selectorCursor)
+		t.Errorf("cursor = %d, want 3 (wrapped)",
+			m.selectorCursor)
 	}
 
 	// Wrap right from last → 0
-	m = pressKey(m, "l")
+	m = pressSpecialKey(m, tea.KeyRight)
 	if m.selectorCursor != 0 {
-		t.Errorf("cursor = %d, want 0 (wrapped)", m.selectorCursor)
+		t.Errorf("cursor = %d, want 0 (wrapped)",
+			m.selectorCursor)
 	}
 }
 
-func TestSelectorNumber(t *testing.T) {
+func TestSelectorFilter(t *testing.T) {
 	m := testModel()
-	m = pressKey(m, "d")
+	m = pressKey(m, "s")
 
-	m = pressKey(m, "2") // select "Inactive"
-	if m.selectorOpen {
-		t.Error("selector should close after number key")
+	// Type "p" to filter — should match "Pending"
+	m = pressKey(m, "p")
+	if m.selectorFilter != "p" {
+		t.Errorf("filter = %q", m.selectorFilter)
 	}
-	if m.RowData[0].Data[2] != "Inactive" {
-		t.Errorf("status = %q, want Inactive",
-			m.RowData[0].Data[2])
+	filtered, _ := m.filteredOptions()
+	if len(filtered) != 1 || filtered[0] != "Pending" {
+		t.Errorf("filtered = %v, want [Pending]", filtered)
+	}
+
+	// Backspace clears filter
+	m = pressSpecialKey(m, tea.KeyBackspace)
+	if m.selectorFilter != "" {
+		t.Errorf("filter = %q after backspace", m.selectorFilter)
+	}
+	filtered, _ = m.filteredOptions()
+	if len(filtered) != 4 {
+		t.Errorf("filtered = %d, want 4", len(filtered))
 	}
 }
 
-func TestSelectorEnter(t *testing.T) {
+func TestSelectorFilter_EscClearsFirst(t *testing.T) {
 	m := testModel()
-	m = pressKey(m, "d")
-	m = pressKey(m, "l") // move to index 1 ("Inactive")
-	m = pressSpecialKey(m, tea.KeyEnter)
-
-	if m.selectorOpen {
-		t.Error("selector should close after enter")
+	m = pressKey(m, "s")
+	m = pressKey(m, "a")               // filter = "a"
+	m = pressSpecialKey(m, tea.KeyEsc) // clears filter
+	if m.selectorMode == selectorNone {
+		t.Error("first esc should clear filter, not close")
 	}
-	if m.RowData[0].Data[2] != "Inactive" {
-		t.Errorf("status = %q, want Inactive",
-			m.RowData[0].Data[2])
+	if m.selectorFilter != "" {
+		t.Errorf("filter = %q, want empty", m.selectorFilter)
+	}
+	m = pressSpecialKey(m, tea.KeyEsc) // now closes
+	if m.selectorMode != selectorNone {
+		t.Error("second esc should close selector")
 	}
 }
 
 func TestSelectorEsc(t *testing.T) {
 	m := testModel()
-	originalStatus := m.RowData[0].Data[2]
-	m = pressKey(m, "d")
-	m = pressKey(m, "l") // move cursor but don't confirm
+	m = pressKey(m, "s")
 	m = pressSpecialKey(m, tea.KeyEsc)
 
-	if m.selectorOpen {
+	if m.selectorMode != selectorNone {
 		t.Error("selector should close after esc")
-	}
-	if m.RowData[0].Data[2] != originalStatus {
-		t.Errorf("status = %q, want unchanged %q",
-			m.RowData[0].Data[2], originalStatus)
 	}
 }
 
-func TestSelectorApply_Cascade(t *testing.T) {
+func TestKeyD_NoToken(t *testing.T) {
 	m := testModel()
-	// Row 0 has sub-rows
+	m.token = ""
 	m = pressKey(m, "d")
-	m = pressKey(m, "2") // "Inactive"
-
-	// Parent row should be updated
-	if m.RowData[0].Data[2] != "Inactive" {
-		t.Errorf("parent = %q", m.RowData[0].Data[2])
+	if m.selectorMode != selectorNone {
+		t.Error("selector should not open without token")
 	}
-	// Sub-rows should also be updated
-	for i, sub := range m.RowData[0].SubRows {
-		if sub[2] != "Inactive" {
-			t.Errorf("sub[%d] = %q, want Inactive", i, sub[2])
-		}
+	if m.status == "" {
+		t.Error("should show error status")
+	}
+}
+
+func TestKeyS_NoToken(t *testing.T) {
+	m := testModel()
+	m.token = ""
+	m = pressKey(m, "s")
+	if m.selectorMode != selectorNone {
+		t.Error("selector should not open without token")
 	}
 }
 
@@ -326,5 +344,156 @@ func TestExpandedNavigation(t *testing.T) {
 	m = pressKey(m, "j") // row 2
 	if m.selectedRow != 3 {
 		t.Errorf("selectedRow = %d, want 3", m.selectedRow)
+	}
+}
+
+func testModelWithDB(t *testing.T) (*Model, *db.DB) {
+	t.Helper()
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	now := time.Now()
+	d.SaveSeriesSummary(
+		50, "Lorem ipsum series",
+		now.Add(-2*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
+	d.SaveSeriesSummary(
+		51, "Dolor amet series",
+		now.Add(-5*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
+
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "Lorem patch one", State: "new",
+		Date:      now.Add(-2 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 101, SeriesID: 50,
+		Name: "Lorem patch two", State: "new",
+		Date:      now.Add(-2 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 200, SeriesID: 51,
+		Name: "Dolor patch one", State: "new",
+		Date:      now.Add(-5 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Dolor",
+	})
+
+	m := NewModel(d, []string{"new"}, "test-token")
+	m.width = 120
+	m.height = 30
+	return m, d
+}
+
+func TestReloadData_PreservesExpanded(t *testing.T) {
+	m, _ := testModelWithDB(t)
+
+	if len(m.RowData) < 2 {
+		t.Fatalf("rows = %d, want >= 2", len(m.RowData))
+	}
+
+	m.RowData[0].Expanded = true
+	m.reloadData()
+
+	if !m.RowData[0].Expanded {
+		t.Error("row 0 should still be expanded after reload")
+	}
+	if m.RowData[1].Expanded {
+		t.Error("row 1 should still be collapsed after reload")
+	}
+}
+
+func TestReloadData_PreservesSelection(t *testing.T) {
+	m, _ := testModelWithDB(t)
+
+	m = pressKey(m, "j") // move to row 1
+	savedID := m.selectedID
+	if savedID == "" {
+		t.Fatal("selectedID is empty after navigation")
+	}
+
+	m.reloadData()
+
+	if m.selectedID != savedID {
+		t.Errorf("selectedID = %q, want %q",
+			m.selectedID, savedID)
+	}
+}
+
+func TestReloadData_SelectionStableOnNewSeries(t *testing.T) {
+	m, d := testModelWithDB(t)
+
+	m = pressKey(m, "j") // move to row 1 (second series)
+	savedID := m.selectedID
+	savedRow := m.selectedRow
+
+	// Insert a newer series — it will appear at index 0
+	// because GetActiveSeries orders by date DESC
+	now := time.Now()
+	d.SaveSeriesSummary(
+		52, "Sit amet new series",
+		now.Format("2006-01-02T15:04:05"), 1)
+	d.SavePatch(db.PatchRow{
+		ID: 300, SeriesID: 52,
+		Name: "New patch", State: "new",
+		Date:      now.Format("2006-01-02T15:04:05"),
+		Submitter: "Sit",
+	})
+
+	m.reloadData()
+
+	if m.selectedID != savedID {
+		t.Errorf("selectedID changed: %q -> %q",
+			savedID, m.selectedID)
+	}
+	// Index should have shifted by 1 (new series at top)
+	if m.selectedRow <= savedRow {
+		t.Errorf("selectedRow should have shifted: was %d, now %d",
+			savedRow, m.selectedRow)
+	}
+	// Verify the item at selectedRow has the right ID
+	items := m.getVisibleItems()
+	if m.selectedRow < len(items) {
+		if items[m.selectedRow].data[0] != savedID {
+			t.Errorf("item at selectedRow has ID %q, want %q",
+				items[m.selectedRow].data[0], savedID)
+		}
+	}
+}
+
+func TestReloadData_SubRowSelectionPreserved(t *testing.T) {
+	m, _ := testModelWithDB(t)
+
+	// Expand first series
+	m = pressSpecialKey(m, tea.KeyEnter)
+	// Navigate to first sub-row
+	m = pressKey(m, "j")
+
+	savedID := m.selectedID
+	if savedID == "" {
+		t.Fatal("selectedID empty on sub-row")
+	}
+
+	m.reloadData()
+
+	if m.selectedID != savedID {
+		t.Errorf("selectedID changed: %q -> %q",
+			savedID, m.selectedID)
+	}
+	items := m.getVisibleItems()
+	if m.selectedRow >= len(items) {
+		t.Fatalf("selectedRow %d out of range %d",
+			m.selectedRow, len(items))
+	}
+	item := items[m.selectedRow]
+	if !item.isSubRow {
+		t.Error("selection should still be on a sub-row")
+	}
+	if item.data[0] != savedID {
+		t.Errorf("selected item ID = %q, want %q",
+			item.data[0], savedID)
 	}
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -63,9 +64,30 @@ type visibleItem struct {
 }
 
 type SyncUpdateMsg struct{}
+type patchUpdateResultMsg struct{ err error }
+type mboxResultMsg struct {
+	patchID int
+	content string
+	err     error
+}
 
 type highlightAnimTickMsg struct{}
 type spinnerTickMsg time.Time
+
+type selectorMode int
+
+const (
+	selectorNone selectorMode = iota
+	selectorState
+	selectorDelegate
+)
+
+type viewMode int
+
+const (
+	viewTable viewMode = iota
+	viewPatch
+)
 
 func highlightAnimTickCmd() tea.Cmd {
 	return tea.Tick(
@@ -82,11 +104,11 @@ func spinnerTickCmd() tea.Cmd {
 type Model struct {
 	ColumnDefs      []ColumnDef
 	RowData         []RowData
-	StatusOptions   []string
 	StatusColIdx    int
 	ChecksColIdx    int
 	db              *db.DB
 	states          []string
+	token           string
 	selectedRow     int
 	width           int
 	height          int
@@ -99,18 +121,33 @@ type Model struct {
 	highlightProgress  float64
 	highlightAnimating bool
 
-	selectorOpen   bool
-	selectorCursor int
+	selectorMode    selectorMode
+	selectorCursor  int
+	selectorOptions []string
+	selectorIDs     []int
+	selectorFilter  string
+
+	selectedID string
+
+	viewMode        viewMode
+	viewingPatchID  int
+	viewportContent string
+	viewportOffset  int
+
+	RequestMbox        func(patchID int)
+	RequestPatchUpdate func(
+		patchID int, state *string, delegateID *int,
+	)
 }
 
-func NewModel(d *db.DB, states []string) *Model {
+func NewModel(d *db.DB, states []string, token string) *Model {
 	m := &Model{
 		ColumnDefs:         PatchworkColumns,
-		StatusOptions:      states,
 		StatusColIdx:       ColState,
 		ChecksColIdx:       ColChecks,
 		db:                 d,
 		states:             states,
+		token:              token,
 		highlightAnimating: true,
 	}
 	m.reloadData()
@@ -120,13 +157,11 @@ func NewModel(d *db.DB, states []string) *Model {
 func NewModelWithData(
 	columns []ColumnDef,
 	rows []RowData,
-	statusOptions []string,
 	statusColIdx int,
 ) *Model {
 	return &Model{
 		ColumnDefs:         columns,
 		RowData:            rows,
-		StatusOptions:      statusOptions,
 		StatusColIdx:       statusColIdx,
 		ChecksColIdx:       -1,
 		highlightAnimating: true,
@@ -137,17 +172,51 @@ func (m *Model) reloadData() {
 	if m.db == nil {
 		return
 	}
-	rows, err := LoadFromDB(m.db, m.states)
-	if err != nil {
-		log.Printf("reload data: %v", err)
-		return
+
+	expanded := map[string]bool{}
+	for _, rd := range m.RowData {
+		if rd.Expanded && len(rd.Data) > 0 {
+			expanded[rd.Data[0]] = true
+		}
 	}
+
+	seriesList := m.db.GetActiveSeries(m.states)
+	rows := make([]RowData, 0, len(seriesList))
+	for _, s := range seriesList {
+		patches := m.db.GetPatchesForSeries(s.ID)
+		row := seriesToRow(s, patches)
+		sid := strconv.Itoa(s.ID)
+		if expanded[sid] {
+			row.Expanded = true
+		}
+		rows = append(rows, row)
+	}
+
 	m.mu.Lock()
 	m.RowData = rows
-	if m.selectedRow >= len(rows) && len(rows) > 0 {
-		m.selectedRow = len(rows) - 1
-	}
+	m.restoreSelection()
 	m.mu.Unlock()
+}
+
+func (m *Model) restoreSelection() {
+	items := m.getVisibleItems()
+	for i, item := range items {
+		if len(item.data) > 0 && item.data[0] == m.selectedID {
+			m.selectedRow = i
+			return
+		}
+	}
+	if m.selectedRow >= len(items) && len(items) > 0 {
+		m.selectedRow = len(items) - 1
+	}
+	m.updateSelectedID()
+}
+
+func (m *Model) updateSelectedID() {
+	items := m.getVisibleItems()
+	if m.selectedRow < len(items) && len(items[m.selectedRow].data) > 0 {
+		m.selectedID = items[m.selectedRow].data[0]
+	}
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -176,7 +245,31 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, highlightAnimTickCmd()
 
 	case SyncUpdateMsg:
+		log.Printf("TUI: SyncUpdateMsg received, viewMode=%d",
+			m.viewMode)
 		m.reloadData()
+		if m.viewMode == viewPatch {
+			m.refreshViewport()
+		}
+		return m, nil
+
+	case patchUpdateResultMsg:
+		if msg.err != nil {
+			log.Printf("TUI: patch update error: %v", msg.err)
+			m.status = "Update failed: " + msg.err.Error()
+		} else {
+			log.Println("TUI: patch update success")
+			m.status = ""
+		}
+		return m, nil
+
+	case mboxResultMsg:
+		log.Printf("TUI: mboxResultMsg patchID=%d err=%v",
+			msg.patchID, msg.err)
+		if msg.err != nil {
+			m.viewportContent = FormatMboxError(
+				"patch", msg.err)
+		}
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -189,6 +282,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *Model) refreshViewport() {
+	if m.viewingPatchID == 0 || m.db == nil {
+		return
+	}
+	row, err := m.db.GetPatch(m.viewingPatchID)
+	if err != nil {
+		log.Printf("TUI: refreshViewport: GetPatch(%d) error: %v",
+			m.viewingPatchID, err)
+		return
+	}
+	if row.MboxContent == "" {
+		log.Printf("TUI: refreshViewport: %q mbox still empty",
+			row.Name)
+		return
+	}
+	log.Printf("TUI: refreshViewport: %q got %d bytes",
+		row.Name, len(row.MboxContent))
+	parsed := ParseMbox(row.MboxContent)
+	m.viewportContent = FormatMbox(parsed)
 }
 
 func (m *Model) getVisibleItems() []visibleItem {
