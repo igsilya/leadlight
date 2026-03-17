@@ -637,3 +637,68 @@ func TestRecountPatchChecks(t *testing.T) {
 		t.Errorf("pending = %d, want 2", row.ChecksPending)
 	}
 }
+
+func TestGetPatchesNeedingComments(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	states := []string{"new", "under-review"}
+	ids := d.GetPatchesNeedingComments(states)
+	if len(ids) != 2 {
+		t.Fatalf("got %d, want 2", len(ids))
+	}
+
+	d.MarkCommentsFetched(100)
+
+	ids = d.GetPatchesNeedingComments(states)
+	if len(ids) != 1 || ids[0] != 101 {
+		t.Errorf("got %v, want [101]", ids)
+	}
+
+	d.MarkCommentsFetched(101)
+
+	ids = d.GetPatchesNeedingComments(states)
+	if len(ids) != 0 {
+		t.Errorf("got %v, want empty", ids)
+	}
+}
+
+func TestGetPatchesNeedingComments_Priority(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "p1", Date: "2026-03-10",
+		State: "accepted", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 102, Name: "p3", Date: "2026-03-10",
+		State: "under-review", Submitter: "Lorem",
+	})
+
+	states := []string{"new", "under-review"}
+	ids := d.GetPatchesNeedingComments(states)
+	if len(ids) != 3 {
+		t.Fatalf("got %d, want 3", len(ids))
+	}
+	if ids[0] != 101 {
+		t.Errorf("[0] = %d, want 101 (new)", ids[0])
+	}
+	if ids[1] != 102 {
+		t.Errorf("[1] = %d, want 102 (under-review)",
+			ids[1])
+	}
+	if ids[2] != 100 {
+		t.Errorf("[2] = %d, want 100 (accepted, last)",
+			ids[2])
+	}
+}

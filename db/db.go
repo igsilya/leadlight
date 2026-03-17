@@ -568,6 +568,49 @@ func (d *DB) GetPatchesNeedingDetail() []int {
 	return ids
 }
 
+func (d *DB) GetPatchesNeedingComments(
+	priorityStates []string,
+) []int {
+	if len(priorityStates) == 0 {
+		priorityStates = []string{"new", "under-review"}
+	}
+	placeholders := make([]string, len(priorityStates))
+	args := make([]interface{}, len(priorityStates))
+	for i, s := range priorityStates {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := fmt.Sprintf(`
+		SELECT id FROM patches
+		WHERE comments_fetched = 0
+		ORDER BY
+			CASE WHEN state IN (%s)
+				THEN 0 ELSE 1 END,
+			id`,
+		strings.Join(placeholders, ","))
+
+	rows, err := d.conn.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (d *DB) MarkCommentsFetched(patchID int) error {
+	_, err := d.conn.Exec(
+		"UPDATE patches SET comments_fetched = 1 WHERE id = ?",
+		patchID)
+	return err
+}
+
 func (d *DB) GetComments(patchID int) []CommentRow {
 	rows, err := d.conn.Query(`
 		SELECT id, patch_id, cover_id, submitter,

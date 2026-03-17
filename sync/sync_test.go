@@ -739,3 +739,76 @@ func TestFetchPatches_NotifiesPerPage(t *testing.T) {
 		t.Error("patch 200 not found")
 	}
 }
+
+func TestFetchNextComments_Progresses(t *testing.T) {
+	reqPaths := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			reqPaths = append(reqPaths, r.URL.Path)
+			switch r.URL.Path {
+			case "/patches/100/comments/":
+				json.NewEncoder(w).Encode([]api.Comment{{
+					ID:      301,
+					Date:    "2026-03-11",
+					Subject: "Re: p1",
+					Submitter: api.Person{
+						Name: "Lorem"},
+					Content: "Acked-by: Lorem " +
+						"<lorem@ipsum.example>",
+					MsgID: "<r1@example>",
+				}})
+			case "/patches/101/comments/":
+				json.NewEncoder(w).Encode([]api.Comment{})
+			default:
+				w.WriteHeader(404)
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	savePatch(d, 101, "p2", "2026-03-10", "new")
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+
+	// First call: fetches comments for patch 100
+	s.fetchNextComments(context.Background())
+
+	row, _ := d.GetPatch(100)
+	if row.AckedBy != 1 {
+		t.Errorf("patch 100 AckedBy = %d, want 1",
+			row.AckedBy)
+	}
+
+	// Second call: should progress to patch 101
+	s.fetchNextComments(context.Background())
+
+	// Verify patch 101 was fetched (not 100 again)
+	needs := d.GetPatchesNeedingComments([]string{"new"})
+	if len(needs) != 0 {
+		t.Errorf("still needing comments: %v", needs)
+	}
+
+	// Verify we requested both patches' comments
+	gotPaths := map[string]bool{}
+	for _, p := range reqPaths {
+		gotPaths[p] = true
+	}
+	if !gotPaths["/patches/100/comments/"] {
+		t.Error("never fetched comments for 100")
+	}
+	if !gotPaths["/patches/101/comments/"] {
+		t.Error("never fetched comments for 101")
+	}
+}

@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS patches (
     prefixes          TEXT DEFAULT '',
     mbox_content      TEXT DEFAULT '',
     detail_fetched    INTEGER DEFAULT 0,
+    comments_fetched  INTEGER DEFAULT 0,
     updated_at        TEXT
 );
 
@@ -123,9 +124,16 @@ WHERE id IN (
 );
 `
 
+var alterStatements = []string{
+	`ALTER TABLE patches ADD COLUMN comments_fetched INTEGER DEFAULT 0`,
+}
+
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
+	}
+	for _, stmt := range alterStatements {
+		db.Exec(stmt) // ignore "duplicate column" errors
 	}
 	_, err := db.Exec(recountChecks)
 	return err

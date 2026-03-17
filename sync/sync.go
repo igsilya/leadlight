@@ -364,21 +364,16 @@ func (s *Syncer) fetchSeriesDetail(
 }
 
 func (s *Syncer) fetchNextComments(ctx context.Context) {
-	activeSeries := s.db.GetActiveSeries(s.cfg.States)
-	if len(activeSeries) == 0 {
-		return
-	}
-	patches := s.db.GetPatchesForSeries(
-		activeSeries[0].ID)
-	if len(patches) == 0 {
+	ids := s.db.GetPatchesNeedingComments(s.cfg.States)
+	if len(ids) == 0 {
 		return
 	}
 
-	patchID := patches[0].ID
-	comments, err := s.client.GetPatchComments(
-		ctx, patchID)
+	patchID := ids[0]
+	comments, err := s.client.GetPatchComments(ctx, patchID)
 	if err != nil {
 		log.Printf("fetch comments %d: %v", patchID, err)
+		s.db.MarkCommentsFetched(patchID)
 		return
 	}
 
@@ -394,6 +389,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) {
 		})
 	}
 	s.updatePatchTagsFromComments(patchID)
+	s.db.MarkCommentsFetched(patchID)
 }
 
 func (s *Syncer) updatePatchTagsFromComments(
