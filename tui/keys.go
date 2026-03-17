@@ -136,15 +136,15 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc":
 		m.viewMode = viewTable
 		m.viewingPatchID = 0
-		m.viewportContent = ""
+		m.viewportLines = nil
 	case "up", "k":
 		m.viewportScroll(-1)
 	case "down", "j":
 		m.viewportScroll(1)
 	case "pgup", "ctrl+u":
-		m.viewportScroll(-(m.height - 4))
+		m.viewportScroll(-m.viewportVisibleLines())
 	case "pgdown", "ctrl+d":
-		m.viewportScroll(m.height - 4)
+		m.viewportScroll(m.viewportVisibleLines())
 	case "home", "g":
 		m.viewportOffset = 0
 	case "end", "G":
@@ -319,8 +319,7 @@ func (m *Model) viewportScroll(delta int) {
 	if m.viewportOffset < 0 {
 		m.viewportOffset = 0
 	}
-	lines := strings.Count(m.viewportContent, "\n")
-	maxOffset := lines - m.height + 4
+	maxOffset := len(m.viewportLines) - m.viewportVisibleLines()
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -330,8 +329,7 @@ func (m *Model) viewportScroll(delta int) {
 }
 
 func (m *Model) viewportScrollToEnd() {
-	lines := strings.Count(m.viewportContent, "\n")
-	m.viewportOffset = lines - m.height + 4
+	m.viewportOffset = len(m.viewportLines) - m.viewportVisibleLines()
 	if m.viewportOffset < 0 {
 		m.viewportOffset = 0
 	}
@@ -366,11 +364,13 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 		log.Printf("TUI: mbox cached (%d bytes) for %q",
 			len(row.MboxContent), row.Name)
 		parsed := ParseMbox(row.MboxContent)
-		m.viewportContent = FormatMbox(parsed)
+		formatted := FormatMbox(parsed, m.width)
+		m.viewportLines = splitLines(formatted)
 	} else {
 		log.Printf("TUI: mbox not cached for %q, "+
-			"mboxURL=%q msgID=%q", row.Name, row.MboxURL, row.MsgID)
-		m.viewportContent = "Fetching..."
+			"mboxURL=%q msgID=%q",
+			row.Name, row.MboxURL, row.MsgID)
+		m.viewportLines = []string{"Fetching..."}
 		if m.RequestMbox != nil {
 			log.Printf("TUI: calling RequestMbox(%d) for %q",
 				patchID, row.Name)

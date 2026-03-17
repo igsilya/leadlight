@@ -80,47 +80,59 @@ func splitBodyDiff(body string) (string, string) {
 	return strings.TrimSpace(body), ""
 }
 
-func FormatMbox(p ParsedMbox) string {
+func FormatMbox(p ParsedMbox, width int) string {
 	var b strings.Builder
+	labelWidth := 9 // "Subject: " length
+	valWidth := width - labelWidth
+	if valWidth < 20 {
+		valWidth = 20
+	}
 
 	if p.Subject != "" {
 		b.WriteString(mboxHeaderLabel.Render("Subject: "))
-		b.WriteString(mboxHeaderValue.Render(p.Subject))
+		b.WriteString(mboxHeaderValue.Render(
+			truncateLine(p.Subject, valWidth)))
 		b.WriteByte('\n')
 	}
 	if p.From != "" {
 		b.WriteString(mboxHeaderLabel.Render("From:    "))
-		b.WriteString(mboxHeaderValue.Render(p.From))
+		b.WriteString(mboxHeaderValue.Render(
+			truncateLine(p.From, valWidth)))
 		b.WriteByte('\n')
 	}
 	if p.Cc != "" {
 		b.WriteString(mboxHeaderLabel.Render("Cc:      "))
-		b.WriteString(mboxHeaderValue.Render(p.Cc))
+		b.WriteString(mboxHeaderValue.Render(
+			truncateLine(p.Cc, valWidth)))
 		b.WriteByte('\n')
 	}
 	if p.Date != "" {
 		b.WriteString(mboxHeaderLabel.Render("Date:    "))
-		b.WriteString(mboxHeaderValue.Render(p.Date))
+		b.WriteString(mboxHeaderValue.Render(
+			truncateLine(p.Date, valWidth)))
 		b.WriteByte('\n')
 	}
 
 	if p.Body != "" {
 		b.WriteByte('\n')
-		b.WriteString(p.Body)
-		b.WriteByte('\n')
+		for _, line := range strings.Split(p.Body, "\n") {
+			b.WriteString(truncateLine(line, width))
+			b.WriteByte('\n')
+		}
 	}
 
 	if p.Diff != "" {
 		b.WriteByte('\n')
-		b.WriteString(formatDiff(p.Diff))
+		b.WriteString(formatDiff(p.Diff, width))
 	}
 
 	return b.String()
 }
 
-func formatDiff(diff string) string {
+func formatDiff(diff string, width int) string {
 	var b strings.Builder
 	for _, line := range strings.Split(diff, "\n") {
+		line = truncateLine(line, width)
 		switch {
 		case strings.HasPrefix(line, "+++ ") ||
 			strings.HasPrefix(line, "--- "):
@@ -139,6 +151,17 @@ func formatDiff(diff string) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+func truncateLine(s string, width int) string {
+	runes := []rune(s)
+	if len(runes) <= width {
+		return s
+	}
+	if width < 3 {
+		return string(runes[:width])
+	}
+	return string(runes[:width-1]) + "…"
 }
 
 func FormatMboxError(patchName string, err error) string {

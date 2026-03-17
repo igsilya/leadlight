@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,10 +130,10 @@ type Model struct {
 
 	selectedID string
 
-	viewMode        viewMode
-	viewingPatchID  int
-	viewportContent string
-	viewportOffset  int
+	viewMode       viewMode
+	viewingPatchID int
+	viewportLines  []string
+	viewportOffset int
 
 	RequestMbox        func(patchID int)
 	RequestPatchUpdate func(
@@ -245,10 +246,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, highlightAnimTickCmd()
 
 	case SyncUpdateMsg:
-		log.Printf("TUI: SyncUpdateMsg received, viewMode=%d",
-			m.viewMode)
 		m.reloadData()
-		if m.viewMode == viewPatch {
+		if m.viewMode == viewPatch &&
+			len(m.viewportLines) == 1 &&
+			m.viewportLines[0] == "Fetching..." {
 			m.refreshViewport()
 		}
 		return m, nil
@@ -267,8 +268,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("TUI: mboxResultMsg patchID=%d err=%v",
 			msg.patchID, msg.err)
 		if msg.err != nil {
-			m.viewportContent = FormatMboxError(
-				"patch", msg.err)
+			m.viewportLines = []string{
+				FormatMboxError("patch", msg.err)}
 		}
 		return m, nil
 
@@ -302,7 +303,12 @@ func (m *Model) refreshViewport() {
 	log.Printf("TUI: refreshViewport: %q got %d bytes",
 		row.Name, len(row.MboxContent))
 	parsed := ParseMbox(row.MboxContent)
-	m.viewportContent = FormatMbox(parsed)
+	formatted := FormatMbox(parsed, m.width)
+	m.viewportLines = splitLines(formatted)
+}
+
+func splitLines(content string) []string {
+	return strings.Split(content, "\n")
 }
 
 func (m *Model) getVisibleItems() []visibleItem {

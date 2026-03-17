@@ -32,40 +32,43 @@ func (m *Model) View() string {
 	return out.String()
 }
 
+func (m *Model) viewportVisibleLines() int {
+	v := m.height - 1
+	if v < 1 {
+		v = 1
+	}
+	return v
+}
+
 func (m *Model) renderPatchView() string {
-	var out strings.Builder
-	lines := strings.Split(m.viewportContent, "\n")
-	end := m.viewportOffset + m.height - 2
-	if end > len(lines) {
-		end = len(lines)
-	}
+	visible := m.viewportVisibleLines()
+	total := len(m.viewportLines)
+
 	start := m.viewportOffset
-	if start > len(lines) {
-		start = len(lines)
+	if start > total {
+		start = total
 	}
-	for i := start; i < end; i++ {
-		out.WriteString(lines[i])
-		out.WriteByte('\n')
-	}
-
-	current := lipgloss.Height(out.String())
-	for i := current; i < m.height-1; i++ {
-		out.WriteByte('\n')
+	end := start + visible
+	if end > total {
+		end = total
 	}
 
-	pos := ""
-	if len(lines) > 0 {
-		pct := 100
-		if len(lines) > m.height-2 {
-			pct = (m.viewportOffset * 100) /
-				(len(lines) - m.height + 2)
-		}
-		pos = fmt.Sprintf(" %d%% ", pct)
+	content := strings.Join(m.viewportLines[start:end], "\n")
+	body := lipgloss.NewStyle().
+		Width(m.width).
+		Height(visible).
+		Render(content)
+
+	pct := 0
+	maxOff := total - visible
+	if maxOff > 0 {
+		pct = m.viewportOffset * 100 / maxOff
 	}
-	help := helpStyle.Render(
-		"↑/↓ scroll | pgup/pgdn page | esc back" + pos)
-	out.WriteString(help)
-	return out.String()
+	status := helpStyle.Render(fmt.Sprintf(
+		"↑/↓ scroll | pgup/pgdn page | esc back  %d%%",
+		pct))
+
+	return body + "\n" + status
 }
 
 func (m *Model) renderHeader(out *strings.Builder, widths []int) {

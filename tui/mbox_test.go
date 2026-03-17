@@ -98,7 +98,7 @@ func TestParseMbox_NoDiff(t *testing.T) {
 
 func TestFormatMbox_NotEmpty(t *testing.T) {
 	p := ParseMbox(testMbox)
-	formatted := FormatMbox(p)
+	formatted := FormatMbox(p, 120)
 	if formatted == "" {
 		t.Error("formatted is empty")
 	}
@@ -108,7 +108,7 @@ func TestFormatDiff_Colors(t *testing.T) {
 	diff := "diff --git a/f b/f\n" +
 		"--- a/f\n+++ b/f\n" +
 		"@@ -1 +1 @@\n-old\n+new\n context\n"
-	result := formatDiff(diff)
+	result := formatDiff(diff, 120)
 	if result == "" {
 		t.Error("formatted diff is empty")
 	}
