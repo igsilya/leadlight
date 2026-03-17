@@ -769,3 +769,44 @@ func TestResetAllCommentsFetched(t *testing.T) {
 		t.Error("patch 101 (accepted) should NOT be reset")
 	}
 }
+
+func TestGetPatchesWithoutSeries(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 0,
+		Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 102, SeriesID: 0,
+		Name: "p3", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	ids := d.GetPatchesWithoutSeries()
+	if len(ids) != 2 {
+		t.Fatalf("got %d, want 2", len(ids))
+	}
+	if ids[0] != 101 || ids[1] != 102 {
+		t.Errorf("got %v, want [101, 102]", ids)
+	}
+}
+
+func TestGetPatchesWithoutSeries_AllHaveSeries(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	ids := d.GetPatchesWithoutSeries()
+	if len(ids) != 0 {
+		t.Errorf("got %v, want empty", ids)
+	}
+}

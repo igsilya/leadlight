@@ -274,6 +274,19 @@ func TestSeriesToRow(t *testing.T) {
 	}
 }
 
+func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
+	d := time.Now().Format("2006-01-02T15:04:05")
+	s := db.SeriesRow{ID: 50, Name: "", Date: d}
+	patches := []db.PatchRow{
+		{ID: 100, Name: "[PATCH] Lorem ipsum", Date: d,
+			State: "new", Submitter: "Lorem"},
+	}
+	row := seriesToRow(s, patches)
+	if row.Data[1] != "[PATCH] Lorem ipsum" {
+		t.Errorf("Name = %q, want first patch name", row.Data[1])
+	}
+}
+
 func TestLoadFromDB(t *testing.T) {
 	d, err := db.Open(":memory:")
 	if err != nil {

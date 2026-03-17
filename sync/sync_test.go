@@ -1162,3 +1162,73 @@ func TestUserRequestLoop_HandlesMbox(t *testing.T) {
 	cancel()
 	wg.Wait()
 }
+
+func TestFixOrphanPatches(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/patches/100/" {
+				json.NewEncoder(w).Encode(api.PatchDetail{
+					Patch: api.Patch{
+						ID:    100,
+						Name:  "Lorem orphan patch",
+						Date:  "2026-03-10",
+						State: "new",
+						Submitter: api.Person{
+							Name: "Lorem"},
+						Series: []api.SeriesSummary{{
+							ID:      50,
+							Name:    "Lorem series",
+							Date:    "2026-03-10",
+							Version: 1,
+						}},
+					},
+				})
+				return
+			}
+			w.WriteHeader(404)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 0,
+		Name: "Lorem orphan patch", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	s.fixOrphanPatches(context.Background())
+
+	row, _ := d.GetPatch(100)
+	if row.SeriesID != 50 {
+		t.Errorf("SeriesID = %d, want 50", row.SeriesID)
+	}
+
+	ids := d.GetPatchesWithoutSeries()
+	if len(ids) != 0 {
+		t.Errorf("still orphaned: %v", ids)
+	}
+}
+
+func TestFixOrphanPatches_NoneToFix(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "Has series", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	// Should not make any API calls or error
+	s.fixOrphanPatches(context.Background())
+}

@@ -39,10 +39,14 @@ func LoadFromDB(
 func seriesToRow(
 	s db.SeriesRow, patches []db.PatchRow,
 ) RowData {
+	name := s.Name
+	if name == "" && len(patches) > 0 {
+		name = patches[0].Name
+	}
 	row := RowData{
 		Data: []string{
 			strconv.Itoa(s.ID),
-			s.Name,
+			name,
 			aggregateState(patches),
 			s.Submitter,
 			formatAge(s.Date),

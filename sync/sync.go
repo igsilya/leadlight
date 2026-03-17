@@ -137,6 +137,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 
 	s.incrementalSync(ctx)
 	s.fetchNextDetail(ctx)
+	s.fixOrphanPatches(ctx)
 	s.notify()
 
 	ticker := time.NewTicker(syncInterval)
@@ -150,6 +151,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		case <-ticker.C:
 			s.incrementalSync(ctx)
 			s.fetchNextDetail(ctx)
+			s.fixOrphanPatches(ctx)
 			s.notify()
 
 			if time.Since(lastMaintainerRefresh) > maintainerRefresh {
@@ -414,6 +416,27 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 		return nil
 	}
 	return nil
+}
+
+func (s *Syncer) fixOrphanPatches(ctx context.Context) {
+	ids := s.db.GetPatchesWithoutSeries()
+	if len(ids) == 0 {
+		return
+	}
+	id := ids[0]
+	detail, err := s.client.GetPatch(ctx, id)
+	if err != nil {
+		log.Printf("SYNC: fixOrphanPatch(%d): %v", id, err)
+		s.db.UpdatePatchDetail(id, "", "", "", "")
+		return
+	}
+	log.Printf("SYNC: fixOrphanPatch(%d) %q -> series %v",
+		id, detail.Name, detail.Series)
+	s.db.SavePatch(patchToRow(detail.Patch))
+	for _, ss := range detail.Series {
+		s.db.SaveSeriesSummary(
+			ss.ID, ss.Name, ss.Date, ss.Version)
+	}
 }
 
 func (s *Syncer) fetchNextDetail(ctx context.Context) {

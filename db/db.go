@@ -579,6 +579,23 @@ func (d *DB) GetMaintainers() []MaintainerRow {
 	return result
 }
 
+func (d *DB) GetPatchesWithoutSeries() []int {
+	rows, err := d.conn.Query(
+		"SELECT id FROM patches WHERE series_id = 0 ORDER BY id LIMIT 10")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (d *DB) GetAllPatchNames() map[int]string {
 	rows, err := d.conn.Query(
 		"SELECT id, name FROM patches")
