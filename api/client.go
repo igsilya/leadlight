@@ -41,6 +41,19 @@ func NewClient(cfg *config.Config) *Client {
 	}
 }
 
+func NewClientForTest(
+	baseURL, project string,
+	httpClient *http.Client,
+	minDelay time.Duration,
+) *Client {
+	return &Client{
+		baseURL:    baseURL,
+		project:    project,
+		httpClient: httpClient,
+		minDelay:   minDelay,
+	}
+}
+
 type PatchListParams struct {
 	State   []string
 	Project string
