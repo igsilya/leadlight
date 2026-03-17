@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"mime"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -33,13 +34,22 @@ type ParsedMbox struct {
 func ParseMbox(raw string) ParsedMbox {
 	headers, body := splitHeadersBody(raw)
 	p := ParsedMbox{
-		Subject: extractHeader(headers, "Subject"),
-		From:    extractHeader(headers, "From"),
-		Cc:      extractHeader(headers, "Cc"),
+		Subject: decodeHeader(extractHeader(headers, "Subject")),
+		From:    decodeHeader(extractHeader(headers, "From")),
+		Cc:      decodeHeader(extractHeader(headers, "Cc")),
 		Date:    extractHeader(headers, "Date"),
 	}
 	p.Body, p.Diff = splitBodyDiff(body)
 	return p
+}
+
+func decodeHeader(s string) string {
+	dec := new(mime.WordDecoder)
+	result, err := dec.DecodeHeader(s)
+	if err != nil {
+		return s
+	}
+	return result
 }
 
 func splitHeadersBody(raw string) (string, string) {

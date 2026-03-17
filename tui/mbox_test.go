@@ -96,6 +96,34 @@ func TestParseMbox_NoDiff(t *testing.T) {
 	}
 }
 
+func TestParseMbox_EncodedHeaders(t *testing.T) {
+	raw := "From: =?utf-8?q?Lor=C3=A9m_Ips=C3=BAm?= <lorem@ipsum.example>\n" +
+		"Subject: =?utf-8?q?[PATCH]_Dol=C3=B3r_amet?=\n" +
+		"Cc: =?utf-8?b?Q29uc8OpY3TDqXR1cg==?= <consect@ipsum.example>\n\n"
+	p := ParseMbox(raw)
+	if !strings.Contains(p.From, "Lorém") {
+		t.Errorf("From = %q, want decoded", p.From)
+	}
+	if !strings.Contains(p.Subject, "Dolór") {
+		t.Errorf("Subject = %q, want decoded", p.Subject)
+	}
+	if !strings.Contains(p.Cc, "Conséctétur") {
+		t.Errorf("Cc = %q, want decoded", p.Cc)
+	}
+}
+
+func TestParseMbox_PlainHeaders(t *testing.T) {
+	raw := "From: Lorem <lorem@ipsum.example>\n" +
+		"Subject: [PATCH] Plain ASCII\n\n"
+	p := ParseMbox(raw)
+	if p.From != "Lorem <lorem@ipsum.example>" {
+		t.Errorf("From = %q", p.From)
+	}
+	if p.Subject != "[PATCH] Plain ASCII" {
+		t.Errorf("Subject = %q", p.Subject)
+	}
+}
+
 func TestFormatMbox_NotEmpty(t *testing.T) {
 	p := ParseMbox(testMbox)
 	formatted := FormatMbox(p, 120)
