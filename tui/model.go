@@ -138,6 +138,8 @@ type Model struct {
 	viewMode       viewMode
 	viewingPatchID int
 	viewingCoverID int
+	viewComments   []CommentInfo
+	viewCommentIdx int // -1 = patch/cover, 0+ = comment
 	viewportLines  []string
 	viewportOffset int
 

@@ -780,3 +780,83 @@ func TestOpenSeriesView_NoCover_OpensFirstPatch(t *testing.T) {
 		t.Error("should be viewing a patch")
 	}
 }
+
+func TestCommentNavigation(t *testing.T) {
+	m := testModel()
+	// Set up viewport mode with comments
+	m.viewMode = viewPatch
+	m.viewingPatchID = 100
+	m.viewCommentIdx = -1
+	m.viewComments = []CommentInfo{
+		{ID: 1, Submitter: "Lorem", Date: "2026-03-12",
+			Subject: "Re: patch", Content: "Looks good"},
+		{ID: 2, Submitter: "Dolor", Date: "2026-03-14",
+			Subject: "Re: patch", Content: "Agreed"},
+	}
+	m.viewportLines = []string{"patch content"}
+
+	// Right → first comment
+	m = pressSpecialKey(m, tea.KeyRight)
+	if m.viewCommentIdx != 0 {
+		t.Errorf("idx = %d, want 0", m.viewCommentIdx)
+	}
+
+	// Right → second comment
+	m = pressSpecialKey(m, tea.KeyRight)
+	if m.viewCommentIdx != 1 {
+		t.Errorf("idx = %d, want 1", m.viewCommentIdx)
+	}
+
+	// Right → wrap to patch
+	m = pressSpecialKey(m, tea.KeyRight)
+	if m.viewCommentIdx != -1 {
+		t.Errorf("idx = %d, want -1 (wrapped)", m.viewCommentIdx)
+	}
+
+	// Left → wrap to last comment
+	m = pressSpecialKey(m, tea.KeyLeft)
+	if m.viewCommentIdx != 1 {
+		t.Errorf("idx = %d, want 1 (wrapped back)", m.viewCommentIdx)
+	}
+}
+
+func TestCommentNavigation_NoComments(t *testing.T) {
+	m := testModel()
+	m.viewMode = viewPatch
+	m.viewingPatchID = 100
+	m.viewCommentIdx = -1
+	m.viewComments = nil
+	m.viewportLines = []string{"content"}
+
+	// Right should do nothing
+	m = pressSpecialKey(m, tea.KeyRight)
+	if m.viewCommentIdx != -1 {
+		t.Errorf("idx = %d, want -1 (no comments)", m.viewCommentIdx)
+	}
+}
+
+func TestCommentNavigation_LoadsOnOpen(t *testing.T) {
+	m, d := testModelWithDB(t)
+
+	// Add a comment for patch 100
+	d.InsertComment(db.CommentRow{
+		ID: 300, PatchID: 100,
+		Submitter: "Lorem", Date: "2026-03-12",
+		Subject: "Re: patch", Content: "Looks good",
+	})
+
+	// Expand first series and navigate to sub-row
+	m = pressKey(m, " ")
+	m = pressKey(m, "j") // sub-row
+
+	// Open the patch view
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if len(m.viewComments) != 1 {
+		t.Errorf("viewComments = %d, want 1",
+			len(m.viewComments))
+	}
+	if m.viewCommentIdx != -1 {
+		t.Errorf("viewCommentIdx = %d, want -1", m.viewCommentIdx)
+	}
+}

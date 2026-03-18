@@ -228,6 +228,8 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewMode = viewTable
 		m.viewingPatchID = 0
 		m.viewingCoverID = 0
+		m.viewComments = nil
+		m.viewCommentIdx = -1
 		m.viewportLines = nil
 	case "up", "k":
 		m.viewportScroll(-1)
@@ -241,6 +243,10 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewportOffset = 0
 	case "end", "G":
 		m.viewportScrollToEnd()
+	case "right", "l", "f8":
+		m.nextComment()
+	case "left", "h", "f7":
+		m.prevComment()
 	}
 	return m, nil
 }
@@ -439,6 +445,55 @@ func (m *Model) buildViewportContent(
 	m.viewportLines = splitLines(formatted)
 }
 
+func (m *Model) nextComment() {
+	if len(m.viewComments) == 0 {
+		return
+	}
+	m.viewCommentIdx++
+	if m.viewCommentIdx >= len(m.viewComments) {
+		m.viewCommentIdx = -1
+	}
+	m.switchToComment()
+}
+
+func (m *Model) prevComment() {
+	if len(m.viewComments) == 0 {
+		return
+	}
+	m.viewCommentIdx--
+	if m.viewCommentIdx < -1 {
+		m.viewCommentIdx = len(m.viewComments) - 1
+	}
+	m.switchToComment()
+}
+
+func (m *Model) switchToComment() {
+	m.viewportOffset = 0
+	if m.viewCommentIdx == -1 {
+		if m.db == nil {
+			return
+		}
+		if m.viewingCoverID != 0 {
+			cover, _ := m.db.GetCover(m.viewingCoverID)
+			if cover != nil && cover.MboxContent != "" {
+				m.buildViewportContent(cover.MboxContent, nil)
+			}
+		} else if m.viewingPatchID != 0 {
+			row, _ := m.db.GetPatch(m.viewingPatchID)
+			if row != nil && row.MboxContent != "" {
+				checks := GetChecksForPatch(m.db, m.viewingPatchID)
+				m.buildViewportContent(row.MboxContent, checks)
+			}
+		}
+		return
+	}
+	if m.viewCommentIdx < len(m.viewComments) {
+		comment := m.viewComments[m.viewCommentIdx]
+		formatted := FormatComment(comment, m.width)
+		m.viewportLines = splitLines(formatted)
+	}
+}
+
 func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 	if m.db == nil {
 		return nil
@@ -459,6 +514,8 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 		m.viewMode = viewPatch
 		m.viewingPatchID = 0
 		m.viewingCoverID = seriesID
+		m.viewComments = nil
+		m.viewCommentIdx = -1
 		m.viewportOffset = 0
 
 		if cover.MboxContent != "" {
@@ -510,6 +567,9 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 
 	m.viewMode = viewPatch
 	m.viewingPatchID = patchID
+	m.viewingCoverID = 0
+	m.viewComments = GetCommentsForPatch(m.db, patchID)
+	m.viewCommentIdx = -1
 	m.viewportOffset = 0
 
 	if row.MboxContent != "" {

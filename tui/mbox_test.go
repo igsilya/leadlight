@@ -132,6 +132,31 @@ func TestFormatMbox_NotEmpty(t *testing.T) {
 	}
 }
 
+func TestFormatComment(t *testing.T) {
+	c := CommentInfo{
+		Submitter: "Lorem Ipsum",
+		Date:      "2026-03-12T09:00:00",
+		Subject:   "Re: [PATCH] Lorem ipsum",
+		Content:   "Looks good.\n\nAcked-by: Lorem <lorem@ipsum.example>",
+	}
+	formatted := FormatComment(c, 120)
+	if formatted == "" {
+		t.Error("formatted is empty")
+	}
+	if !strings.Contains(formatted, "Lorem Ipsum") {
+		t.Error("missing submitter")
+	}
+	if !strings.Contains(formatted, "Acked-by") {
+		t.Error("missing content")
+	}
+}
+
+func TestFormatComment_Empty(t *testing.T) {
+	c := CommentInfo{}
+	// Empty comment with no fields should not panic
+	_ = FormatComment(c, 120)
+}
+
 func TestFormatDiff_Colors(t *testing.T) {
 	diff := "diff --git a/f b/f\n" +
 		"--- a/f\n+++ b/f\n" +

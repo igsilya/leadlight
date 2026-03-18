@@ -246,6 +246,55 @@ func FormatChecks(checks []CheckInfo, width int) string {
 	return b.String()
 }
 
+type CommentInfo struct {
+	ID        int
+	Submitter string
+	Date      string
+	Subject   string
+	Content   string
+}
+
+func FormatComment(c CommentInfo, width int) string {
+	var b strings.Builder
+	labelWidth := 9
+	valWidth := width - labelWidth
+	if valWidth < 20 {
+		valWidth = 20
+	}
+
+	writeHeader := func(label, value string) {
+		b.WriteString(mboxHeaderLabel.Render(label))
+		lines := wrapHeaderValue(value, valWidth)
+		for i, line := range lines {
+			if i > 0 {
+				b.WriteString(strings.Repeat(" ", labelWidth))
+			}
+			b.WriteString(mboxHeaderValue.Render(line))
+			b.WriteByte('\n')
+		}
+	}
+
+	if c.Subject != "" {
+		writeHeader("Subject: ", c.Subject)
+	}
+	if c.Submitter != "" {
+		writeHeader("From:    ", c.Submitter)
+	}
+	if c.Date != "" {
+		writeHeader("Date:    ", c.Date)
+	}
+
+	if c.Content != "" {
+		b.WriteByte('\n')
+		for _, line := range strings.Split(c.Content, "\n") {
+			b.WriteString(truncateLine(line, width))
+			b.WriteByte('\n')
+		}
+	}
+
+	return b.String()
+}
+
 func FormatMboxError(patchName string, err error) string {
 	return fmt.Sprintf(
 		"%s\n\n%s",

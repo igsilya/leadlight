@@ -64,9 +64,17 @@ func (m *Model) renderPatchView() string {
 	if maxOff > 0 {
 		pct = m.viewportOffset * 100 / maxOff
 	}
-	status := helpStyle.Render(fmt.Sprintf(
-		"↑/↓ scroll | pgup/pgdn page | esc back  %d%%",
-		pct))
+
+	var status string
+	if len(m.viewComments) > 0 {
+		commentBar := m.renderCommentBar()
+		status = commentBar + helpStyle.Render(fmt.Sprintf(
+			"  ←/→ comments  ↑/↓ scroll  esc back  %d%%", pct))
+	} else {
+		status = helpStyle.Render(fmt.Sprintf(
+			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%",
+			pct))
+	}
 
 	return body + "\n" + status
 }
@@ -356,6 +364,38 @@ func (m *Model) renderGradientRow(
 		b.WriteString(string(runes[gradientWidth:]))
 	}
 	return b.String()
+}
+
+func (m *Model) renderCommentBar() string {
+	sep := helpStyle.Render(" | ")
+	var parts []string
+
+	label := "patch"
+	if m.viewCommentIdx == -1 {
+		parts = append(parts,
+			highlightedOptionStyle.Render(" "+label+" "))
+	} else {
+		parts = append(parts,
+			normalOptionStyle.Render(label))
+	}
+
+	for i, c := range m.viewComments {
+		age := formatAge(c.Date)
+		name := c.Submitter
+		if name == "" {
+			name = "reply"
+		}
+		label := name + " (" + age + ")"
+		if i == m.viewCommentIdx {
+			parts = append(parts,
+				highlightedOptionStyle.Render(" "+label+" "))
+		} else {
+			parts = append(parts,
+				normalOptionStyle.Render(label))
+		}
+	}
+
+	return strings.Join(parts, sep)
 }
 
 func (m *Model) padToBottom(out *strings.Builder) {

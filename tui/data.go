@@ -191,6 +191,24 @@ func colorForSeries(
 	}
 }
 
+func GetCommentsForPatch(d *db.DB, patchID int) []CommentInfo {
+	if d == nil {
+		return nil
+	}
+	rows := d.GetComments(patchID)
+	comments := make([]CommentInfo, len(rows))
+	for i, r := range rows {
+		comments[i] = CommentInfo{
+			ID:        r.ID,
+			Submitter: r.Submitter,
+			Date:      r.Date,
+			Subject:   r.Subject,
+			Content:   r.Content,
+		}
+	}
+	return comments
+}
+
 func GetChecksForPatch(d *db.DB, patchID int) []CheckInfo {
 	if d == nil {
 		return nil
