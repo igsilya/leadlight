@@ -145,6 +145,7 @@ type Model struct {
 	fetchingComments bool
 	quotesExpanded   bool
 	listPrefix       string
+	delegateNames    map[string]string
 
 	RequestMbox        func(patchID int)
 	RequestCoverMbox   func(seriesID int)
@@ -209,10 +210,14 @@ func (m *Model) reloadData() {
 		}
 		m.listPrefix = detectListPrefix(names)
 	}
+	if m.delegateNames == nil {
+		m.delegateNames = m.db.GetDelegateDisplayNames()
+	}
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		patches := m.db.GetPatchesForSeries(s.ID)
-		row := seriesToRow(s, patches, m.listPrefix)
+		row := seriesToRow(
+			s, patches, m.listPrefix, m.delegateNames)
 		sid := strconv.Itoa(s.ID)
 		if expanded[sid] {
 			row.Expanded = true

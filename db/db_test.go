@@ -475,6 +475,30 @@ func TestSaveMaintainers(t *testing.T) {
 	}
 }
 
+func TestGetDelegateDisplayNames(t *testing.T) {
+	d := openTestDB(t)
+
+	d.SaveMaintainers([]MaintainerRow{
+		{ID: 1, Username: "lorem",
+			FirstName: "Lorem", LastName: "Ipsum"},
+		{ID: 2, Username: "dolor",
+			FirstName: "dolor", LastName: "Amet"},
+		{ID: 3, Username: "noname",
+			FirstName: "", LastName: "Sit"},
+	})
+
+	names := d.GetDelegateDisplayNames()
+	if names["lorem"] != "Lorem" {
+		t.Errorf("lorem = %q", names["lorem"])
+	}
+	if names["dolor"] != "dolor" {
+		t.Errorf("dolor = %q", names["dolor"])
+	}
+	if _, ok := names["noname"]; ok {
+		t.Error("noname should not be in map")
+	}
+}
+
 func TestGetActiveSeries(t *testing.T) {
 	d := openTestDB(t)
 

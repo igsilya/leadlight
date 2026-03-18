@@ -649,6 +649,24 @@ func (d *DB) GetMaintainers() []MaintainerRow {
 	return result
 }
 
+func (d *DB) GetDelegateDisplayNames() map[string]string {
+	rows, err := d.conn.Query(`
+		SELECT username, first_name FROM maintainers
+		WHERE first_name != ''`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := map[string]string{}
+	for rows.Next() {
+		var username, firstName string
+		rows.Scan(&username, &firstName)
+		result[username] = firstName
+	}
+	return result
+}
+
 func (d *DB) GetIncompletePatches() []int {
 	rows, err := d.conn.Query(
 		"SELECT id FROM patches WHERE series_id = 0 OR submitter = '' ORDER BY id DESC LIMIT 10")

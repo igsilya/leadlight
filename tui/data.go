@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"leadlight/db"
 )
@@ -19,6 +20,7 @@ var PatchworkColumns = []ColumnDef{
 	{Title: "Age", FixedWidth: 5},
 	{Title: "A/F/R/T", FixedWidth: 8},
 	{Title: "Checks", FixedWidth: 8},
+	{Title: "Dlg", FixedWidth: 8},
 }
 
 var stateDisplay = map[string]string{
@@ -36,6 +38,40 @@ func displayState(state string) string {
 		return short
 	}
 	return state
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
+func aggregateDelegate(patches []db.PatchRow) string {
+	delegates := map[string]bool{}
+	for _, p := range patches {
+		if p.Delegate != "" {
+			delegates[p.Delegate] = true
+		}
+	}
+	if len(delegates) == 1 {
+		for d := range delegates {
+			return d
+		}
+	}
+	return ""
+}
+
+func formatDelegate(username string, names map[string]string) string {
+	if username == "" {
+		return ""
+	}
+	if name, ok := names[username]; ok {
+		return capitalize(name)
+	}
+	return username
 }
 
 const (
@@ -140,18 +176,20 @@ func LoadFromDB(
 		names = append(names, s.Name)
 	}
 	listPrefix := detectListPrefix(names)
+	delegateNames := d.GetDelegateDisplayNames()
 
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		patches := d.GetPatchesForSeries(s.ID)
-		rows = append(rows, seriesToRow(s, patches, listPrefix))
+		rows = append(rows,
+			seriesToRow(s, patches, listPrefix, delegateNames))
 	}
 	return rows, nil
 }
 
 func seriesToRow(
 	s db.SeriesRow, patches []db.PatchRow,
-	listPrefix string,
+	listPrefix string, delegateNames map[string]string,
 ) RowData {
 	name := s.Name
 	if name == "" && len(patches) > 0 {
@@ -177,6 +215,7 @@ func seriesToRow(
 			formatAge(s.Date),
 			formatSeriesReviews(patches),
 			formatSeriesChecks(patches),
+			formatDelegate(aggregateDelegate(patches), delegateNames),
 		},
 		Style: RowStyle{
 			Background: colorForSeries(s, patches),
@@ -185,12 +224,12 @@ func seriesToRow(
 
 	row.SubRows = make([][]string, len(patches))
 	for i, p := range patches {
-		row.SubRows[i] = patchToSubRow(p, listPrefix)
+		row.SubRows[i] = patchToSubRow(p, listPrefix, delegateNames)
 	}
 	return row
 }
 
-func patchToSubRow(p db.PatchRow, listPrefix string) []string {
+func patchToSubRow(p db.PatchRow, listPrefix string, dlgNames map[string]string) []string {
 	cleaned, ver := parsePatchName(p.Name, listPrefix)
 	return []string{
 		strconv.Itoa(p.ID),
@@ -201,6 +240,7 @@ func patchToSubRow(p db.PatchRow, listPrefix string) []string {
 		formatAge(p.Date),
 		formatPatchReviews(p),
 		formatChecks(p),
+		formatDelegate(p.Delegate, dlgNames),
 	}
 }
 

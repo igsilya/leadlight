@@ -208,6 +208,67 @@ func TestDetectListPrefix_Empty(t *testing.T) {
 	}
 }
 
+func TestCapitalize(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"lorem", "Lorem"},
+		{"Dolor", "Dolor"},
+		{"", ""},
+		{"k", "K"},
+	}
+	for _, tt := range tests {
+		got := capitalize(tt.in)
+		if got != tt.want {
+			t.Errorf("capitalize(%q) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestAggregateDelegate(t *testing.T) {
+	single := []db.PatchRow{
+		{Delegate: "lorem"}, {Delegate: "lorem"},
+	}
+	if got := aggregateDelegate(single); got != "lorem" {
+		t.Errorf("single = %q", got)
+	}
+
+	none := []db.PatchRow{{}, {}}
+	if got := aggregateDelegate(none); got != "" {
+		t.Errorf("none = %q", got)
+	}
+
+	mixed := []db.PatchRow{
+		{Delegate: "lorem"}, {Delegate: "dolor"},
+	}
+	if got := aggregateDelegate(mixed); got != "" {
+		t.Errorf("mixed = %q, want empty", got)
+	}
+
+	empty := []db.PatchRow{}
+	if got := aggregateDelegate(empty); got != "" {
+		t.Errorf("empty = %q", got)
+	}
+}
+
+func TestFormatDelegate(t *testing.T) {
+	names := map[string]string{
+		"lorem": "lorem",
+		"dolor": "Dolor",
+	}
+	if got := formatDelegate("lorem", names); got != "Lorem" {
+		t.Errorf("lorem = %q", got)
+	}
+	if got := formatDelegate("dolor", names); got != "Dolor" {
+		t.Errorf("dolor = %q", got)
+	}
+	if got := formatDelegate("unknown", names); got != "unknown" {
+		t.Errorf("unknown = %q", got)
+	}
+	if got := formatDelegate("", names); got != "" {
+		t.Errorf("empty = %q", got)
+	}
+}
+
 func TestDisplayState(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"new", "new"},
@@ -368,7 +429,7 @@ func TestSeriesToRow(t *testing.T) {
 		},
 	}
 
-	row := seriesToRow(s, patches, "")
+	row := seriesToRow(s, patches, "", nil)
 
 	if row.Data[0] != "50" {
 		t.Errorf("ID = %q", row.Data[0])
@@ -387,6 +448,9 @@ func TestSeriesToRow(t *testing.T) {
 	}
 	if row.Data[5] != "2d" {
 		t.Errorf("Age = %q", row.Data[5])
+	}
+	if row.Data[8] != "" {
+		t.Errorf("Dlg = %q, want empty", row.Data[8])
 	}
 	if row.Style.Background != "green" {
 		t.Errorf("Background = %q, want green (has acked)",
@@ -407,7 +471,7 @@ func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
 		{ID: 100, Name: "[PATCH] Lorem ipsum", Date: d,
 			State: "new", Submitter: "Lorem"},
 	}
-	row := seriesToRow(s, patches, "")
+	row := seriesToRow(s, patches, "", nil)
 	if row.Data[2] != "[PATCH] Lorem ipsum" {
 		t.Errorf("Name = %q, want first patch name", row.Data[2])
 	}
