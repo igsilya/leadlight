@@ -135,13 +135,14 @@ type Model struct {
 	cachedRows []string
 	cacheValid bool
 
-	viewMode       viewMode
-	viewingPatchID int
-	viewingCoverID int
-	viewComments   []CommentInfo
-	viewCommentIdx int // -1 = patch/cover, 0+ = comment
-	viewportLines  []string
-	viewportOffset int
+	viewMode         viewMode
+	viewingPatchID   int
+	viewingCoverID   int
+	viewComments     []CommentInfo
+	viewCommentIdx   int // -1 = patch/cover, 0+ = comment
+	viewportLines    []string
+	viewportOffset   int
+	fetchingComments bool
 
 	RequestMbox        func(patchID int)
 	RequestCoverMbox   func(seriesID int)
@@ -418,6 +419,7 @@ func (m *Model) refreshViewportComments() {
 	} else if m.viewingPatchID != 0 {
 		m.viewComments = GetCommentsForPatch(m.db, m.viewingPatchID)
 	}
+	m.fetchingComments = false
 }
 
 func splitLines(content string) []string {

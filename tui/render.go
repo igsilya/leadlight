@@ -71,9 +71,20 @@ func (m *Model) renderPatchView() string {
 		status = commentBar + helpStyle.Render(fmt.Sprintf(
 			"  ←/→ comments  ↑/↓ scroll  esc back  %d%%", pct))
 	} else {
-		status = helpStyle.Render(fmt.Sprintf(
-			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%",
-			pct))
+		help := helpStyle.Render(fmt.Sprintf(
+			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%", pct))
+		if m.fetchingComments {
+			spinner := spinnerFrames[m.spinnerFrame]
+			right := statusStyle.Render(
+				fmt.Sprintf("%s Fetching comments...", spinner))
+			gap := m.width - lipgloss.Width(help) - lipgloss.Width(right)
+			if gap < 2 {
+				gap = 2
+			}
+			status = help + lipgloss.NewStyle().Width(gap).Render("") + right
+		} else {
+			status = help
+		}
 	}
 
 	return body + "\n" + status

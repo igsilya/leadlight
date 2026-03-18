@@ -519,6 +519,7 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 		m.viewportOffset = 0
 
 		if len(m.viewComments) == 0 && m.FetchCoverComments != nil {
+			m.fetchingComments = true
 			m.FetchCoverComments(cover.ID)
 		}
 
@@ -577,6 +578,7 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	m.viewportOffset = 0
 
 	if len(m.viewComments) == 0 && m.FetchPatchComments != nil {
+		m.fetchingComments = true
 		m.FetchPatchComments(patchID)
 	}
 
