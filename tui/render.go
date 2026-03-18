@@ -67,7 +67,6 @@ func (m *Model) renderPatchView() string {
 
 	var status string
 	if len(m.viewComments) > 0 {
-		commentBar := m.renderCommentBar()
 		expandHint := ""
 		if m.viewCommentIdx >= 0 {
 			if m.quotesExpanded {
@@ -76,9 +75,11 @@ func (m *Model) renderPatchView() string {
 				expandHint = "  e expand"
 			}
 		}
-		status = commentBar + helpStyle.Render(fmt.Sprintf(
-			"  ←/→ comments%s  ↑/↓ scroll  esc back  %d%%",
-			expandHint, pct))
+		helpText := helpStyle.Render(fmt.Sprintf(
+			"  ←/→%s  ↑/↓  esc  %d%%", expandHint, pct))
+		barWidth := m.width - lipgloss.Width(helpText)
+		commentBar := m.renderCommentBar(barWidth)
+		status = commentBar + helpText
 	} else {
 		help := helpStyle.Render(fmt.Sprintf(
 			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%", pct))
@@ -386,36 +387,85 @@ func (m *Model) renderGradientRow(
 	return b.String()
 }
 
-func (m *Model) renderCommentBar() string {
-	sep := helpStyle.Render(" | ")
-	var parts []string
+func firstName(s string) string {
+	if i := strings.IndexByte(s, ' '); i > 0 {
+		return s[:i]
+	}
+	return s
+}
 
-	label := "patch"
-	if m.viewCommentIdx == -1 {
-		parts = append(parts,
-			highlightedOptionStyle.Render(" "+label+" "))
-	} else {
-		parts = append(parts,
-			normalOptionStyle.Render(label))
+func (m *Model) renderCommentBar(maxWidth int) string {
+	type entry struct {
+		label    string
+		width    int
+		selected bool
 	}
 
+	var entries []entry
+	patchLabel := "patch"
+	entries = append(entries, entry{
+		patchLabel, len(patchLabel) + 2, m.viewCommentIdx == -1,
+	})
 	for i, c := range m.viewComments {
-		age := formatAge(c.Date)
-		name := c.Submitter
+		name := firstName(c.Submitter)
 		if name == "" {
 			name = "reply"
 		}
-		label := name + " (" + age + ")"
-		if i == m.viewCommentIdx {
-			parts = append(parts,
-				highlightedOptionStyle.Render(" "+label+" "))
-		} else {
-			parts = append(parts,
-				normalOptionStyle.Render(label))
+		label := name + " (" + formatAge(c.Date) + ")"
+		entries = append(entries, entry{
+			label, len(label) + 2, i == m.viewCommentIdx,
+		})
+	}
+
+	selectedIdx := m.viewCommentIdx + 1
+	sepWidth := 3
+
+	lo, hi := selectedIdx, selectedIdx+1
+	used := entries[selectedIdx].width
+	for {
+		grew := false
+		if lo > 0 {
+			w := entries[lo-1].width + sepWidth
+			if used+w+4 <= maxWidth {
+				lo--
+				used += w
+				grew = true
+			}
+		}
+		if hi < len(entries) {
+			w := entries[hi].width + sepWidth
+			if used+w+4 <= maxWidth {
+				hi++
+				used += w
+				grew = true
+			}
+		}
+		if !grew {
+			break
 		}
 	}
 
-	return strings.Join(parts, sep)
+	sep := helpStyle.Render(" | ")
+	var b strings.Builder
+	if lo > 0 {
+		b.WriteString(helpStyle.Render("◀ "))
+	}
+	for i := lo; i < hi; i++ {
+		if i > lo {
+			b.WriteString(sep)
+		}
+		e := entries[i]
+		if e.selected {
+			b.WriteString(
+				highlightedOptionStyle.Render(" " + e.label + " "))
+		} else {
+			b.WriteString(normalOptionStyle.Render(e.label))
+		}
+	}
+	if hi < len(entries) {
+		b.WriteString(helpStyle.Render(" ▶"))
+	}
+	return b.String()
 }
 
 func (m *Model) padToBottom(out *strings.Builder) {
