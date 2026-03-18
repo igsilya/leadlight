@@ -242,9 +242,9 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.viewportScroll(1)
 	case "pgup", "ctrl+u":
-		m.viewportScroll(-m.viewportVisibleLines())
+		m.viewportScroll(-m.viewportVisibleLines() / 2)
 	case "pgdown", "ctrl+d":
-		m.viewportScroll(m.viewportVisibleLines())
+		m.viewportScroll(m.viewportVisibleLines() / 2)
 	case "home", "g":
 		m.viewportOffset = 0
 	case "end", "G":
