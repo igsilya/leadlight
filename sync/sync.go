@@ -28,6 +28,7 @@ type Syncer struct {
 
 type MboxRequest struct {
 	PatchID int
+	IsCover bool
 	ResultC chan<- MboxResult
 }
 
@@ -74,6 +75,10 @@ func (s *Syncer) RequestPatchUpdate(req PatchUpdateRequest) error {
 	return <-resultC
 }
 
+func (s *Syncer) SendMboxRequest(req MboxRequest) {
+	s.mboxC <- req
+}
+
 func (s *Syncer) RequestMbox(patchID int) MboxResult {
 	resultC := make(chan MboxResult, 1)
 	s.mboxC <- MboxRequest{
@@ -117,10 +122,17 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		case req := <-s.mboxC:
-			log.Printf("SYNC: mbox request for patch %d",
-				req.PatchID)
-			req.ResultC <- s.fetchMbox(
-				ctx, req.PatchID, false)
+			if req.IsCover {
+				log.Printf("SYNC: cover mbox request for %d",
+					req.PatchID)
+				req.ResultC <- s.fetchCoverMbox(
+					ctx, req.PatchID)
+			} else {
+				log.Printf("SYNC: patch mbox request for %d",
+					req.PatchID)
+				req.ResultC <- s.fetchMbox(
+					ctx, req.PatchID, false)
+			}
 		case req := <-s.updateC:
 			log.Printf("SYNC: update request for patch %d",
 				req.PatchID)
@@ -420,7 +432,7 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 
 func (s *Syncer) fetchMissingSeries(ctx context.Context) {
 	for {
-		since := s.db.GetOldestMissingSeriesDate()
+		since := s.db.GetOldestIncompleteSeriesDate()
 		if since == "" {
 			return
 		}
@@ -452,12 +464,23 @@ func (s *Syncer) fetchMissingSeries(ctx context.Context) {
 			})
 			s.db.UpdateSeriesPatches(
 				sr.ID, sr.Submitter.Name, sr.Submitter.Email)
+			if sr.CoverLetter != nil {
+				s.db.SaveCover(db.CoverRow{
+					ID:       sr.CoverLetter.ID,
+					SeriesID: sr.ID,
+					Name:     sr.CoverLetter.Name,
+					Date:     sr.CoverLetter.Date,
+					MsgID:    sr.CoverLetter.MsgID,
+					MboxURL:  sr.CoverLetter.Mbox,
+					WebURL:   sr.CoverLetter.WebURL,
+				})
+			}
 		}
 
 		log.Printf("SYNC: processed %d series", len(page.Items))
 		s.notify()
 
-		newSince := s.db.GetOldestMissingSeriesDate()
+		newSince := s.db.GetOldestIncompleteSeriesDate()
 		if newSince == since {
 			log.Printf("SYNC: no progress, stopping")
 			return
@@ -503,6 +526,17 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 			series.ID,
 			series.Submitter.Name,
 			series.Submitter.Email)
+		if series.CoverLetter != nil {
+			s.db.SaveCover(db.CoverRow{
+				ID:       series.CoverLetter.ID,
+				SeriesID: series.ID,
+				Name:     series.CoverLetter.Name,
+				Date:     series.CoverLetter.Date,
+				MsgID:    series.CoverLetter.MsgID,
+				MboxURL:  series.CoverLetter.Mbox,
+				WebURL:   series.CoverLetter.WebURL,
+			})
+		}
 		return
 	}
 
@@ -746,6 +780,61 @@ func (s *Syncer) fetchMbox(
 
 	log.Printf("SYNC: fetchMbox(%d): no URL available", patchID)
 	return MboxResult{Err: err}
+}
+
+// fetchCoverMbox fetches cover letter mbox. The ID parameter is
+// the series ID — GetCover looks up by series_id.
+func (s *Syncer) fetchCoverMbox(ctx context.Context, seriesID int) MboxResult {
+	cover, err := s.db.GetCover(seriesID)
+	if err != nil {
+		log.Printf("SYNC: fetchCoverMbox(series %d): %v",
+			seriesID, err)
+		return MboxResult{Err: err}
+	}
+	if cover == nil {
+		return MboxResult{Err: fmt.Errorf(
+			"no cover letter for series %d", seriesID)}
+	}
+	log.Printf("SYNC: fetchCoverMbox(%d) %q mboxURL=%q cached=%d",
+		cover.ID, cover.Name, cover.MboxURL, len(cover.MboxContent))
+	if cover.MboxContent != "" {
+		return MboxResult{Content: cover.MboxContent}
+	}
+
+	if s.cfg.LoreURL != "" && cover.MsgID != "" {
+		msgid := strings.Trim(cover.MsgID, "<>")
+		loreURL := strings.TrimRight(s.cfg.LoreURL, "/") + "/" + msgid + "/raw"
+		log.Printf("SYNC: fetchCoverMbox(%d): trying lore %s",
+			cover.ID, loreURL)
+		content, err := s.client.GetMbox(ctx, loreURL, false)
+		if err == nil && isValidMbox(content) {
+			s.db.UpdateCoverMbox(cover.ID, content)
+			return MboxResult{Content: content}
+		}
+	}
+
+	if cover.MboxURL != "" {
+		mboxURL := cover.MboxURL
+		if strings.HasPrefix(s.cfg.Server, "https://") &&
+			strings.HasPrefix(mboxURL, "http://") {
+			mboxURL = "https://" + mboxURL[len("http://"):]
+		}
+		log.Printf("SYNC: fetchCoverMbox(%d): trying patchwork %s",
+			cover.ID, mboxURL)
+		content, err := s.client.GetMbox(ctx, mboxURL, false)
+		if err != nil {
+			return MboxResult{Err: err}
+		}
+		if !isValidMbox(content) {
+			return MboxResult{
+				Err: fmt.Errorf("unexpected response from server")}
+		}
+		s.db.UpdateCoverMbox(cover.ID, content)
+		return MboxResult{Content: content}
+	}
+
+	return MboxResult{Err: fmt.Errorf(
+		"no mbox URL for cover %d", cover.ID)}
 }
 
 func isValidMbox(content string) bool {

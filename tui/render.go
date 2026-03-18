@@ -396,7 +396,7 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 
 	help := helpStyle.Render(
 		filterLabel + " q quit | ↑/↓ pgup/dn navigate" +
-			" | enter expand | / filter | " + toggleHint)
+			" | enter view | space expand | / filter | " + toggleHint)
 
 	if m.status == "" {
 		out.WriteString(help)

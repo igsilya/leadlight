@@ -108,34 +108,33 @@ func TestKeyUp(t *testing.T) {
 	}
 }
 
-func TestKeyEnter_Expand(t *testing.T) {
+func TestSpaceExpand(t *testing.T) {
 	m := testModel()
 	if m.RowData[0].Expanded {
 		t.Error("row 0 should start collapsed")
 	}
 
-	m = pressSpecialKey(m, tea.KeyEnter)
+	m = pressKey(m, " ")
 	if !m.RowData[0].Expanded {
-		t.Error("row 0 should be expanded after enter")
+		t.Error("row 0 should be expanded after space")
 	}
 
-	// Now there are 5 visible items (3 rows + 2 sub-rows)
 	items := m.getVisibleItems()
 	if len(items) != 5 {
 		t.Errorf("visible items = %d, want 5", len(items))
 	}
 
-	// Enter again collapses
-	m = pressSpecialKey(m, tea.KeyEnter)
+	// Space again collapses
+	m = pressKey(m, " ")
 	if m.RowData[0].Expanded {
-		t.Error("row 0 should be collapsed after second enter")
+		t.Error("row 0 should be collapsed after second space")
 	}
 }
 
-func TestKeyEnter_NoExpandOnLeafRow(t *testing.T) {
+func TestSpaceNoExpandOnLeafRow(t *testing.T) {
 	m := testModel()
 	m = pressKey(m, "j") // row 1 has no sub-rows
-	m = pressSpecialKey(m, tea.KeyEnter)
+	m = pressKey(m, " ")
 	if m.RowData[1].Expanded {
 		t.Error("row 1 (no sub-rows) should not expand")
 	}
@@ -338,7 +337,7 @@ func TestView_DoesNotPanic(t *testing.T) {
 func TestExpandedNavigation(t *testing.T) {
 	m := testModel()
 	// Expand row 0
-	m = pressSpecialKey(m, tea.KeyEnter)
+	m = pressKey(m, " ")
 	// Navigate down through sub-rows
 	m = pressKey(m, "j") // sub-row 1.1
 	m = pressKey(m, "j") // sub-row 1.2
@@ -469,7 +468,7 @@ func TestReloadData_SubRowSelectionPreserved(t *testing.T) {
 	m, _ := testModelWithDB(t)
 
 	// Expand first series
-	m = pressSpecialKey(m, tea.KeyEnter)
+	m = pressKey(m, " ")
 	// Navigate to first sub-row
 	m = pressKey(m, "j")
 
@@ -647,11 +646,11 @@ func TestFilterMode_ClearCollapsesExceptSelected(t *testing.T) {
 	m := testModel()
 
 	// Expand multiple series
-	m = pressSpecialKey(m, tea.KeyEnter) // expand row 0
+	m = pressKey(m, " ") // expand row 0
 	m = pressKey(m, "j")
 	m = pressKey(m, "j")
-	m = pressKey(m, "j")                 // now on row 1 (second series)
-	m = pressSpecialKey(m, tea.KeyEnter) // can't expand (no sub-rows)
+	m = pressKey(m, "j") // now on row 1 (second series)
+	m = pressKey(m, " ") // can't expand (no sub-rows)
 
 	// Start filter and navigate
 	m = pressKey(m, "/")
@@ -706,5 +705,78 @@ func TestToggleShowAll(t *testing.T) {
 	if len(m.RowData) != initialRows {
 		t.Errorf("should show same rows as before: %d vs %d",
 			len(m.RowData), initialRows)
+	}
+}
+
+func TestOpenSeriesView_CoverLetter(t *testing.T) {
+	m, d := testModelWithDB(t)
+
+	// Add a cover letter for series 50 with cached content
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name:        "Lorem cover letter",
+		Date:        "2026-03-10",
+		MboxURL:     "https://pw.example.com/cover/99/mbox/",
+		MboxContent: "From cover\nSubject: Lorem cover\n\nCover body",
+	})
+
+	// Press enter on the parent row (series 50)
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if m.viewMode != viewPatch {
+		t.Error("should be in patch view mode")
+	}
+	if m.viewingCoverID == 0 {
+		t.Error("viewingCoverID should be set")
+	}
+	if len(m.viewportLines) == 0 {
+		t.Error("viewportLines should have content")
+	}
+}
+
+func TestOpenSeriesView_NoCover_SinglePatch(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	now := time.Now()
+	date := now.Format("2006-01-02T15:04:05")
+
+	d.SaveSeriesSummary(60, "Single patch series", date, 1)
+	d.SavePatch(db.PatchRow{
+		ID: 300, SeriesID: 60,
+		Name: "Only patch", State: "new",
+		Date: date, Submitter: "Lorem",
+		MboxContent: "From patch\nSubject: Only\n\nBody",
+	})
+
+	m := NewModel(d, []string{"new"}, "test-token")
+	m.width = 120
+	m.height = 30
+
+	// Press enter on the parent row
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if m.viewMode != viewPatch {
+		t.Error("should open patch view")
+	}
+	if m.viewingPatchID == 0 {
+		t.Error("should fall back to viewing the single patch")
+	}
+}
+
+func TestOpenSeriesView_NoCover_OpensFirstPatch(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	// testModelWithDB creates series 50 with 2 patches, no cover
+
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if m.viewMode != viewPatch {
+		t.Error("should open first patch when no cover")
+	}
+	if m.viewingPatchID == 0 {
+		t.Error("should be viewing a patch")
 	}
 }

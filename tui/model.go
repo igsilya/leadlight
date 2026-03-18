@@ -137,10 +137,13 @@ type Model struct {
 
 	viewMode       viewMode
 	viewingPatchID int
+	viewingCoverID int
 	viewportLines  []string
 	viewportOffset int
 
 	RequestMbox        func(patchID int)
+	RequestCoverMbox   func(seriesID int)
+	FetchSeriesCover   func(seriesID int)
 	RequestPatchUpdate func(
 		patchID int, state *string, delegateID *int,
 	)
@@ -325,7 +328,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reloadData()
 		if m.viewMode == viewPatch &&
 			len(m.viewportLines) == 1 &&
-			m.viewportLines[0] == "Fetching..." {
+			(m.viewportLines[0] == "Fetching..." ||
+				m.viewportLines[0] == "Fetching cover letter...") {
 			m.refreshViewport()
 		}
 		return m, nil
@@ -366,18 +370,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) refreshViewport() {
-	if m.viewingPatchID == 0 || m.db == nil {
+	if m.db == nil {
+		return
+	}
+	if m.viewingCoverID != 0 {
+		cover, err := m.db.GetCover(m.viewingCoverID)
+		if err != nil || cover == nil || cover.MboxContent == "" {
+			return
+		}
+		log.Printf("TUI: refreshViewport: cover %q got %d bytes",
+			cover.Name, len(cover.MboxContent))
+		m.buildViewportContent(cover.MboxContent, nil)
+		return
+	}
+	if m.viewingPatchID == 0 {
 		return
 	}
 	row, err := m.db.GetPatch(m.viewingPatchID)
 	if err != nil {
-		log.Printf("TUI: refreshViewport: GetPatch(%d) error: %v",
-			m.viewingPatchID, err)
 		return
 	}
 	if row.MboxContent == "" {
-		log.Printf("TUI: refreshViewport: %q mbox still empty",
-			row.Name)
 		return
 	}
 	log.Printf("TUI: refreshViewport: %q got %d bytes",

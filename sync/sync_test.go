@@ -1329,7 +1329,7 @@ func TestFetchMissingSeries_BulkUpdate(t *testing.T) {
 	s := NewSyncer(client, d, cfg, func() { notified = true })
 	s.fetchMissingSeries(context.Background())
 
-	if d.GetOldestMissingSeriesDate() != "" {
+	if d.GetOldestIncompleteSeriesDate() != "" {
 		t.Error("should have no missing series")
 	}
 
@@ -1362,6 +1362,7 @@ func TestFetchMissingSeries_SkipsWhenComplete(t *testing.T) {
 	d.SaveSeries(db.SeriesRow{
 		ID: 50, Name: "Lorem",
 		Date: "2026-03-10", Submitter: "Lorem Ipsum",
+		TotalPatches: 1,
 	})
 
 	cfg := &config.Config{
@@ -1417,5 +1418,99 @@ func TestFetchMissingSeries_StopsWhenStuck(t *testing.T) {
 	if reqCount != 1 {
 		t.Errorf("reqCount = %d, want 1 (should stop when no progress)",
 			reqCount)
+	}
+}
+
+func TestFetchCoverMbox(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/cover/99/mbox/" {
+				w.Write([]byte(testMboxContent))
+				return
+			}
+			w.WriteHeader(404)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name:    "Lorem cover",
+		Date:    "2026-03-10",
+		MboxURL: srv.URL + "/cover/99/mbox/",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	result := s.fetchCoverMbox(context.Background(), 50)
+
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	if result.Content != testMboxContent {
+		t.Errorf("Content = %q", result.Content)
+	}
+
+	cover, _ := d.GetCover(50)
+	if cover.MboxContent != testMboxContent {
+		t.Error("cover mbox not cached in DB")
+	}
+}
+
+func TestFetchCoverMbox_Cached(t *testing.T) {
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Lorem cover", Date: "2026-03-10",
+	})
+	d.UpdateCoverMbox(99, "cached cover content")
+
+	cfg := &config.Config{
+		Server:  "https://pw.example.com",
+		Project: "test",
+	}
+	client := api.NewClientForTest(
+		"https://pw.example.com", "test", nil,
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	result := s.fetchCoverMbox(context.Background(), 50)
+
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	if result.Content != "cached cover content" {
+		t.Errorf("Content = %q", result.Content)
+	}
+}
+
+func TestFetchCoverMbox_NotFound(t *testing.T) {
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	cfg := &config.Config{
+		Server:  "https://pw.example.com",
+		Project: "test",
+	}
+	client := api.NewClientForTest(
+		"https://pw.example.com", "test", nil,
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	result := s.fetchCoverMbox(context.Background(), 999)
+
+	if result.Err == nil {
+		t.Error("expected error for non-existent cover")
 	}
 }

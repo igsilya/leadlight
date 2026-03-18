@@ -47,6 +47,10 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "q", "ctrl+c":
+		if !strings.HasSuffix(m.status, "...") {
+			m.status = ""
+		}
+
 		if m.filterMode {
 			m.clearFilter()
 			return m, nil
@@ -122,28 +126,33 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updateSelectedID()
 		return m, m.resetHighlight()
 
+	case " ":
+		m.mu.Lock()
+		items := m.getVisibleItems()
+		if m.selectedRow < len(items) {
+			item := items[m.selectedRow]
+			if !item.isSubRow && item.canExpand {
+				idx := item.parentIdx
+				m.RowData[idx].Expanded = !m.RowData[idx].Expanded
+				m.invalidateRowCache()
+				m.ensureSelectedVisible()
+			}
+		}
+		m.mu.Unlock()
+		m.updateSelectedID()
+
 	case "enter":
 		m.mu.Lock()
 		items := m.getVisibleItems()
 		if m.selectedRow < len(items) {
 			item := items[m.selectedRow]
+			m.mu.Unlock()
 			if item.isSubRow {
-				log.Printf("TUI: enter on sub-row %d (parent %d)",
-					m.selectedRow, item.parentIdx)
-				m.mu.Unlock()
 				return m, m.openPatchView(item)
 			}
-			if item.canExpand {
-				idx := item.parentIdx
-				m.RowData[idx].Expanded = !m.RowData[idx].Expanded
-				m.invalidateRowCache()
-				m.ensureSelectedVisible()
-				log.Printf("TUI: toggle expand row %d -> %v",
-					idx, m.RowData[idx].Expanded)
-			}
+			return m, m.openSeriesView(item)
 		}
 		m.mu.Unlock()
-		m.updateSelectedID()
 
 	case "s":
 		log.Println("TUI: key 's' pressed")
@@ -218,6 +227,7 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc":
 		m.viewMode = viewTable
 		m.viewingPatchID = 0
+		m.viewingCoverID = 0
 		m.viewportLines = nil
 	case "up", "k":
 		m.viewportScroll(-1)
@@ -427,6 +437,54 @@ func (m *Model) buildViewportContent(
 		formatted = checksSection + "\n" + formatted
 	}
 	m.viewportLines = splitLines(formatted)
+}
+
+func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
+	if m.db == nil {
+		return nil
+	}
+	seriesID, err := strconv.Atoi(item.data[0])
+	if err != nil {
+		return nil
+	}
+
+	cover, _ := m.db.GetCover(seriesID)
+	if cover == nil && m.FetchSeriesCover != nil {
+		if m.db.GetSeriesTotalPatches(seriesID) == 0 {
+			m.FetchSeriesCover(seriesID)
+			cover, _ = m.db.GetCover(seriesID)
+		}
+	}
+	if cover != nil {
+		m.viewMode = viewPatch
+		m.viewingPatchID = 0
+		m.viewingCoverID = seriesID
+		m.viewportOffset = 0
+
+		if cover.MboxContent != "" {
+			m.buildViewportContent(cover.MboxContent, nil)
+		} else {
+			m.viewportLines = []string{"Fetching cover letter..."}
+			if m.RequestCoverMbox != nil {
+				m.RequestCoverMbox(seriesID)
+			}
+		}
+		return nil
+	}
+
+	// No cover — open first patch instead
+	patches := m.db.GetPatchesForSeries(seriesID)
+	if len(patches) > 0 {
+		return m.openPatchView(visibleItem{
+			data:      []string{strconv.Itoa(patches[0].ID)},
+			isSubRow:  true,
+			parentIdx: item.parentIdx,
+			subRowIdx: 0,
+		})
+	}
+
+	m.status = "No patches in this series"
+	return nil
 }
 
 func (m *Model) openPatchView(item visibleItem) tea.Cmd {

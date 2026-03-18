@@ -873,40 +873,76 @@ func TestGetIncompletePatches_AllComplete(t *testing.T) {
 	}
 }
 
-func TestGetOldestMissingSeriesDate(t *testing.T) {
+func TestGetOldestIncompleteSeriesDate(t *testing.T) {
 	d := openTestDB(t)
 
-	if d.GetOldestMissingSeriesDate() != "" {
+	if d.GetOldestIncompleteSeriesDate() != "" {
 		t.Error("want empty when no series")
 	}
 
 	d.SaveSeries(SeriesRow{
 		ID: 50, Name: "Has submitter",
 		Date: "2026-03-10", Submitter: "Lorem",
+		TotalPatches: 1,
 	})
-	if d.GetOldestMissingSeriesDate() != "" {
-		t.Error("want empty when all have submitters")
+	// Has submitter AND total_patches > 0 (fully fetched)
+	if d.GetOldestIncompleteSeriesDate() != "" {
+		t.Error("want empty when all complete")
 	}
 
+	// Missing submitter
 	d.SaveSeries(SeriesRow{
 		ID: 51, Name: "Newer missing",
 		Date: "2026-03-09",
 	})
+	// Never fully fetched (total_patches = 0), no cover
 	d.SaveSeriesSummary(52, "Older missing", "2026-01-15", 1)
 
-	got := d.GetOldestMissingSeriesDate()
+	got := d.GetOldestIncompleteSeriesDate()
 	if got != "2026-01-15" {
-		t.Errorf("got %q, want oldest missing date", got)
+		t.Errorf("got %q, want oldest incomplete date", got)
 	}
 
-	// Fix the older one
+	// Fix the older one (submitter + total_patches)
 	d.SaveSeries(SeriesRow{
 		ID: 52, Name: "Fixed",
 		Date: "2026-01-15", Submitter: "Dolor",
+		TotalPatches: 1,
 	})
-	got = d.GetOldestMissingSeriesDate()
+	got = d.GetOldestIncompleteSeriesDate()
 	if got != "2026-03-09" {
 		t.Errorf("got %q, want next oldest after fix", got)
+	}
+
+	// Fix the last missing submitter
+	d.SaveSeries(SeriesRow{
+		ID: 51, Name: "Also fixed",
+		Date: "2026-03-09", Submitter: "Lorem",
+		TotalPatches: 1,
+	})
+	got = d.GetOldestIncompleteSeriesDate()
+	if got != "" {
+		t.Errorf("got %q, want empty when all complete", got)
+	}
+
+	// Add an unlinked cover — should be detected
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 0,
+		Name: "Unlinked cover", Date: "2026-02-15",
+	})
+	got = d.GetOldestIncompleteSeriesDate()
+	if got != "2026-02-15" {
+		t.Errorf("got %q, want unlinked cover date", got)
+	}
+
+	// Link the cover — should clear
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Linked cover", Date: "2026-02-15",
+	})
+	got = d.GetOldestIncompleteSeriesDate()
+	if got != "" {
+		t.Errorf("got %q, want empty after linking cover", got)
 	}
 }
 
@@ -934,5 +970,52 @@ func TestGetAllSeries(t *testing.T) {
 	all := d.GetAllSeries()
 	if len(all) != 2 {
 		t.Errorf("all = %d, want 2", len(all))
+	}
+}
+
+func TestUpdateCoverMbox(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Lorem cover", Date: "2026-03-10",
+		MboxURL: "https://pw.example.com/cover/99/mbox/",
+	})
+
+	d.UpdateCoverMbox(99, "From lorem cover mbox content")
+
+	cover, err := d.GetCover(50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cover.MboxContent != "From lorem cover mbox content" {
+		t.Errorf("MboxContent = %q", cover.MboxContent)
+	}
+}
+
+func TestGetCover_BySeriesID(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Lorem cover", Date: "2026-03-10",
+	})
+	d.SaveCover(CoverRow{
+		ID: 100, SeriesID: 51,
+		Name: "Dolor cover", Date: "2026-03-09",
+	})
+
+	cover, err := d.GetCover(50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cover.ID != 99 {
+		t.Errorf("ID = %d, want 99", cover.ID)
+	}
+	if cover.Name != "Lorem cover" {
+		t.Errorf("Name = %q", cover.Name)
+	}
+
+	_, err = d.GetCover(999)
+	if err == nil {
+		t.Error("expected error for non-existent series")
 	}
 }

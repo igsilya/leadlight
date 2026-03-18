@@ -409,6 +409,15 @@ func (d *DB) UpdateCoverDetail(coverID int, content, headers string) error {
 	return err
 }
 
+func (d *DB) UpdateCoverMbox(coverID int, content string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(
+		"UPDATE covers SET mbox_content = ? WHERE id = ?",
+		content, coverID)
+	return err
+}
+
 func (d *DB) SaveMaintainers(maintainers []MaintainerRow) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -493,12 +502,26 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	return result
 }
 
-func (d *DB) GetOldestMissingSeriesDate() string {
+func (d *DB) GetOldestIncompleteSeriesDate() string {
 	var date string
-	d.conn.QueryRow(
-		"SELECT COALESCE(MIN(date), '') FROM series WHERE submitter IS NULL OR submitter = ''",
+	d.conn.QueryRow(`
+		SELECT COALESCE(MIN(date), '') FROM (
+			SELECT date FROM series
+			WHERE submitter IS NULL OR submitter = ''
+			UNION ALL
+			SELECT date FROM covers
+			WHERE series_id = 0
+		) t`,
 	).Scan(&date)
 	return date
+}
+
+func (d *DB) GetSeriesTotalPatches(seriesID int) int {
+	var total int
+	d.conn.QueryRow(
+		"SELECT COALESCE(total_patches, 0) FROM series WHERE id = ?",
+		seriesID).Scan(&total)
+	return total
 }
 
 func (d *DB) GetAllSeries() []SeriesRow {

@@ -76,6 +76,53 @@ func main() {
 		}()
 	}
 
+	m.FetchSeriesCover = func(seriesID int) {
+		log.Printf("MAIN: FetchSeriesCover series=%d", seriesID)
+		series, err := client.GetSeries(ctx, seriesID)
+		if err != nil {
+			log.Printf("MAIN: FetchSeriesCover error: %v", err)
+			return
+		}
+		if series.CoverLetter != nil {
+			database.SaveCover(db.CoverRow{
+				ID:       series.CoverLetter.ID,
+				SeriesID: series.ID,
+				Name:     series.CoverLetter.Name,
+				Date:     series.CoverLetter.Date,
+				MsgID:    series.CoverLetter.MsgID,
+				MboxURL:  series.CoverLetter.Mbox,
+				WebURL:   series.CoverLetter.WebURL,
+			})
+		}
+		database.SaveSeries(db.SeriesRow{
+			ID:              series.ID,
+			Name:            series.Name,
+			Date:            series.Date,
+			Version:         series.Version,
+			Submitter:       series.Submitter.Name,
+			SubmitterEmail:  series.Submitter.Email,
+			WebURL:          series.WebURL,
+			MboxURL:         series.Mbox,
+			Complete:        series.ReceivedAll,
+			TotalPatches:    series.Total,
+			ReceivedPatches: series.ReceivedTotal,
+		})
+	}
+
+	m.RequestCoverMbox = func(seriesID int) {
+		log.Printf("MAIN: RequestCoverMbox series=%d", seriesID)
+		go func() {
+			resultC := make(chan appSync.MboxResult, 1)
+			syncer.SendMboxRequest(appSync.MboxRequest{
+				PatchID: seriesID,
+				IsCover: true,
+				ResultC: resultC,
+			})
+			<-resultC
+			p.Send(tui.SyncUpdateMsg{})
+		}()
+	}
+
 	m.RequestPatchUpdate = func(
 		patchID int, state *string, delegateID *int,
 	) {
