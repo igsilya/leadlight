@@ -299,9 +299,7 @@ func (m *Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown", "ctrl+d":
 		m.logOffset -= consoleLines / 2
 	case "home", "g":
-		if m.LogBuf != nil {
-			m.logOffset = len(m.LogBuf.Lines()) - consoleLines
-		}
+		m.logOffset = logBufMaxLines * 3
 	case "end", "G":
 		m.logOffset = 0
 	case "w":
@@ -310,26 +308,10 @@ func (m *Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Wrote leadlight.log"
 		}
 	}
-	m.clampLogOffset(consoleLines)
-	return m, nil
-}
-
-func (m *Model) clampLogOffset(visibleLines int) {
-	if m.LogBuf == nil {
-		m.logOffset = 0
-		return
-	}
-	total := len(m.LogBuf.Lines())
-	maxOffset := total - visibleLines
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if m.logOffset > maxOffset {
-		m.logOffset = maxOffset
-	}
 	if m.logOffset < 0 {
 		m.logOffset = 0
 	}
+	return m, nil
 }
 
 func (m *Model) openStateSelector() {

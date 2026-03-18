@@ -613,27 +613,38 @@ func (m *Model) renderLogConsole(height int) string {
 	}
 
 	lines := m.LogBuf.Lines()
-	total := len(lines)
-
-	end := total - m.logOffset
-	if end < 0 {
-		end = 0
-	}
+	need := visibleLines + m.logOffset
 
 	var visual []string
-	for i := end - 1; i >= 0 && len(visual) < visibleLines; i-- {
+	for i := len(lines) - 1; i >= 0 && len(visual) < need; i-- {
 		wrapped := wrapLogLine(lines[i], m.width)
-		visual = append(wrapped, visual...)
+		for j := len(wrapped) - 1; j >= 0; j-- {
+			visual = append(visual, wrapped[j])
+		}
 	}
-	if len(visual) > visibleLines {
-		visual = visual[len(visual)-visibleLines:]
+	for i, j := 0, len(visual)-1; i < j; i, j = i+1, j-1 {
+		visual[i], visual[j] = visual[j], visual[i]
 	}
 
-	for _, vl := range visual {
+	maxOff := len(visual) - visibleLines
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if m.logOffset > maxOff {
+		m.logOffset = maxOff
+	}
+
+	end := len(visual) - m.logOffset
+	start := end - visibleLines
+	if start < 0 {
+		start = 0
+	}
+
+	for _, vl := range visual[start:end] {
 		out.WriteString(logLineStyle.Render(vl))
 		out.WriteByte('\n')
 	}
-	for i := len(visual); i < visibleLines; i++ {
+	for i := end - start; i < visibleLines; i++ {
 		out.WriteByte('\n')
 	}
 
