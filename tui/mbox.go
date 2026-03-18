@@ -22,6 +22,8 @@ var (
 	diffHeaderStyle = lipgloss.NewStyle().Bold(true)
 	quotedLineStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("168"))
+	wrapIndicatorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("242"))
 )
 
 type ParsedMbox struct {
@@ -129,13 +131,15 @@ func FormatMbox(p ParsedMbox, width int) string {
 		b.WriteByte('\n')
 		body := replaceControlChars(p.Body)
 		for _, line := range strings.Split(body, "\n") {
-			line = truncateLine(line, width)
-			if isQuotedLine(line) {
-				b.WriteString(quotedLineStyle.Render(line))
-			} else {
-				b.WriteString(line)
+			quoted := isQuotedLine(line)
+			for _, wl := range wrapLine(line, width) {
+				if quoted {
+					b.WriteString(quotedLineStyle.Render(wl))
+				} else {
+					b.WriteString(wl)
+				}
+				b.WriteByte('\n')
 			}
-			b.WriteByte('\n')
 		}
 	}
 
@@ -216,6 +220,45 @@ func replaceControlChars(s string) string {
 
 func isQuotedLine(s string) bool {
 	return strings.HasPrefix(strings.TrimLeft(s, " "), ">")
+}
+
+func wrapLine(s string, width int) []string {
+	runes := []rune(s)
+	if len(runes) <= width {
+		return []string{s}
+	}
+	if width < 5 {
+		return []string{truncateLine(s, width)}
+	}
+	var lines []string
+	first := true
+	for len(runes) > 0 {
+		limit := width
+		if !first {
+			limit = width - 2
+		}
+		if limit > len(runes) {
+			limit = len(runes)
+		}
+		if limit < len(runes) {
+			bp := limit
+			for i := limit; i > limit-20 && i > 0; i-- {
+				if runes[i] == ' ' {
+					bp = i + 1
+					break
+				}
+			}
+			limit = bp
+		}
+		seg := string(runes[:limit])
+		if !first {
+			seg = wrapIndicatorStyle.Render("↳") + " " + seg
+		}
+		lines = append(lines, seg)
+		runes = runes[limit:]
+		first = false
+	}
+	return lines
 }
 
 func truncateLine(s string, width int) string {
@@ -317,13 +360,15 @@ func FormatComment(c CommentInfo, width int) string {
 		b.WriteByte('\n')
 		content := replaceControlChars(c.Content)
 		for _, line := range strings.Split(content, "\n") {
-			line = truncateLine(line, width)
-			if isQuotedLine(line) {
-				b.WriteString(quotedLineStyle.Render(line))
-			} else {
-				b.WriteString(line)
+			quoted := isQuotedLine(line)
+			for _, wl := range wrapLine(line, width) {
+				if quoted {
+					b.WriteString(quotedLineStyle.Render(wl))
+				} else {
+					b.WriteString(wl)
+				}
+				b.WriteByte('\n')
 			}
-			b.WriteByte('\n')
 		}
 	}
 

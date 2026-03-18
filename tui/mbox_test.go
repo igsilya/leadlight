@@ -225,6 +225,124 @@ func TestIsQuotedLine(t *testing.T) {
 	}
 }
 
+func TestWrapLine_Short(t *testing.T) {
+	lines := wrapLine("short line", 80)
+	if len(lines) != 1 {
+		t.Fatalf("len = %d, want 1", len(lines))
+	}
+	if lines[0] != "short line" {
+		t.Errorf("got %q", lines[0])
+	}
+}
+
+func TestWrapLine_ExactWidth(t *testing.T) {
+	line := strings.Repeat("x", 40)
+	lines := wrapLine(line, 40)
+	if len(lines) != 1 {
+		t.Fatalf("len = %d, want 1", len(lines))
+	}
+}
+
+func TestWrapLine_Long(t *testing.T) {
+	line := strings.Repeat("lorem ", 20) // 120 chars
+	lines := wrapLine(line, 40)
+	if len(lines) < 2 {
+		t.Fatalf("len = %d, want >= 2", len(lines))
+	}
+	for i, l := range lines {
+		w := len([]rune(l))
+		if w > 40 {
+			t.Errorf("line %d: %d runes > 40", i, w)
+		}
+	}
+	for i := 1; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "↳ ") {
+			t.Errorf("continuation %d missing ↳ prefix: %q",
+				i, lines[i])
+		}
+	}
+}
+
+func TestWrapLine_WordBreak(t *testing.T) {
+	line := "lorem ipsum dolor sit amet consectetur"
+	lines := wrapLine(line, 20)
+	if len(lines) < 2 {
+		t.Fatalf("len = %d, want >= 2", len(lines))
+	}
+	// First line should break at a space, not mid-word
+	if strings.HasSuffix(lines[0], "conse") {
+		t.Errorf("broke mid-word: %q", lines[0])
+	}
+}
+
+func TestWrapLine_NoSpaces(t *testing.T) {
+	line := strings.Repeat("x", 100)
+	lines := wrapLine(line, 30)
+	if len(lines) < 2 {
+		t.Fatalf("len = %d, want >= 2", len(lines))
+	}
+	for i, l := range lines {
+		if len([]rune(l)) > 30 {
+			t.Errorf("line %d exceeds width: %d", i, len([]rune(l)))
+		}
+	}
+}
+
+func TestWrapLine_NarrowWidth(t *testing.T) {
+	line := strings.Repeat("x", 20)
+	lines := wrapLine(line, 4)
+	for i, l := range lines {
+		if len([]rune(l)) > 4 {
+			t.Errorf("line %d exceeds width: %d", i, len([]rune(l)))
+		}
+	}
+}
+
+func TestWrapLine_Empty(t *testing.T) {
+	lines := wrapLine("", 80)
+	if len(lines) != 1 || lines[0] != "" {
+		t.Errorf("got %v", lines)
+	}
+}
+
+func TestFormatMbox_WrapsLongBodyLine(t *testing.T) {
+	longLine := strings.Repeat("lorem ", 30) // 180 chars
+	raw := "Subject: test\n\n" + longLine
+	p := ParseMbox(raw)
+	result := FormatMbox(p, 80)
+	if strings.Contains(result, "…") {
+		t.Error("body should wrap, not truncate")
+	}
+	if !strings.Contains(result, "↳") {
+		t.Error("wrapped lines should have ↳ indicator")
+	}
+}
+
+func TestFormatComment_WrapsLongContent(t *testing.T) {
+	longLine := strings.Repeat("ipsum ", 30) // 180 chars
+	c := CommentInfo{
+		Subject: "Re: test",
+		Content: longLine,
+	}
+	result := FormatComment(c, 80)
+	if strings.Contains(result, "…") {
+		t.Error("comment should wrap, not truncate")
+	}
+	if !strings.Contains(result, "↳") {
+		t.Error("wrapped lines should have ↳ indicator")
+	}
+}
+
+func TestFormatDiff_StillTruncates(t *testing.T) {
+	longDiffLine := "+" + strings.Repeat("x", 200)
+	diff := "diff --git a/f b/f\n--- a/f\n+++ b/f\n" +
+		"@@ -1 +1 @@\n" + longDiffLine + "\n"
+	result := formatDiff(diff, 80)
+	if strings.Contains(result, "↳") {
+		t.Error("diff should truncate, not wrap")
+	}
+}
+
 func TestFormatDiff_Colors(t *testing.T) {
 	diff := "diff --git a/f b/f\n" +
 		"--- a/f\n+++ b/f\n" +
