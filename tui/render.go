@@ -117,7 +117,7 @@ func (m *Model) maxVisibleRows() int {
 	if m.selectorMode != selectorNone {
 		bottomLines = 2
 	}
-	rows := m.height - 3 - bottomLines
+	rows := m.height - 2 - bottomLines
 	if rows < 1 {
 		rows = 1
 	}
@@ -423,10 +423,10 @@ func (m *Model) padToBottom(out *strings.Builder) {
 	if m.selectorMode != selectorNone {
 		bottomLines = 2
 	}
+	target := m.height - bottomLines + 1
 	current := lipgloss.Height(out.String())
-	remaining := m.height - current - bottomLines
-	for i := 0; i < remaining; i++ {
-		out.WriteByte('\n')
+	if current < target {
+		out.WriteString(strings.Repeat("\n", target-current))
 	}
 }
 
