@@ -12,6 +12,15 @@ func (m *Model) View() string {
 		return "Loading..."
 	}
 
+	top := m.renderMainView()
+	if !m.logConsole {
+		return top
+	}
+	consoleHeight := m.height - m.renderHeight()
+	return top + "\n" + m.renderLogConsole(consoleHeight)
+}
+
+func (m *Model) renderMainView() string {
 	if m.viewMode == viewPatch {
 		return m.renderPatchView()
 	}
@@ -33,7 +42,7 @@ func (m *Model) View() string {
 }
 
 func (m *Model) viewportVisibleLines() int {
-	v := m.height - 1
+	v := m.renderHeight() - 1
 	if v < 1 {
 		v = 1
 	}
@@ -118,7 +127,7 @@ func (m *Model) maxVisibleRows() int {
 	if m.selectorMode != selectorNone {
 		bottomLines = 2
 	}
-	rows := m.height - 2 - bottomLines
+	rows := m.renderHeight() - 2 - bottomLines
 	if rows < 1 {
 		rows = 1
 	}
@@ -473,7 +482,7 @@ func (m *Model) padToBottom(out *strings.Builder) {
 	if m.selectorMode != selectorNone {
 		bottomLines = 2
 	}
-	target := m.height - bottomLines + 1
+	target := m.renderHeight() - bottomLines + 1
 	current := lipgloss.Height(out.String())
 	if current < target {
 		out.WriteString(strings.Repeat("\n", target-current))
@@ -565,6 +574,54 @@ func (m *Model) renderSelectorBar(out *strings.Builder) {
 		hint += ", type to filter"
 	}
 	out.WriteString(helpStyle.Render(hint))
+}
+
+var logSepStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("240"))
+
+var logLineStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("245"))
+
+func (m *Model) renderLogConsole(height int) string {
+	var out strings.Builder
+
+	sep := strings.Repeat("─", m.width-6)
+	out.WriteString(separatorStyle.Render("─── Log " + sep))
+	out.WriteByte('\n')
+
+	visibleLines := height - 2
+	if visibleLines < 1 {
+		visibleLines = 1
+	}
+
+	lines := m.LogBuf.Lines()
+	total := len(lines)
+
+	end := total - m.logOffset
+	if end < 0 {
+		end = 0
+	}
+
+	var visual []string
+	for i := end - 1; i >= 0 && len(visual) < visibleLines; i-- {
+		wrapped := wrapLogLine(lines[i], m.width)
+		visual = append(wrapped, visual...)
+	}
+	if len(visual) > visibleLines {
+		visual = visual[len(visual)-visibleLines:]
+	}
+
+	for _, vl := range visual {
+		out.WriteString(logLineStyle.Render(vl))
+		out.WriteByte('\n')
+	}
+	for i := len(visual); i < visibleLines; i++ {
+		out.WriteByte('\n')
+	}
+
+	out.WriteString(helpStyle.Render(
+		"` close  ↑/↓ scroll  w write to file"))
+	return out.String()
 }
 
 func renderCell(text string, width int) string {

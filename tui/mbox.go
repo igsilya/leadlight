@@ -184,7 +184,8 @@ func wrapHeaderValue(s string, width int) []string {
 		}
 		// Try to break at a comma or space
 		if end < len(runes) {
-			for i := end; i > end-20 && i > 0; i-- {
+			lookback := end / 2
+			for i := end; i > end-lookback && i > 0; i-- {
 				if runes[i] == ',' || runes[i] == ' ' {
 					end = i + 1
 					break
@@ -301,14 +302,13 @@ func wrapLine(s string, width int) []string {
 			limit = len(runes)
 		}
 		if limit < len(runes) {
-			bp := limit
-			for i := limit; i > limit-20 && i > 0; i-- {
+			lookback := limit / 2
+			for i := limit; i > limit-lookback && i > 0; i-- {
 				if runes[i] == ' ' {
-					bp = i + 1
+					limit = i + 1
 					break
 				}
 			}
-			limit = bp
 		}
 		seg := string(runes[:limit])
 		if !first {
@@ -319,6 +319,39 @@ func wrapLine(s string, width int) []string {
 		first = false
 	}
 	return lines
+}
+
+func wrapLogLine(s string, width int) []string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{s}
+	}
+	if width < 5 {
+		return []string{truncateLine(s, width)}
+	}
+
+	var lines []string
+	cur := words[0]
+	for _, word := range words[1:] {
+		if len([]rune(cur))+1+len([]rune(word)) <= width {
+			cur += " " + word
+			continue
+		}
+		lines = append(lines, cur)
+		cur = "↳ " + word
+	}
+	lines = append(lines, cur)
+
+	var result []string
+	for _, line := range lines {
+		runes := []rune(line)
+		for len(runes) > width {
+			result = append(result, string(runes[:width]))
+			runes = append([]rune("↳ "), runes[width:]...)
+		}
+		result = append(result, string(runes))
+	}
+	return result
 }
 
 func truncateLine(s string, width int) string {

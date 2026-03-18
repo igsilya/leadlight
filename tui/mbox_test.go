@@ -511,6 +511,71 @@ func TestFormatComment_ExpandQuotes(t *testing.T) {
 	}
 }
 
+func TestWrapLogLine_Short(t *testing.T) {
+	lines := wrapLogLine("short log line", 80)
+	if len(lines) != 1 || lines[0] != "short log line" {
+		t.Errorf("got %v", lines)
+	}
+}
+
+func TestWrapLogLine_Empty(t *testing.T) {
+	lines := wrapLogLine("", 80)
+	if len(lines) != 1 || lines[0] != "" {
+		t.Errorf("got %v", lines)
+	}
+}
+
+func TestWrapLogLine_URLPreserved(t *testing.T) {
+	url := "https://pw.example.com/api/1.2/events/" +
+		"?order=date&per_page=100&project=lorem" +
+		"&since=2026-03-18T15%3A58%3A24"
+	line := "2026/03/18 21:59:10 HTTP GET (go) -> 200 " + url
+	lines := wrapLogLine(line, 133)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapping, got %d lines", len(lines))
+	}
+	found := false
+	for _, l := range lines {
+		if strings.Contains(l, url) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("URL should be intact on a single visual line")
+	}
+}
+
+func TestWrapLogLine_URLExceedsWidth(t *testing.T) {
+	url := "https://pw.example.com/" + strings.Repeat("x", 100)
+	line := "GET " + url
+	lines := wrapLogLine(line, 80)
+	for i, l := range lines {
+		if len([]rune(l)) > 80 {
+			t.Errorf("line %d exceeds width: %d runes",
+				i, len([]rune(l)))
+		}
+	}
+}
+
+func TestWrapLogLine_MultiWord(t *testing.T) {
+	line := strings.Repeat("lorem ", 20)
+	lines := wrapLogLine(strings.TrimSpace(line), 40)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapping, got %d lines", len(lines))
+	}
+	for i := 1; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "↳ ") {
+			t.Errorf("line %d missing ↳ prefix: %q",
+				i, lines[i])
+		}
+	}
+	for i, l := range lines {
+		if len([]rune(l)) > 40 {
+			t.Errorf("line %d exceeds width: %d", i, len([]rune(l)))
+		}
+	}
+}
+
 func TestFormatDiff_Colors(t *testing.T) {
 	diff := "diff --git a/f b/f\n" +
 		"--- a/f\n+++ b/f\n" +

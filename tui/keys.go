@@ -9,6 +9,18 @@ import (
 )
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "`" {
+		m.logConsole = !m.logConsole
+		m.logOffset = 0
+		if !m.logConsole {
+			m.status = ""
+		}
+		m.invalidateRowCache()
+		return m, nil
+	}
+	if m.logConsole {
+		return m.handleLogKey(msg)
+	}
 	switch m.viewMode {
 	case viewPatch:
 		return m.handleViewportKey(msg)
@@ -255,6 +267,55 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prevComment()
 	}
 	return m, nil
+}
+
+func (m *Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	consoleLines := m.height - m.renderHeight() - 2
+	switch msg.String() {
+	case "q", "esc":
+		m.logConsole = false
+		m.status = ""
+		m.invalidateRowCache()
+	case "up", "k":
+		m.logOffset++
+	case "down", "j":
+		m.logOffset--
+	case "pgup", "ctrl+u":
+		m.logOffset += consoleLines / 2
+	case "pgdown", "ctrl+d":
+		m.logOffset -= consoleLines / 2
+	case "home", "g":
+		if m.LogBuf != nil {
+			m.logOffset = len(m.LogBuf.Lines()) - consoleLines
+		}
+	case "end", "G":
+		m.logOffset = 0
+	case "w":
+		if m.LogBuf != nil {
+			m.LogBuf.SaveToFile("leadlight.log")
+			m.status = "Wrote leadlight.log"
+		}
+	}
+	m.clampLogOffset(consoleLines)
+	return m, nil
+}
+
+func (m *Model) clampLogOffset(visibleLines int) {
+	if m.LogBuf == nil {
+		m.logOffset = 0
+		return
+	}
+	total := len(m.LogBuf.Lines())
+	maxOffset := total - visibleLines
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.logOffset > maxOffset {
+		m.logOffset = maxOffset
+	}
+	if m.logOffset < 0 {
+		m.logOffset = 0
+	}
 }
 
 func (m *Model) openStateSelector() {
@@ -622,7 +683,7 @@ func (m *Model) resetHighlight() tea.Cmd {
 func (m *Model) adjustScrollDown(totalItems int) {
 	visibleRows := m.lastRowsVisible
 	if visibleRows == 0 {
-		visibleRows = max(m.height-reservedLines-1, 1)
+		visibleRows = max(m.renderHeight()-reservedLines-1, 1)
 	}
 	if totalItems > visibleRows &&
 		m.selectedRow >= m.scrollOffset+visibleRows-scrollBuffer {

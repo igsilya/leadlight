@@ -128,7 +128,7 @@ func (c *Client) doRequest(
 	body io.Reader,
 ) (*http.Response, error) {
 	c.waitForRateLimit()
-	log.Printf("HTTP %s %s (go)", method, rawURL)
+	log.Printf("HTTP %s (go) %s", method, rawURL)
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
@@ -136,12 +136,12 @@ func (c *Client) doRequest(
 	resp, err := c.httpClient.Do(req)
 	c.markRequestDone()
 	if err != nil {
-		log.Printf("HTTP %s %s (go) -> error: %v",
-			method, rawURL, err)
+		log.Printf("HTTP %s (go) -> error: %v %s",
+			method, err, rawURL)
 		return nil, err
 	}
-	log.Printf("HTTP %s %s (go) -> %d",
-		method, rawURL, resp.StatusCode)
+	log.Printf("HTTP %s (go) -> %d %s",
+		method, resp.StatusCode, rawURL)
 	return resp, nil
 }
 
@@ -159,27 +159,27 @@ func (c *Client) doExternalRequest(
 		return nil, err
 	}
 	via := "curl"
-	log.Printf("HTTP %s %s (%s)", method, rawURL, via)
+	log.Printf("HTTP %s (%s) %s", method, via, rawURL)
 	resp, err := execCurl(req)
 	if rateLimit {
 		c.markRequestDone()
 	}
 	if err != nil {
 		via = "go-fallback"
-		log.Printf("HTTP %s %s -> curl failed: %v, falling back to Go",
-			method, rawURL, err)
+		log.Printf("HTTP %s -> curl failed: %v, falling back to Go %s",
+			method, err, rawURL)
 		resp, err = c.httpClient.Do(req)
 		if rateLimit {
 			c.markRequestDone()
 		}
 	}
 	if err != nil {
-		log.Printf("HTTP %s %s (%s) -> error: %v",
-			method, rawURL, via, err)
+		log.Printf("HTTP %s (%s) -> error: %v %s",
+			method, via, err, rawURL)
 		return nil, err
 	}
-	log.Printf("HTTP %s %s (%s) -> %d",
-		method, rawURL, via, resp.StatusCode)
+	log.Printf("HTTP %s (%s) -> %d %s",
+		method, via, resp.StatusCode, rawURL)
 	return resp, nil
 }
 

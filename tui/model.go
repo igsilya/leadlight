@@ -146,6 +146,10 @@ type Model struct {
 	quotesExpanded   bool
 	listPrefix       string
 	delegateNames    map[string]string
+	logConsole       bool
+	LogBuf           *LogBuffer
+	logOffset        int
+	logLastCount     int
 
 	RequestMbox        func(patchID int)
 	RequestCoverMbox   func(seriesID int)
@@ -496,6 +500,13 @@ func (m *Model) getVisibleItems() []visibleItem {
 		}
 	}
 	return items
+}
+
+func (m *Model) renderHeight() int {
+	if m.logConsole {
+		return m.height / 2
+	}
+	return m.height
 }
 
 func (m *Model) columnWidths() []int {

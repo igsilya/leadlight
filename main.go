@@ -16,16 +16,8 @@ import (
 )
 
 func main() {
-	logFile, err := os.OpenFile(
-		"leadlight.log",
-		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
-		0644)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Log file error:", err)
-		os.Exit(1)
-	}
-	defer logFile.Close()
-	log.SetOutput(logFile)
+	logBuf := tui.NewLogBuffer()
+	log.SetOutput(logBuf)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	log.Println("starting leadlight")
@@ -51,6 +43,7 @@ func main() {
 	client := api.NewClient(cfg)
 
 	m := tui.NewModel(database, cfg.States, cfg.Token)
+	m.LogBuf = logBuf
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	ctx, cancel := context.WithCancel(context.Background())
