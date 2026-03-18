@@ -72,7 +72,6 @@ type CommentSummary struct {
 	MsgID          string  `json:"msgid"`
 	ListArchiveURL *string `json:"list_archive_url"`
 	Date           string  `json:"date"`
-	Name           string  `json:"name"`
 }
 
 type CheckSummary struct {

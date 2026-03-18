@@ -1045,8 +1045,7 @@ func TestEventPatchCommentCreated(t *testing.T) {
 				"id":300, "url":"", "web_url":"",
 				"msgid":"<reply@sed.example>",
 				"list_archive_url":null,
-				"date":"2026-03-11T09:00:00",
-				"name":"Re: [PATCH] Fix"
+				"date":"2026-03-11T09:00:00"
 			}
 		}
 	}`
@@ -1081,8 +1080,7 @@ func TestEventCoverCommentCreated(t *testing.T) {
 				"id":301, "url":"", "web_url":"",
 				"msgid":"",
 				"list_archive_url":null,
-				"date":"",
-				"name":"Re: cover"
+				"date":""
 			}
 		}
 	}`
@@ -1227,4 +1225,405 @@ func TestPatchNullableFields(t *testing.T) {
 	if p.Delegate != nil {
 		t.Errorf("Delegate = %v, want nil", p.Delegate)
 	}
+}
+
+// Tests below model JSON on real event structures from Ozlabs (v1.2),
+// DPDK (v1.3), and kernel.org (v1.3), with lorem ipsum data.
+
+func TestEventCheckCreated_OzlabsStyle(t *testing.T) {
+	raw := `{
+		"id": 5015698,
+		"category": "check-created",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-18T15:21:43.098134",
+		"actor": {
+			"id": 158449,
+			"url": "http://pw.example.com/api/1.2/users/158449/",
+			"username": "loremci",
+			"first_name": "Lorem CI",
+			"last_name": "",
+			"email": "lorem-ci@ipsum.example"
+		},
+		"payload": {
+			"patch": {
+				"id": 2212684,
+				"url": "http://pw.example.com/api/1.2/patches/2212684/",
+				"web_url": "http://pw.example.com/project/lorem/patch/20260318-dolor-sit-amet@ipsum.example/",
+				"msgid": "<20260318-dolor-sit-amet@ipsum.example>",
+				"list_archive_url": null,
+				"date": "2026-03-18T14:41:13",
+				"name": "[RFC,1/1] Lorem ipsum dolor sit amet",
+				"mbox": "http://pw.example.com/project/lorem/patch/20260318-dolor-sit-amet@ipsum.example/mbox/"
+			},
+			"check": {
+				"id": 375235,
+				"url": "http://pw.example.com/api/1.2/patches/2212684/checks/375235/",
+				"date": "2026-03-18T15:21:43.094748",
+				"state": "success",
+				"target_url": "https://ci.example.com/actions/runs/23251777489",
+				"context": "consectetur_adipiscing"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "check-created",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*CheckCreatedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.Patch.ID != 2212684 {
+				t.Errorf("Patch.ID = %d", p.Patch.ID)
+			}
+			if p.Patch.ListArchiveURL != nil {
+				t.Errorf("Patch.ListArchiveURL = %v, want nil", p.Patch.ListArchiveURL)
+			}
+			if p.Check.ID != 375235 {
+				t.Errorf("Check.ID = %d", p.Check.ID)
+			}
+			if p.Check.State != "success" {
+				t.Errorf("Check.State = %q", p.Check.State)
+			}
+			if p.Check.Context != "consectetur_adipiscing" {
+				t.Errorf("Check.Context = %q", p.Check.Context)
+			}
+			if e.Actor == nil || e.Actor.Username != "loremci" {
+				t.Errorf("Actor = %v", e.Actor)
+			}
+		})
+}
+
+func TestEventPatchCreated_OzlabsStyle(t *testing.T) {
+	raw := `{
+		"id": 5015694,
+		"category": "patch-created",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-18T15:20:55.583773",
+		"actor": null,
+		"payload": {
+			"patch": {
+				"id": 2212729,
+				"url": "http://pw.example.com/api/1.2/patches/2212729/",
+				"web_url": "http://pw.example.com/project/lorem/patch/20260318-tempor-v1-1-consectetur@adip.example/",
+				"msgid": "<20260318-tempor-v1-1-consectetur@adip.example>",
+				"list_archive_url": null,
+				"date": "2026-03-18T15:07:17",
+				"name": "Tempor incididunt ut labore et dolore magna",
+				"mbox": "http://pw.example.com/project/lorem/patch/20260318-tempor-v1-1-consectetur@adip.example/mbox/"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "patch-created",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*PatchCreatedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.Patch.ID != 2212729 {
+				t.Errorf("Patch.ID = %d", p.Patch.ID)
+			}
+			if p.Patch.ListArchiveURL != nil {
+				t.Errorf("Patch.ListArchiveURL = %v, want nil", p.Patch.ListArchiveURL)
+			}
+			if e.Actor != nil {
+				t.Errorf("Actor = %v, want nil", e.Actor)
+			}
+		})
+}
+
+func TestEventCoverCreated_OzlabsStyle(t *testing.T) {
+	raw := `{
+		"id": 5015684,
+		"category": "cover-created",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-18T15:16:25.233650",
+		"actor": null,
+		"payload": {
+			"cover": {
+				"id": 2212725,
+				"url": "http://pw.example.com/api/1.2/covers/2212725/",
+				"web_url": "http://pw.example.com/project/lorem/cover/20260318-dolor-sit-amet@adip.example/",
+				"msgid": "<20260318-dolor-sit-amet@adip.example>",
+				"list_archive_url": null,
+				"date": "2026-03-18T12:05:04",
+				"name": "[lorem,0/3] Sed ut perspiciatis unde omnis iste natus",
+				"mbox": "http://pw.example.com/project/lorem/cover/20260318-dolor-sit-amet@adip.example/mbox/"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "cover-created",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*CoverCreatedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.Cover.ID != 2212725 {
+				t.Errorf("Cover.ID = %d", p.Cover.ID)
+			}
+			if p.Cover.ListArchiveURL != nil {
+				t.Errorf("Cover.ListArchiveURL = %v, want nil", p.Cover.ListArchiveURL)
+			}
+			if p.Cover.Name != "[lorem,0/3] Sed ut perspiciatis unde omnis iste natus" {
+				t.Errorf("Cover.Name = %q", p.Cover.Name)
+			}
+		})
+}
+
+func TestEventPatchDelegated_Redelegation(t *testing.T) {
+	raw := `{
+		"id": 1318924,
+		"category": "patch-delegated",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-18T09:07:19.226607",
+		"actor": {
+			"id": 24651,
+			"url": "https://pw.example.com/api/1.3/users/24651/",
+			"username": "dolor",
+			"first_name": "Dolor",
+			"last_name": "Amet",
+			"email": "dolor@amet.example"
+		},
+		"payload": {
+			"patch": {
+				"id": 162499,
+				"url": "https://pw.example.com/api/1.3/patches/162499/",
+				"web_url": "https://pw.example.com/project/lorem/patch/20260317-consectetur@adip.example/",
+				"msgid": "<20260317-consectetur@adip.example>",
+				"list_archive_url": "https://inbox.example.com/dev/20260317-consectetur@adip.example",
+				"date": "2026-03-18T03:38:56",
+				"name": "Lorem ipsum: skip test if vdev not available",
+				"mbox": "https://pw.example.com/project/lorem/patch/20260317-consectetur@adip.example/mbox/"
+			},
+			"previous_delegate": {
+				"id": 1,
+				"url": "https://pw.example.com/api/1.3/users/1/",
+				"username": "tempor",
+				"first_name": "Tempor",
+				"last_name": "Incididunt",
+				"email": "tempor@incididunt.example"
+			},
+			"current_delegate": {
+				"id": 24651,
+				"url": "https://pw.example.com/api/1.3/users/24651/",
+				"username": "dolor",
+				"first_name": "Dolor",
+				"last_name": "Amet",
+				"email": "dolor@amet.example"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "patch-delegated",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*PatchDelegatedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.PreviousDelegate == nil {
+				t.Fatal("PreviousDelegate is nil")
+			}
+			if p.PreviousDelegate.Username != "tempor" {
+				t.Errorf("PreviousDelegate.Username = %q", p.PreviousDelegate.Username)
+			}
+			if p.CurrentDelegate == nil {
+				t.Fatal("CurrentDelegate is nil")
+			}
+			if p.CurrentDelegate.Username != "dolor" {
+				t.Errorf("CurrentDelegate.Username = %q", p.CurrentDelegate.Username)
+			}
+			archiveURL := "https://inbox.example.com/dev/20260317-consectetur@adip.example"
+			if p.Patch.ListArchiveURL == nil || *p.Patch.ListArchiveURL != archiveURL {
+				t.Errorf("Patch.ListArchiveURL = %v", p.Patch.ListArchiveURL)
+			}
+		})
+}
+
+func TestEventPatchCommentCreated_V13(t *testing.T) {
+	raw := `{
+		"id": 1319053,
+		"category": "patch-comment-created",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-18T15:17:25.797675",
+		"actor": null,
+		"payload": {
+			"patch": {
+				"id": 162206,
+				"url": "https://pw.example.com/api/1.3/patches/162206/",
+				"web_url": "https://pw.example.com/project/lorem/patch/20260306-dolor-v3-4-sit@amet.example/",
+				"msgid": "<20260306-dolor-v3-4-sit@amet.example>",
+				"list_archive_url": "https://inbox.example.com/dev/20260306-dolor-v3-4-sit@amet.example",
+				"date": "2026-03-06T13:30:21",
+				"name": "[v3,03/17] Consectetur adipiscing elit sed do eiusmod",
+				"mbox": "https://pw.example.com/project/lorem/patch/20260306-dolor-v3-4-sit@amet.example/mbox/"
+			},
+			"comment": {
+				"id": 183352,
+				"url": "https://pw.example.com/api/1.3/patches/162206/comments/183352/",
+				"web_url": "https://pw.example.com/comment/183352/",
+				"msgid": "<LOREM+IPSUM+dolor@sit.amet.example>",
+				"list_archive_url": "https://inbox.example.com/dev/LOREM+IPSUM+dolor@sit.amet.example",
+				"date": "2026-03-18T15:17:10"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "patch-comment-created",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*PatchCommentCreatedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.Patch.ID != 162206 {
+				t.Errorf("Patch.ID = %d", p.Patch.ID)
+			}
+			if p.Comment.ID != 183352 {
+				t.Errorf("Comment.ID = %d", p.Comment.ID)
+			}
+			archiveURL := "https://inbox.example.com/dev/LOREM+IPSUM+dolor@sit.amet.example"
+			if p.Comment.ListArchiveURL == nil || *p.Comment.ListArchiveURL != archiveURL {
+				t.Errorf("Comment.ListArchiveURL = %v", p.Comment.ListArchiveURL)
+			}
+			if e.Actor != nil {
+				t.Errorf("Actor = %v, want nil", e.Actor)
+			}
+		})
+}
+
+func TestEventCoverCommentCreated_V13(t *testing.T) {
+	raw := `{
+		"id": 1318719,
+		"category": "cover-comment-created",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-17T15:55:58.991314",
+		"actor": null,
+		"payload": {
+			"cover": {
+				"id": 3064,
+				"url": "https://pw.example.com/api/1.3/covers/3064/",
+				"web_url": "https://pw.example.com/project/lorem/cover/20260312-dolor-sit@amet.example/",
+				"msgid": "<20260312-dolor-sit@amet.example>",
+				"list_archive_url": "https://inbox.example.com/dev/20260312-dolor-sit@amet.example",
+				"date": "2026-03-12T10:36:02",
+				"name": "[0/4] Consectetur adipiscing fixes",
+				"mbox": "https://pw.example.com/project/lorem/cover/20260312-dolor-sit@amet.example/mbox/"
+			},
+			"comment": {
+				"id": 2353,
+				"url": "https://pw.example.com/api/1.3/covers/3064/comments/2353/",
+				"web_url": "https://pw.example.com/comment/2353/",
+				"msgid": "<6225470.loremIpsum@tempor>",
+				"list_archive_url": "https://inbox.example.com/dev/6225470.loremIpsum@tempor",
+				"date": "2026-03-17T15:55:53"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "cover-comment-created",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*CoverCommentCreatedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.Cover.ID != 3064 {
+				t.Errorf("Cover.ID = %d", p.Cover.ID)
+			}
+			if p.Comment.ID != 2353 {
+				t.Errorf("Comment.ID = %d", p.Comment.ID)
+			}
+			coverArchive := "https://inbox.example.com/dev/20260312-dolor-sit@amet.example"
+			if p.Cover.ListArchiveURL == nil || *p.Cover.ListArchiveURL != coverArchive {
+				t.Errorf("Cover.ListArchiveURL = %v", p.Cover.ListArchiveURL)
+			}
+			commentArchive := "https://inbox.example.com/dev/6225470.loremIpsum@tempor"
+			if p.Comment.ListArchiveURL == nil || *p.Comment.ListArchiveURL != commentArchive {
+				t.Errorf("Comment.ListArchiveURL = %v", p.Comment.ListArchiveURL)
+			}
+		})
+}
+
+func TestEventPatchCompleted_KernelStyle(t *testing.T) {
+	raw := `{
+		"id": 21265516,
+		"category": "patch-completed",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-18T15:17:31.616206",
+		"actor": null,
+		"payload": {
+			"patch": {
+				"id": 14481849,
+				"url": "https://pw.example.com/api/1.3/patches/14481849/",
+				"web_url": "https://pw.example.com/project/lorem/patch/20260318-topic-dolor-v3-7-consectetur@adip.example/",
+				"msgid": "<20260318-topic-dolor-v3-7-consectetur@adip.example>",
+				"list_archive_url": "https://lore.example.com/r/20260318-topic-dolor-v3-7-consectetur@adip.example",
+				"date": "2026-03-18T15:13:13",
+				"name": "[v3,7/7] Sed ut perspiciatis unde omnis iste natus error",
+				"mbox": "https://pw.example.com/project/lorem/patch/20260318-topic-dolor-v3-7-consectetur@adip.example/mbox/"
+			},
+			"series": {
+				"id": 1068714,
+				"url": "https://pw.example.com/api/1.3/series/1068714/",
+				"web_url": "https://pw.example.com/project/lorem/list/?series=1068714",
+				"date": "2026-03-18T15:13:06",
+				"name": "Voluptatem accusantium doloremque laudantium",
+				"version": 3,
+				"mbox": "https://pw.example.com/series/1068714/mbox/"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "patch-completed",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*PatchCompletedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.Patch.ID != 14481849 {
+				t.Errorf("Patch.ID = %d", p.Patch.ID)
+			}
+			if p.Series.ID != 1068714 {
+				t.Errorf("Series.ID = %d", p.Series.ID)
+			}
+			if p.Series.Version != 3 {
+				t.Errorf("Series.Version = %d", p.Series.Version)
+			}
+			archiveURL := "https://lore.example.com/r/20260318-topic-dolor-v3-7-consectetur@adip.example"
+			if p.Patch.ListArchiveURL == nil || *p.Patch.ListArchiveURL != archiveURL {
+				t.Errorf("Patch.ListArchiveURL = %v", p.Patch.ListArchiveURL)
+			}
+			if e.Actor != nil {
+				t.Errorf("Actor = %v, want nil", e.Actor)
+			}
+		})
+}
+
+func TestEventSeriesCompleted_KernelStyle(t *testing.T) {
+	raw := `{
+		"id": 21265517,
+		"category": "series-completed",
+		"project": ` + testProjectJSON + `,
+		"date": "2026-03-18T15:17:31.629912",
+		"actor": null,
+		"payload": {
+			"series": {
+				"id": 1068714,
+				"url": "https://pw.example.com/api/1.3/series/1068714/",
+				"web_url": "https://pw.example.com/project/lorem/list/?series=1068714",
+				"date": "2026-03-18T15:13:06",
+				"name": "Voluptatem accusantium doloremque laudantium",
+				"version": 3,
+				"mbox": "https://pw.example.com/series/1068714/mbox/"
+			}
+		}
+	}`
+	testEventPayload(t, raw, "series-completed",
+		func(t *testing.T, e Event) {
+			p, ok := e.Payload.(*SeriesCompletedPayload)
+			if !ok {
+				t.Fatalf("Payload type = %T", e.Payload)
+			}
+			if p.Series.ID != 1068714 {
+				t.Errorf("Series.ID = %d", p.Series.ID)
+			}
+			if p.Series.Version != 3 {
+				t.Errorf("Series.Version = %d", p.Series.Version)
+			}
+			if p.Series.Name != "Voluptatem accusantium doloremque laudantium" {
+				t.Errorf("Series.Name = %q", p.Series.Name)
+			}
+		})
 }

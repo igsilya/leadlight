@@ -794,8 +794,7 @@ func TestProcessEvent_PatchCommentCreated(t *testing.T) {
 		Payload: &api.PatchCommentCreatedPayload{
 			Patch: api.PatchSummary{ID: 100},
 			Comment: api.CommentSummary{
-				ID:   301,
-				Name: "Re: test",
+				ID: 301,
 			},
 		},
 	}
