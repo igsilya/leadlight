@@ -1300,3 +1300,163 @@ func TestFixIncompletePatches_NoneToFix(t *testing.T) {
 	// Should not make any API calls or error
 	s.fixIncompletePatches(context.Background())
 }
+
+func TestFetchMissingSeries_BulkUpdate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/series/" {
+				w.WriteHeader(404)
+				return
+			}
+			since := r.URL.Query().Get("since")
+			if since == "2026-03-09" {
+				json.NewEncoder(w).Encode([]api.Series{
+					{
+						ID: 51, Name: "Dolor series",
+						Date: "2026-03-09", Version: 1,
+						Total: 1, ReceivedTotal: 1,
+						ReceivedAll: true,
+						Submitter: api.Person{
+							Name:  "Dolor Amet",
+							Email: "dolor@amet.example"},
+					},
+					{
+						ID: 50, Name: "Lorem series",
+						Date: "2026-03-10", Version: 1,
+						Total: 2, ReceivedTotal: 2,
+						ReceivedAll: true,
+						Submitter: api.Person{
+							Name:  "Lorem Ipsum",
+							Email: "lorem@ipsum.example"},
+					},
+				})
+			} else {
+				json.NewEncoder(w).Encode([]api.Series{})
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "Dolor series", "2026-03-09", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 101, SeriesID: 50,
+		Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 200, SeriesID: 51,
+		Name: "p3", Date: "2026-03-09",
+		State: "new", Submitter: "",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test-project",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test-project", srv.Client(),
+		10*time.Millisecond)
+
+	notified := false
+	s := NewSyncer(client, d, cfg, func() { notified = true })
+	s.fetchMissingSeries(context.Background())
+
+	if d.GetOldestMissingSeriesDate() != "" {
+		t.Error("should have no missing series")
+	}
+
+	r1, _ := d.GetPatch(100)
+	if r1.Submitter != "Lorem Ipsum" {
+		t.Errorf("patch 100 submitter = %q", r1.Submitter)
+	}
+	r2, _ := d.GetPatch(200)
+	if r2.Submitter != "Dolor Amet" {
+		t.Errorf("patch 200 submitter = %q", r2.Submitter)
+	}
+
+	if !notified {
+		t.Error("should have called notify")
+	}
+}
+
+func TestFetchMissingSeries_SkipsWhenComplete(t *testing.T) {
+	apiCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			apiCalled = true
+			w.WriteHeader(404)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeries(db.SeriesRow{
+		ID: 50, Name: "Lorem",
+		Date: "2026-03-10", Submitter: "Lorem Ipsum",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	s.fetchMissingSeries(context.Background())
+
+	if apiCalled {
+		t.Error("should not call API when all have submitters")
+	}
+}
+
+func TestFetchMissingSeries_StopsWhenStuck(t *testing.T) {
+	reqCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			reqCount++
+			// Return series that don't match our missing ones
+			json.NewEncoder(w).Encode([]api.Series{
+				{
+					ID: 999, Name: "Unrelated",
+					Date: "2026-03-10", Version: 1,
+					Submitter: api.Person{Name: "Other"},
+				},
+			})
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "Missing", "2026-03-05", 1)
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	s.fetchMissingSeries(context.Background())
+
+	if reqCount != 1 {
+		t.Errorf("reqCount = %d, want 1 (should stop when no progress)",
+			reqCount)
+	}
+}

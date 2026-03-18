@@ -867,6 +867,43 @@ func TestGetIncompletePatches_AllComplete(t *testing.T) {
 	}
 }
 
+func TestGetOldestMissingSeriesDate(t *testing.T) {
+	d := openTestDB(t)
+
+	if d.GetOldestMissingSeriesDate() != "" {
+		t.Error("want empty when no series")
+	}
+
+	d.SaveSeries(SeriesRow{
+		ID: 50, Name: "Has submitter",
+		Date: "2026-03-10", Submitter: "Lorem",
+	})
+	if d.GetOldestMissingSeriesDate() != "" {
+		t.Error("want empty when all have submitters")
+	}
+
+	d.SaveSeries(SeriesRow{
+		ID: 51, Name: "Newer missing",
+		Date: "2026-03-09",
+	})
+	d.SaveSeriesSummary(52, "Older missing", "2026-01-15", 1)
+
+	got := d.GetOldestMissingSeriesDate()
+	if got != "2026-01-15" {
+		t.Errorf("got %q, want oldest missing date", got)
+	}
+
+	// Fix the older one
+	d.SaveSeries(SeriesRow{
+		ID: 52, Name: "Fixed",
+		Date: "2026-01-15", Submitter: "Dolor",
+	})
+	got = d.GetOldestMissingSeriesDate()
+	if got != "2026-03-09" {
+		t.Errorf("got %q, want next oldest after fix", got)
+	}
+}
+
 func TestGetAllSeries(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(50, "Active series", "2026-03-10", 1)

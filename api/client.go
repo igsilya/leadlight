@@ -365,6 +365,20 @@ func (c *Client) GetPatchesPage(
 	return getPage[Patch](c, ctx, pageURL)
 }
 
+func (c *Client) BuildSeriesURL(project, since string) string {
+	v := url.Values{}
+	v.Set("per_page", "100")
+	v.Set("project", project)
+	if since != "" {
+		v.Set("since", since)
+	}
+	return c.baseURL + "/series/?" + v.Encode()
+}
+
+func (c *Client) GetSeriesPage(ctx context.Context, pageURL string) (*PageResult[Series], error) {
+	return getPage[Series](c, ctx, pageURL)
+}
+
 func (c *Client) BuildPatchesURL(
 	params PatchListParams,
 ) string {

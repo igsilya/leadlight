@@ -493,6 +493,14 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	return result
 }
 
+func (d *DB) GetOldestMissingSeriesDate() string {
+	var date string
+	d.conn.QueryRow(
+		"SELECT COALESCE(MIN(date), '') FROM series WHERE submitter IS NULL OR submitter = ''",
+	).Scan(&date)
+	return date
+}
+
 func (d *DB) GetAllSeries() []SeriesRow {
 	rows, err := d.conn.Query(`
 		SELECT DISTINCT s.id, s.name, s.date, s.version,

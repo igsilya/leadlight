@@ -136,6 +136,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
 	s.incrementalSync(ctx)
+	s.fetchMissingSeries(ctx)
 	s.fetchNextDetail(ctx)
 	s.fixIncompletePatches(ctx)
 	s.notify()
@@ -209,6 +210,7 @@ func (s *Syncer) initialSync(ctx context.Context) {
 	s.notify()
 	s.fetchMaintainers(ctx)
 	s.fetchAllPatches(ctx)
+	s.fetchMissingSeries(ctx)
 	s.fetchInitialEvents(ctx)
 	s.db.SetSyncState("initial_sync_complete", "true")
 }
@@ -416,6 +418,53 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 		return nil
 	}
 	return nil
+}
+
+func (s *Syncer) fetchMissingSeries(ctx context.Context) {
+	for {
+		since := s.db.GetOldestMissingSeriesDate()
+		if since == "" {
+			return
+		}
+		log.Printf("SYNC: fetching series since %s", since)
+
+		pageURL := s.client.BuildSeriesURL(s.cfg.Project, since)
+		page, err := s.client.GetSeriesPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("SYNC: fetchMissingSeries: %v", err)
+			return
+		}
+		if len(page.Items) == 0 {
+			return
+		}
+
+		for _, sr := range page.Items {
+			s.db.SaveSeries(db.SeriesRow{
+				ID:              sr.ID,
+				Name:            sr.Name,
+				Date:            sr.Date,
+				Version:         sr.Version,
+				Submitter:       sr.Submitter.Name,
+				SubmitterEmail:  sr.Submitter.Email,
+				WebURL:          sr.WebURL,
+				MboxURL:         sr.Mbox,
+				Complete:        sr.ReceivedAll,
+				TotalPatches:    sr.Total,
+				ReceivedPatches: sr.ReceivedTotal,
+			})
+			s.db.UpdateSeriesPatches(
+				sr.ID, sr.Submitter.Name, sr.Submitter.Email)
+		}
+
+		log.Printf("SYNC: processed %d series", len(page.Items))
+		s.notify()
+
+		newSince := s.db.GetOldestMissingSeriesDate()
+		if newSince == since {
+			log.Printf("SYNC: no progress, stopping")
+			return
+		}
+	}
 }
 
 func (s *Syncer) fixIncompletePatches(ctx context.Context) {
