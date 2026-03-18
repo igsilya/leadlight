@@ -22,6 +22,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.logConsole && key == "tab" {
 		m.logFocused = !m.logFocused
+		if !strings.HasSuffix(m.status, "...") {
+			m.status = ""
+		}
 		return m, nil
 	}
 	if m.logConsole && m.logFocused {
