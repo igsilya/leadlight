@@ -147,6 +147,7 @@ type Model struct {
 	listPrefix       string
 	delegateNames    map[string]string
 	logConsole       bool
+	logFocused       bool
 	LogBuf           *LogBuffer
 	logOffset        int
 	logLastCount     int

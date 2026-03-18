@@ -23,11 +23,13 @@ const (
 )
 
 var (
-	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-	separatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	spinnerFrames  = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	headerStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	separatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	helpStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpBrightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	helpDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+	statusStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	spinnerFrames   = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 	normalOptionStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 	highlightedOptionStyle = lipgloss.NewStyle().

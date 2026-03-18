@@ -9,8 +9,10 @@ import (
 )
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "`" {
+	key := msg.String()
+	if key == "`" {
 		m.logConsole = !m.logConsole
+		m.logFocused = m.logConsole
 		m.logOffset = 0
 		if !m.logConsole {
 			m.status = ""
@@ -18,8 +20,24 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateRowCache()
 		return m, nil
 	}
-	if m.logConsole {
-		return m.handleLogKey(msg)
+	if m.logConsole && key == "tab" {
+		m.logFocused = !m.logFocused
+		return m, nil
+	}
+	if m.logConsole && m.logFocused {
+		switch key {
+		case "q", "esc":
+			m.logConsole = false
+			m.logFocused = false
+			m.status = ""
+			m.invalidateRowCache()
+			return m, nil
+		case "up", "k", "down", "j",
+			"pgup", "ctrl+u", "pgdown", "ctrl+d",
+			"home", "g", "end", "G", "w":
+			return m.handleLogKey(msg)
+		}
+		return m, nil
 	}
 	switch m.viewMode {
 	case viewPatch:
@@ -272,10 +290,6 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	consoleLines := m.height - m.renderHeight() - 2
 	switch msg.String() {
-	case "q", "esc":
-		m.logConsole = false
-		m.status = ""
-		m.invalidateRowCache()
 	case "up", "k":
 		m.logOffset++
 	case "down", "j":

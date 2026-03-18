@@ -84,13 +84,15 @@ func (m *Model) renderPatchView() string {
 				expandHint = "  e expand"
 			}
 		}
-		helpText := helpStyle.Render(fmt.Sprintf(
+		hs := m.mainHelp()
+		helpText := hs.Render(fmt.Sprintf(
 			"  ←/→%s  ↑/↓  esc  %d%%", expandHint, pct))
 		barWidth := m.width - lipgloss.Width(helpText)
 		commentBar := m.renderCommentBar(barWidth)
 		status = commentBar + helpText
 	} else {
-		help := helpStyle.Render(fmt.Sprintf(
+		hs := m.mainHelp()
+		help := hs.Render(fmt.Sprintf(
 			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%", pct))
 		if m.fetchingComments {
 			spinner := spinnerFrames[m.spinnerFrame]
@@ -495,10 +497,12 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		return
 	}
 
+	hs := m.mainHelp()
+
 	if m.filterMode {
-		label := helpStyle.Render("Filter: ")
+		label := hs.Render("Filter: ")
 		text := normalOptionStyle.Render(m.filterText + "_")
-		hint := helpStyle.Render("  ↑/↓ navigate | esc clear")
+		hint := hs.Render("  ↑/↓ navigate | esc clear")
 		out.WriteString(label + text + hint)
 		return
 	}
@@ -513,7 +517,7 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		filterLabel += " /" + m.filterText
 	}
 
-	help := helpStyle.Render(
+	help := hs.Render(
 		filterLabel + " q quit | ↑/↓ pgup/dn navigate" +
 			" | enter view | space expand | / filter | " + toggleHint)
 
@@ -576,6 +580,20 @@ func (m *Model) renderSelectorBar(out *strings.Builder) {
 	out.WriteString(helpStyle.Render(hint))
 }
 
+func (m *Model) mainHelp() lipgloss.Style {
+	if m.logConsole && m.logFocused {
+		return helpDimStyle
+	}
+	return helpBrightStyle
+}
+
+func (m *Model) logHelp() lipgloss.Style {
+	if m.logFocused {
+		return helpBrightStyle
+	}
+	return helpDimStyle
+}
+
 var logSepStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("240"))
 
@@ -619,8 +637,8 @@ func (m *Model) renderLogConsole(height int) string {
 		out.WriteByte('\n')
 	}
 
-	out.WriteString(helpStyle.Render(
-		"` close  ↑/↓ scroll  w write to file"))
+	out.WriteString(m.logHelp().Render(
+		"tab switch  ` close  ↑/↓ scroll  w write"))
 	return out.String()
 }
 
