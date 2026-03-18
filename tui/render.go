@@ -68,8 +68,17 @@ func (m *Model) renderPatchView() string {
 	var status string
 	if len(m.viewComments) > 0 {
 		commentBar := m.renderCommentBar()
+		expandHint := ""
+		if m.viewCommentIdx >= 0 {
+			if m.quotesExpanded {
+				expandHint = "  e collapse"
+			} else {
+				expandHint = "  e expand"
+			}
+		}
 		status = commentBar + helpStyle.Render(fmt.Sprintf(
-			"  ←/→ comments  ↑/↓ scroll  esc back  %d%%", pct))
+			"  ←/→ comments%s  ↑/↓ scroll  esc back  %d%%",
+			expandHint, pct))
 	} else {
 		help := helpStyle.Render(fmt.Sprintf(
 			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%", pct))

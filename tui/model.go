@@ -143,6 +143,7 @@ type Model struct {
 	viewportLines    []string
 	viewportOffset   int
 	fetchingComments bool
+	quotesExpanded   bool
 
 	RequestMbox        func(patchID int)
 	RequestCoverMbox   func(seriesID int)

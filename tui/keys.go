@@ -231,6 +231,12 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewComments = nil
 		m.viewCommentIdx = -1
 		m.viewportLines = nil
+		m.quotesExpanded = false
+	case "e":
+		if m.viewCommentIdx >= 0 {
+			m.quotesExpanded = !m.quotesExpanded
+			m.switchToComment()
+		}
 	case "up", "k":
 		m.viewportScroll(-1)
 	case "down", "j":
@@ -453,6 +459,7 @@ func (m *Model) nextComment() {
 	if m.viewCommentIdx >= len(m.viewComments) {
 		m.viewCommentIdx = -1
 	}
+	m.quotesExpanded = false
 	m.switchToComment()
 }
 
@@ -464,6 +471,7 @@ func (m *Model) prevComment() {
 	if m.viewCommentIdx < -1 {
 		m.viewCommentIdx = len(m.viewComments) - 1
 	}
+	m.quotesExpanded = false
 	m.switchToComment()
 }
 
@@ -489,7 +497,8 @@ func (m *Model) switchToComment() {
 	}
 	if m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
-		formatted := FormatComment(comment, m.width)
+		formatted := FormatComment(
+			comment, m.width, !m.quotesExpanded)
 		m.viewportLines = splitLines(formatted)
 	}
 }

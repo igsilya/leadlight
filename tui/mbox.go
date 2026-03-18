@@ -222,6 +222,59 @@ func isQuotedLine(s string) bool {
 	return strings.HasPrefix(strings.TrimLeft(s, " "), ">")
 }
 
+const (
+	collapseMinBlock = 8
+	collapseHead     = 3
+	collapseTailFall = 20
+)
+
+func collapseQuotedBlocks(lines []string) []string {
+	var result []string
+	i := 0
+	for i < len(lines) {
+		if !isQuotedLine(lines[i]) {
+			result = append(result, lines[i])
+			i++
+			continue
+		}
+		blockStart := i
+		for i < len(lines) && isQuotedLine(lines[i]) {
+			i++
+		}
+		block := lines[blockStart:i]
+		if len(block) <= collapseMinBlock {
+			result = append(result, block...)
+			continue
+		}
+		tail := collapseTail(block)
+		head := collapseHead
+		if head+len(tail) >= len(block) {
+			result = append(result, block...)
+			continue
+		}
+		hidden := len(block) - head - len(tail)
+		marker := fmt.Sprintf(
+			"  ··· %d quoted lines hidden ···", hidden)
+		result = append(result, block[:head]...)
+		result = append(result, marker)
+		result = append(result, tail...)
+	}
+	return result
+}
+
+func collapseTail(block []string) []string {
+	for i := len(block) - 1; i >= 0; i-- {
+		trimmed := strings.TrimLeft(block[i], " >")
+		if strings.HasPrefix(trimmed, "@@ ") {
+			return block[i:]
+		}
+	}
+	if len(block) <= collapseTailFall {
+		return block
+	}
+	return block[len(block)-collapseTailFall:]
+}
+
 func wrapLine(s string, width int) []string {
 	runes := []rune(s)
 	if len(runes) <= width {
@@ -326,7 +379,7 @@ type CommentInfo struct {
 	Content   string
 }
 
-func FormatComment(c CommentInfo, width int) string {
+func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 	var b strings.Builder
 	labelWidth := 9
 	valWidth := width - labelWidth
@@ -359,7 +412,11 @@ func FormatComment(c CommentInfo, width int) string {
 	if c.Content != "" {
 		b.WriteByte('\n')
 		content := replaceControlChars(c.Content)
-		for _, line := range strings.Split(content, "\n") {
+		contentLines := strings.Split(content, "\n")
+		if collapseQuotes {
+			contentLines = collapseQuotedBlocks(contentLines)
+		}
+		for _, line := range contentLines {
 			quoted := isQuotedLine(line)
 			for _, wl := range wrapLine(line, width) {
 				if quoted {

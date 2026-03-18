@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -139,7 +140,7 @@ func TestFormatComment(t *testing.T) {
 		Subject:   "Re: [PATCH] Lorem ipsum",
 		Content:   "Looks good.\n\nAcked-by: Lorem <lorem@ipsum.example>",
 	}
-	formatted := FormatComment(c, 120)
+	formatted := FormatComment(c, 120, false)
 	if formatted == "" {
 		t.Error("formatted is empty")
 	}
@@ -153,8 +154,7 @@ func TestFormatComment(t *testing.T) {
 
 func TestFormatComment_Empty(t *testing.T) {
 	c := CommentInfo{}
-	// Empty comment with no fields should not panic
-	_ = FormatComment(c, 120)
+	_ = FormatComment(c, 120, false)
 }
 
 func TestReplaceControlChars(t *testing.T) {
@@ -198,7 +198,7 @@ func TestFormatComment_ControlChars(t *testing.T) {
 		Subject: "Re: test",
 		Content: "looks good\x0c\nAcked-by: Lorem <lorem@ipsum.example>",
 	}
-	result := FormatComment(c, 80)
+	result := FormatComment(c, 80, false)
 	if !strings.Contains(result, "^L") {
 		t.Error("form feed should render as ^L")
 	}
@@ -324,7 +324,7 @@ func TestFormatComment_WrapsLongContent(t *testing.T) {
 		Subject: "Re: test",
 		Content: longLine,
 	}
-	result := FormatComment(c, 80)
+	result := FormatComment(c, 80, false)
 	if strings.Contains(result, "…") {
 		t.Error("comment should wrap, not truncate")
 	}
@@ -340,6 +340,174 @@ func TestFormatDiff_StillTruncates(t *testing.T) {
 	result := formatDiff(diff, 80)
 	if strings.Contains(result, "↳") {
 		t.Error("diff should truncate, not wrap")
+	}
+}
+
+func TestCollapseQuotedBlocks_SmallBlock(t *testing.T) {
+	lines := []string{
+		"> line 1",
+		"> line 2",
+		"> line 3",
+		"reply here",
+	}
+	got := collapseQuotedBlocks(lines)
+	if len(got) != len(lines) {
+		t.Errorf("len = %d, want %d (small block unchanged)",
+			len(got), len(lines))
+	}
+}
+
+func TestCollapseQuotedBlocks_LargeBlock(t *testing.T) {
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "my reply")
+	got := collapseQuotedBlocks(lines)
+	if len(got) >= len(lines) {
+		t.Fatalf("should collapse: got %d, input %d",
+			len(got), len(lines))
+	}
+	hasMarker := false
+	for _, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			hasMarker = true
+		}
+	}
+	if !hasMarker {
+		t.Error("missing collapse marker")
+	}
+	if got[len(got)-1] != "my reply" {
+		t.Errorf("last line = %q, want reply", got[len(got)-1])
+	}
+}
+
+func TestCollapseQuotedBlocks_HunkDetection(t *testing.T) {
+	lines := []string{
+		"> commit message line 1",
+		"> commit message line 2",
+		"> commit message line 3",
+		"> commit message line 4",
+		"> commit message line 5",
+		"> commit message line 6",
+		"> commit message line 7",
+		"> commit message line 8",
+		"> commit message line 9",
+		"> commit message line 10",
+		"> @@ -100,6 +100,8 @@ func lorem()",
+		"> +new code",
+		"> +more code",
+		">  context",
+		"I think this needs a check here.",
+	}
+	got := collapseQuotedBlocks(lines)
+	// Should keep the hunk header and lines after it
+	foundHunk := false
+	for _, l := range got {
+		if strings.Contains(l, "@@ -100") {
+			foundHunk = true
+		}
+	}
+	if !foundHunk {
+		t.Error("should keep last hunk header")
+	}
+}
+
+func TestCollapseQuotedBlocks_NoHunkFallback(t *testing.T) {
+	var lines []string
+	for i := 0; i < 50; i++ {
+		lines = append(lines,
+			fmt.Sprintf("> prose paragraph line %d", i))
+	}
+	lines = append(lines, "agreed")
+	got := collapseQuotedBlocks(lines)
+	// Should keep last 20 lines of the block as tail
+	// Head=3, marker=1, tail=20 => 24 + "agreed" = 25
+	if len(got) > 30 {
+		t.Errorf("len = %d, want <= 30", len(got))
+	}
+	if got[len(got)-1] != "agreed" {
+		t.Errorf("last = %q", got[len(got)-1])
+	}
+}
+
+func TestCollapseQuotedBlocks_Mixed(t *testing.T) {
+	var lines []string
+	// Small quoted block — should not collapse
+	lines = append(lines, "> small 1", "> small 2", "> small 3")
+	lines = append(lines, "reply to small block")
+	// Large quoted block — should collapse
+	for i := 0; i < 25; i++ {
+		lines = append(lines,
+			fmt.Sprintf("> big block line %d", i))
+	}
+	lines = append(lines, "reply to big block")
+
+	got := collapseQuotedBlocks(lines)
+	// Small block lines should all be present
+	found := 0
+	for _, l := range got {
+		if strings.HasPrefix(l, "> small") {
+			found++
+		}
+	}
+	if found != 3 {
+		t.Errorf("small block lines = %d, want 3", found)
+	}
+	// Big block should be collapsed
+	hasMarker := false
+	for _, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			hasMarker = true
+		}
+	}
+	if !hasMarker {
+		t.Error("big block should have collapse marker")
+	}
+}
+
+func TestCollapseQuotedBlocks_HeadTailOverlap(t *testing.T) {
+	// Block of 9 lines: head=3 + tail=20 > 9, so no collapse
+	var lines []string
+	for i := 0; i < 9; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	got := collapseQuotedBlocks(lines)
+	if len(got) != 9 {
+		t.Errorf("len = %d, want 9 (overlap, no collapse)",
+			len(got))
+	}
+}
+
+func TestFormatComment_CollapseQuotes(t *testing.T) {
+	var content strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&content, "> quoted line %d\n", i)
+	}
+	content.WriteString("looks good\n")
+	c := CommentInfo{
+		Subject: "Re: test",
+		Content: content.String(),
+	}
+	result := FormatComment(c, 80, true)
+	if !strings.Contains(result, "quoted lines hidden") {
+		t.Error("should collapse with collapseQuotes=true")
+	}
+}
+
+func TestFormatComment_ExpandQuotes(t *testing.T) {
+	var content strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&content, "> quoted line %d\n", i)
+	}
+	content.WriteString("looks good\n")
+	c := CommentInfo{
+		Subject: "Re: test",
+		Content: content.String(),
+	}
+	result := FormatComment(c, 80, false)
+	if strings.Contains(result, "quoted lines hidden") {
+		t.Error("should not collapse with collapseQuotes=false")
 	}
 }
 
