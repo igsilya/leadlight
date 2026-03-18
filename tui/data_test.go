@@ -108,6 +108,106 @@ func TestFormatSeriesChecks(t *testing.T) {
 	}
 }
 
+func TestParsePatchName(t *testing.T) {
+	tests := []struct {
+		name, prefix string
+		wantName     string
+		wantVer      string
+	}{
+		{
+			"[ovs-dev,v5,2/4] Fix foo", "ovs-dev",
+			"[2/4] Fix foo", "v5",
+		},
+		{
+			"[ovs-dev,RFC,v3,1/2] Add bar", "ovs-dev",
+			"[RFC,1/2] Add bar", "v3",
+		},
+		{
+			"[ovs-dev] Simple patch", "ovs-dev",
+			"Simple patch", "",
+		},
+		{
+			"Plain subject", "ovs-dev",
+			"Plain subject", "",
+		},
+		{
+			"[ovs-dev,v3] Fix baz", "ovs-dev",
+			"Fix baz", "v3",
+		},
+		{
+			"[ovs-dev,net] net: openvswitch: foo", "ovs-dev",
+			"[net] net: openvswitch: foo", "",
+		},
+		{
+			"[ovs-dev,07/10,net-next,v3] net: bar", "ovs-dev",
+			"[07/10,net-next] net: bar", "v3",
+		},
+		{
+			"[V5,1/7] net/hinic3: add support", "",
+			"[1/7] net/hinic3: add support", "V5",
+		},
+		{
+			"[RFC,v2] dpif: foo", "",
+			"[RFC] dpif: foo", "v2",
+		},
+		{
+			"[ovs-dev,RFC,series_484144,v2] foo", "ovs-dev",
+			"[RFC,series_484144] foo", "v2",
+		},
+	}
+	for _, tt := range tests {
+		name, ver := parsePatchName(tt.name, tt.prefix)
+		if name != tt.wantName {
+			t.Errorf("parsePatchName(%q, %q) name = %q, want %q",
+				tt.name, tt.prefix, name, tt.wantName)
+		}
+		if ver != tt.wantVer {
+			t.Errorf("parsePatchName(%q, %q) ver = %q, want %q",
+				tt.name, tt.prefix, ver, tt.wantVer)
+		}
+	}
+}
+
+func TestStripPosition(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"[07/10,net-next] net: convert", "[net-next] net: convert"},
+		{"[2/4] Fix foo", "Fix foo"},
+		{"[RFC,1/2] Add bar", "[RFC] Add bar"},
+		{"[net] net: openvswitch", "[net] net: openvswitch"},
+		{"Plain subject", "Plain subject"},
+		{"[RFC] dpif: foo", "[RFC] dpif: foo"},
+	}
+	for _, tt := range tests {
+		got := stripPosition(tt.in)
+		if got != tt.want {
+			t.Errorf("stripPosition(%q) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestDetectListPrefix(t *testing.T) {
+	names := []string{
+		"[ovs-dev,v1,1/3] Lorem ipsum",
+		"[ovs-dev,v2] Dolor sit amet",
+		"[ovs-dev] Consectetur",
+		"Plain subject",
+		"[ovs-dev,RFC] Adipiscing",
+	}
+	got := detectListPrefix(names)
+	if got != "ovs-dev" {
+		t.Errorf("got %q, want ovs-dev", got)
+	}
+}
+
+func TestDetectListPrefix_Empty(t *testing.T) {
+	names := []string{"Plain", "No brackets"}
+	got := detectListPrefix(names)
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
 func TestDisplayState(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"new", "new"},
@@ -268,22 +368,25 @@ func TestSeriesToRow(t *testing.T) {
 		},
 	}
 
-	row := seriesToRow(s, patches)
+	row := seriesToRow(s, patches, "")
 
 	if row.Data[0] != "50" {
 		t.Errorf("ID = %q", row.Data[0])
 	}
-	if row.Data[1] != "Lorem series" {
-		t.Errorf("Name = %q", row.Data[1])
+	if row.Data[1] != "" {
+		t.Errorf("Ver = %q, want empty (v1)", row.Data[1])
 	}
-	if row.Data[2] != "new" {
-		t.Errorf("State = %q", row.Data[2])
+	if row.Data[2] != "Lorem series" {
+		t.Errorf("Name = %q", row.Data[2])
 	}
-	if row.Data[3] != "Lorem Ipsum" {
-		t.Errorf("Submitter = %q", row.Data[3])
+	if row.Data[3] != "new" {
+		t.Errorf("State = %q", row.Data[3])
 	}
-	if row.Data[4] != "2d" {
-		t.Errorf("Age = %q", row.Data[4])
+	if row.Data[4] != "Lorem Ipsum" {
+		t.Errorf("Submitter = %q", row.Data[4])
+	}
+	if row.Data[5] != "2d" {
+		t.Errorf("Age = %q", row.Data[5])
 	}
 	if row.Style.Background != "green" {
 		t.Errorf("Background = %q, want green (has acked)",
@@ -304,9 +407,9 @@ func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
 		{ID: 100, Name: "[PATCH] Lorem ipsum", Date: d,
 			State: "new", Submitter: "Lorem"},
 	}
-	row := seriesToRow(s, patches)
-	if row.Data[1] != "[PATCH] Lorem ipsum" {
-		t.Errorf("Name = %q, want first patch name", row.Data[1])
+	row := seriesToRow(s, patches, "")
+	if row.Data[2] != "[PATCH] Lorem ipsum" {
+		t.Errorf("Name = %q, want first patch name", row.Data[2])
 	}
 }
 

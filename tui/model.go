@@ -144,6 +144,7 @@ type Model struct {
 	viewportOffset   int
 	fetchingComments bool
 	quotesExpanded   bool
+	listPrefix       string
 
 	RequestMbox        func(patchID int)
 	RequestCoverMbox   func(seriesID int)
@@ -201,10 +202,17 @@ func (m *Model) reloadData() {
 	} else {
 		seriesList = m.db.GetActiveSeries(m.states)
 	}
+	if m.listPrefix == "" && len(seriesList) > 0 {
+		names := make([]string, len(seriesList))
+		for i, s := range seriesList {
+			names[i] = s.Name
+		}
+		m.listPrefix = detectListPrefix(names)
+	}
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		patches := m.db.GetPatchesForSeries(s.ID)
-		row := seriesToRow(s, patches)
+		row := seriesToRow(s, patches, m.listPrefix)
 		sid := strconv.Itoa(s.ID)
 		if expanded[sid] {
 			row.Expanded = true

@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"leadlight/db"
@@ -10,6 +12,7 @@ import (
 
 var PatchworkColumns = []ColumnDef{
 	{Title: "ID", FixedWidth: 10},
+	{Title: "Ver", FixedWidth: 4},
 	{Title: "Name"},
 	{Title: "State", FixedWidth: 8},
 	{Title: "Submitter", FixedWidth: 20},
@@ -36,34 +39,139 @@ func displayState(state string) string {
 }
 
 const (
-	ColState  = 2
-	ColChecks = 6
+	ColState  = 3
+	ColChecks = 7
 )
+
+var (
+	versionRe  = regexp.MustCompile(`(?i)^v\d+$`)
+	positionRe = regexp.MustCompile(`^\d+/\d+$`)
+)
+
+func stripPosition(name string) string {
+	if !strings.HasPrefix(name, "[") {
+		return name
+	}
+	close := strings.Index(name, "]")
+	if close < 0 {
+		return name
+	}
+	bracket := name[1:close]
+	subject := strings.TrimSpace(name[close+1:])
+
+	var kept []string
+	for _, tok := range strings.Split(bracket, ",") {
+		tok = strings.TrimSpace(tok)
+		if !positionRe.MatchString(tok) {
+			kept = append(kept, tok)
+		}
+	}
+	if len(kept) > 0 {
+		return "[" + strings.Join(kept, ",") + "] " + subject
+	}
+	return subject
+}
+
+func parsePatchName(
+	name, listPrefix string,
+) (cleaned, version string) {
+	if !strings.HasPrefix(name, "[") {
+		return name, ""
+	}
+	close := strings.Index(name, "]")
+	if close < 0 {
+		return name, ""
+	}
+	bracket := name[1:close]
+	subject := strings.TrimSpace(name[close+1:])
+
+	var kept []string
+	for _, tok := range strings.Split(bracket, ",") {
+		tok = strings.TrimSpace(tok)
+		switch {
+		case tok == listPrefix:
+		case versionRe.MatchString(tok):
+			version = tok
+		default:
+			kept = append(kept, tok)
+		}
+	}
+	if len(kept) > 0 {
+		cleaned = "[" + strings.Join(kept, ",") + "] " + subject
+	} else {
+		cleaned = subject
+	}
+	return cleaned, version
+}
+
+func detectListPrefix(names []string) string {
+	counts := map[string]int{}
+	for _, name := range names {
+		if !strings.HasPrefix(name, "[") {
+			continue
+		}
+		close := strings.Index(name, "]")
+		if close < 0 {
+			continue
+		}
+		bracket := name[1:close]
+		tok := strings.TrimSpace(
+			strings.SplitN(bracket, ",", 2)[0])
+		if tok != "" && !versionRe.MatchString(tok) {
+			counts[tok]++
+		}
+	}
+	best, bestN := "", 0
+	for tok, n := range counts {
+		if n > bestN {
+			best, bestN = tok, n
+		}
+	}
+	return best
+}
 
 func LoadFromDB(
 	d *db.DB, states []string,
 ) ([]RowData, error) {
 	seriesList := d.GetActiveSeries(states)
-	rows := make([]RowData, 0, len(seriesList))
 
+	var names []string
+	for _, s := range seriesList {
+		names = append(names, s.Name)
+	}
+	listPrefix := detectListPrefix(names)
+
+	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		patches := d.GetPatchesForSeries(s.ID)
-		rows = append(rows, seriesToRow(s, patches))
+		rows = append(rows, seriesToRow(s, patches, listPrefix))
 	}
 	return rows, nil
 }
 
 func seriesToRow(
 	s db.SeriesRow, patches []db.PatchRow,
+	listPrefix string,
 ) RowData {
 	name := s.Name
 	if name == "" && len(patches) > 0 {
 		name = patches[0].Name
 	}
+	cleaned, _ := parsePatchName(name, listPrefix)
+	cleaned = stripPosition(cleaned)
+	if s.TotalPatches > 1 {
+		cleaned = fmt.Sprintf("[0/%d] %s",
+			s.TotalPatches, cleaned)
+	}
+	ver := ""
+	if s.Version > 1 {
+		ver = fmt.Sprintf("v%d", s.Version)
+	}
 	row := RowData{
 		Data: []string{
 			strconv.Itoa(s.ID),
-			name,
+			ver,
+			cleaned,
 			aggregateState(patches),
 			s.Submitter,
 			formatAge(s.Date),
@@ -77,15 +185,17 @@ func seriesToRow(
 
 	row.SubRows = make([][]string, len(patches))
 	for i, p := range patches {
-		row.SubRows[i] = patchToSubRow(p)
+		row.SubRows[i] = patchToSubRow(p, listPrefix)
 	}
 	return row
 }
 
-func patchToSubRow(p db.PatchRow) []string {
+func patchToSubRow(p db.PatchRow, listPrefix string) []string {
+	cleaned, ver := parsePatchName(p.Name, listPrefix)
 	return []string{
 		strconv.Itoa(p.ID),
-		p.Name,
+		ver,
+		cleaned,
 		displayState(p.State),
 		p.Submitter,
 		formatAge(p.Date),
