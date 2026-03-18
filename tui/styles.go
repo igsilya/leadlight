@@ -39,9 +39,9 @@ var (
 				Bold(true).
 				Background(lipgloss.Color("57")).
 				Foreground(lipgloss.Color("15"))
-	checksPassStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
-	checksFailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	checksPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	checksPassStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("34")).Bold(true)
+	checksFailStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	checksPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	checksZeroStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
@@ -85,9 +85,9 @@ func init() {
 		bgStyles[name] = &cachedBgStyle{
 			row:       lipgloss.NewStyle().Background(bg).Foreground(fg),
 			rowFaint:  lipgloss.NewStyle().Background(bg).Foreground(fg).Faint(true),
-			checkPass: lipgloss.NewStyle().Background(bg).Foreground(checksPassStyle.GetForeground()),
-			checkFail: lipgloss.NewStyle().Background(bg).Foreground(checksFailStyle.GetForeground()),
-			checkPend: lipgloss.NewStyle().Background(bg).Foreground(checksPendingStyle.GetForeground()),
+			checkPass: lipgloss.NewStyle().Background(bg).Foreground(checksPassStyle.GetForeground()).Bold(true),
+			checkFail: lipgloss.NewStyle().Background(bg).Foreground(checksFailStyle.GetForeground()).Bold(true),
+			checkPend: lipgloss.NewStyle().Background(bg).Foreground(checksPendingStyle.GetForeground()).Bold(true),
 			checkZero: lipgloss.NewStyle().Background(bg).Foreground(checksZeroStyle.GetForeground()),
 		}
 
