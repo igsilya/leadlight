@@ -133,11 +133,7 @@ func FormatMbox(p ParsedMbox, width int) string {
 		for _, line := range strings.Split(body, "\n") {
 			quoted := isQuotedLine(line)
 			for _, wl := range wrapLine(line, width) {
-				if quoted {
-					b.WriteString(quotedLineStyle.Render(wl))
-				} else {
-					b.WriteString(wl)
-				}
+				writeStyledLine(&b, wl, quoted)
 				b.WriteByte('\n')
 			}
 		}
@@ -220,6 +216,17 @@ func replaceControlChars(s string) string {
 
 func isQuotedLine(s string) bool {
 	return strings.HasPrefix(strings.TrimLeft(s, " "), ">")
+}
+
+func writeStyledLine(b *strings.Builder, line string, quoted bool) {
+	if quoted {
+		b.WriteString(quotedLineStyle.Render(line))
+	} else if strings.HasPrefix(line, "↳ ") {
+		b.WriteString(wrapIndicatorStyle.Render("↳ "))
+		b.WriteString(line[len("↳ "):])
+	} else {
+		b.WriteString(line)
+	}
 }
 
 const (
@@ -305,7 +312,7 @@ func wrapLine(s string, width int) []string {
 		}
 		seg := string(runes[:limit])
 		if !first {
-			seg = wrapIndicatorStyle.Render("↳") + " " + seg
+			seg = "↳ " + seg
 		}
 		lines = append(lines, seg)
 		runes = runes[limit:]
@@ -419,11 +426,7 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		for _, line := range contentLines {
 			quoted := isQuotedLine(line)
 			for _, wl := range wrapLine(line, width) {
-				if quoted {
-					b.WriteString(quotedLineStyle.Render(wl))
-				} else {
-					b.WriteString(wl)
-				}
+				writeStyledLine(&b, wl, quoted)
 				b.WriteByte('\n')
 			}
 		}
