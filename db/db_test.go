@@ -776,6 +776,137 @@ func TestResetAllCommentsFetched(t *testing.T) {
 	}
 }
 
+func TestGetCommentsForCover(t *testing.T) {
+	d := openTestDB(t)
+
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "[PATCH 0/3] Lorem ipsum",
+		Date: "2026-03-10T12:00:00",
+	})
+
+	d.InsertComment(CommentRow{
+		ID: 500, CoverID: 99, Submitter: "Dolor Amet",
+		Date: "2026-03-11T09:00:00", Subject: "Re: Lorem",
+		Content: "Acked-by: Dolor Amet <dolor@amet.example>",
+	})
+	d.InsertComment(CommentRow{
+		ID: 501, CoverID: 99, Submitter: "Sit Amet",
+		Date: "2026-03-11T10:00:00", Subject: "Re: Lorem",
+		Content: "Looks good to me.",
+	})
+	// Comment on a patch, not on the cover
+	d.InsertComment(CommentRow{
+		ID: 502, PatchID: 100, Submitter: "Tempor",
+		Date: "2026-03-11T11:00:00", Subject: "Re: patch",
+		Content: "Unrelated patch comment.",
+	})
+
+	comments := d.GetCommentsForCover(99)
+	if len(comments) != 2 {
+		t.Fatalf("len(comments) = %d, want 2", len(comments))
+	}
+	if comments[0].ID != 500 {
+		t.Errorf("[0].ID = %d", comments[0].ID)
+	}
+	if comments[1].CoverID != 99 {
+		t.Errorf("[1].CoverID = %d", comments[1].CoverID)
+	}
+}
+
+func TestGetCoversNeedingComments(t *testing.T) {
+	d := openTestDB(t)
+
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Cover A", Date: "2026-03-10",
+	})
+	d.SaveCover(CoverRow{
+		ID: 100, SeriesID: 51,
+		Name: "Cover B", Date: "2026-03-11",
+	})
+
+	ids := d.GetCoversNeedingComments()
+	if len(ids) != 2 {
+		t.Fatalf("len = %d, want 2", len(ids))
+	}
+
+	d.MarkCoverCommentsFetched(99)
+	ids = d.GetCoversNeedingComments()
+	if len(ids) != 1 || ids[0] != 100 {
+		t.Errorf("after mark: ids = %v", ids)
+	}
+
+	d.MarkCoverCommentsFetched(100)
+	ids = d.GetCoversNeedingComments()
+	if len(ids) != 0 {
+		t.Errorf("after mark all: ids = %v", ids)
+	}
+}
+
+func TestResetCoverCommentsFetched(t *testing.T) {
+	d := openTestDB(t)
+
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Cover", Date: "2026-03-10",
+	})
+
+	d.MarkCoverCommentsFetched(99)
+	ids := d.GetCoversNeedingComments()
+	if len(ids) != 0 {
+		t.Fatalf("after mark: len = %d", len(ids))
+	}
+
+	d.ResetCoverCommentsFetched(99)
+	ids = d.GetCoversNeedingComments()
+	if len(ids) != 1 || ids[0] != 99 {
+		t.Errorf("after reset: ids = %v", ids)
+	}
+}
+
+func TestNeedsPatchComments(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	if !d.NeedsPatchComments(100) {
+		t.Error("new patch should need comments")
+	}
+
+	d.MarkCommentsFetched(100)
+	if d.NeedsPatchComments(100) {
+		t.Error("marked patch should not need comments")
+	}
+
+	if d.NeedsPatchComments(999) {
+		t.Error("non-existent patch should return false")
+	}
+}
+
+func TestNeedsCoverComments(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Cover", Date: "2026-03-10",
+	})
+
+	if !d.NeedsCoverComments(99) {
+		t.Error("new cover should need comments")
+	}
+
+	d.MarkCoverCommentsFetched(99)
+	if d.NeedsCoverComments(99) {
+		t.Error("marked cover should not need comments")
+	}
+
+	if d.NeedsCoverComments(999) {
+		t.Error("non-existent cover should return false")
+	}
+}
+
 func TestGetIncompletePatches(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{

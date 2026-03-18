@@ -459,6 +459,16 @@ func (c *Client) GetPatchComments(
 	return getAll[Comment](c, ctx, path, v)
 }
 
+func (c *Client) GetCoverComments(
+	ctx context.Context,
+	id int,
+) ([]Comment, error) {
+	path := fmt.Sprintf("/covers/%d/comments/", id)
+	v := url.Values{}
+	v.Set("per_page", "100")
+	return getAll[Comment](c, ctx, path, v)
+}
+
 func (c *Client) GetPatchChecks(
 	ctx context.Context,
 	id int,

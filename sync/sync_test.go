@@ -811,6 +811,184 @@ func TestProcessEvent_PatchCommentCreated(t *testing.T) {
 	}
 }
 
+func TestProcessEvent_CoverCommentCreated(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "[PATCH 0/3] Lorem cover",
+		Date: "2026-03-10T12:00:00",
+	})
+	d.MarkCoverCommentsFetched(99)
+
+	ids := d.GetCoversNeedingComments()
+	if len(ids) != 0 {
+		t.Fatal("should be fetched before event")
+	}
+
+	ev := api.Event{
+		Category: "cover-comment-created",
+		Payload: &api.CoverCommentCreatedPayload{
+			Cover:   api.CoverSummary{ID: 99},
+			Comment: api.CommentSummary{ID: 400},
+		},
+	}
+
+	if err := s.processEvent(ev, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	ids = d.GetCoversNeedingComments()
+	if len(ids) != 1 || ids[0] != 99 {
+		t.Errorf("got %v, want [99] (reset by event)", ids)
+	}
+}
+
+func TestFetchNextCoverComments(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/covers/99/comments/" {
+				json.NewEncoder(w).Encode([]api.Comment{
+					{
+						ID:      400,
+						Subject: "Re: Lorem cover",
+						Date:    "2026-03-11T09:00:00",
+						MsgID:   "<reply-cover@ipsum.example>",
+						Submitter: api.Person{
+							Name:  "Dolor Amet",
+							Email: "dolor@amet.example",
+						},
+						Content: "Looks good.\n\nAcked-by: Dolor Amet <dolor@amet.example>",
+					},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "[PATCH 0/3] Lorem cover",
+		Date: "2026-03-10T12:00:00",
+	})
+
+	ids := d.GetCoversNeedingComments()
+	if len(ids) != 1 {
+		t.Fatalf("before: len = %d", len(ids))
+	}
+
+	s.fetchNextCoverComments(context.Background())
+
+	ids = d.GetCoversNeedingComments()
+	if len(ids) != 0 {
+		t.Errorf("after: ids = %v, want empty", ids)
+	}
+
+	comments := d.GetCommentsForCover(99)
+	if len(comments) != 1 {
+		t.Fatalf("comments len = %d", len(comments))
+	}
+	if comments[0].ID != 400 {
+		t.Errorf("comment ID = %d", comments[0].ID)
+	}
+	if comments[0].CoverID != 99 {
+		t.Errorf("CoverID = %d", comments[0].CoverID)
+	}
+	if comments[0].Submitter != "Dolor Amet" {
+		t.Errorf("Submitter = %q", comments[0].Submitter)
+	}
+}
+
+func TestFetchCommentsForPatch(t *testing.T) {
+	var apiCalled bool
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/patches/100/comments/" {
+				apiCalled = true
+				json.NewEncoder(w).Encode([]api.Comment{
+					{
+						ID:      500,
+						Subject: "Re: Lorem",
+						Date:    "2026-03-11T09:00:00",
+						Submitter: api.Person{
+							Name: "Dolor Amet",
+						},
+						Content: "Acked-by: Dolor Amet <dolor@amet.example>",
+					},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	savePatch(d, 100, "test", "2026-03-10", "new")
+
+	s.fetchCommentsForPatch(context.Background(), 100)
+	if !apiCalled {
+		t.Error("API should be called when comments_fetched = 0")
+	}
+
+	comments := d.GetComments(100)
+	if len(comments) != 1 || comments[0].ID != 500 {
+		t.Errorf("comments = %v", comments)
+	}
+
+	// Second call should not hit API (already fetched)
+	apiCalled = false
+	s.fetchCommentsForPatch(context.Background(), 100)
+	if apiCalled {
+		t.Error("API should NOT be called when comments_fetched = 1")
+	}
+}
+
+func TestFetchCommentsForCover(t *testing.T) {
+	var apiCalled bool
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/covers/99/comments/" {
+				apiCalled = true
+				json.NewEncoder(w).Encode([]api.Comment{
+					{
+						ID:      600,
+						Subject: "Re: Lorem cover",
+						Date:    "2026-03-11T10:00:00",
+						Submitter: api.Person{
+							Name: "Sit Amet",
+						},
+						Content: "Looks good overall.",
+					},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "[PATCH 0/3] Lorem cover",
+		Date: "2026-03-10T12:00:00",
+	})
+
+	s.fetchCommentsForCover(context.Background(), 99)
+	if !apiCalled {
+		t.Error("API should be called when comments_fetched = 0")
+	}
+
+	comments := d.GetCommentsForCover(99)
+	if len(comments) != 1 || comments[0].ID != 600 {
+		t.Errorf("comments = %v", comments)
+	}
+
+	// Second call should not hit API
+	apiCalled = false
+	s.fetchCommentsForCover(context.Background(), 99)
+	if apiCalled {
+		t.Error("API should NOT be called when comments_fetched = 1")
+	}
+}
+
 func TestCheckMailArchive(t *testing.T) {
 	archiveHTML := `<HTML><BODY><ul>
 <LI><A HREF="100.html">[dev] [PATCH] Lorem ipsum dolor

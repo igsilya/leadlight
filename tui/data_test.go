@@ -287,6 +287,42 @@ func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
 	}
 }
 
+func TestGetCommentsForCover(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Lorem cover", Date: "2026-03-10",
+	})
+	d.InsertComment(db.CommentRow{
+		ID: 500, CoverID: 99, Submitter: "Dolor Amet",
+		Date: "2026-03-11T09:00:00", Subject: "Re: Lorem",
+		Content: "Acked-by: Dolor Amet <dolor@amet.example>",
+	})
+
+	comments := GetCommentsForCover(d, 99)
+	if len(comments) != 1 {
+		t.Fatalf("len = %d, want 1", len(comments))
+	}
+	if comments[0].Submitter != "Dolor Amet" {
+		t.Errorf("Submitter = %q", comments[0].Submitter)
+	}
+	if comments[0].Content != "Acked-by: Dolor Amet <dolor@amet.example>" {
+		t.Errorf("Content = %q", comments[0].Content)
+	}
+}
+
+func TestGetCommentsForCover_NilDB(t *testing.T) {
+	comments := GetCommentsForCover(nil, 99)
+	if comments != nil {
+		t.Errorf("got %v, want nil", comments)
+	}
+}
+
 func TestLoadFromDB(t *testing.T) {
 	d, err := db.Open(":memory:")
 	if err != nil {

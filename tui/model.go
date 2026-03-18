@@ -146,6 +146,8 @@ type Model struct {
 	RequestMbox        func(patchID int)
 	RequestCoverMbox   func(seriesID int)
 	FetchSeriesCover   func(seriesID int)
+	FetchPatchComments func(patchID int)
+	FetchCoverComments func(coverID int)
 	RequestPatchUpdate func(
 		patchID int, state *string, delegateID *int,
 	)
@@ -328,11 +330,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SyncUpdateMsg:
 		m.reloadData()
-		if m.viewMode == viewPatch &&
-			len(m.viewportLines) == 1 &&
-			(m.viewportLines[0] == "Fetching..." ||
-				m.viewportLines[0] == "Fetching cover letter...") {
-			m.refreshViewport()
+		if m.viewMode == viewPatch {
+			if len(m.viewportLines) == 1 &&
+				(m.viewportLines[0] == "Fetching..." ||
+					m.viewportLines[0] == "Fetching cover letter...") {
+				m.refreshViewport()
+			}
+			m.refreshViewportComments()
 		}
 		return m, nil
 
@@ -399,6 +403,21 @@ func (m *Model) refreshViewport() {
 		row.Name, len(row.MboxContent))
 	checks := GetChecksForPatch(m.db, m.viewingPatchID)
 	m.buildViewportContent(row.MboxContent, checks)
+}
+
+func (m *Model) refreshViewportComments() {
+	if m.db == nil {
+		return
+	}
+	if m.viewingCoverID != 0 {
+		cover, err := m.db.GetCover(m.viewingCoverID)
+		if err != nil || cover == nil {
+			return
+		}
+		m.viewComments = GetCommentsForCover(m.db, cover.ID)
+	} else if m.viewingPatchID != 0 {
+		m.viewComments = GetCommentsForPatch(m.db, m.viewingPatchID)
+	}
 }
 
 func splitLines(content string) []string {

@@ -808,6 +808,81 @@ func (d *DB) GetComments(patchID int) []CommentRow {
 	return result
 }
 
+func (d *DB) GetCommentsForCover(coverID int) []CommentRow {
+	rows, err := d.conn.Query(`
+		SELECT id, patch_id, cover_id, submitter,
+			date, subject, content, msgid
+		FROM comments WHERE cover_id = ?
+		ORDER BY date`, coverID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var result []CommentRow
+	for rows.Next() {
+		var r CommentRow
+		rows.Scan(&r.ID, &r.PatchID, &r.CoverID,
+			&r.Submitter, &r.Date, &r.Subject,
+			&r.Content, &r.MsgID)
+		result = append(result, r)
+	}
+	return result
+}
+
+func (d *DB) GetCoversNeedingComments() []int {
+	rows, err := d.conn.Query(`
+		SELECT id FROM covers
+		WHERE comments_fetched = 0
+		ORDER BY id`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (d *DB) MarkCoverCommentsFetched(coverID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(
+		"UPDATE covers SET comments_fetched = 1 WHERE id = ?",
+		coverID)
+	return err
+}
+
+func (d *DB) ResetCoverCommentsFetched(coverID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(
+		"UPDATE covers SET comments_fetched = 0 WHERE id = ?",
+		coverID)
+	return err
+}
+
+func (d *DB) NeedsPatchComments(patchID int) bool {
+	var fetched int
+	err := d.conn.QueryRow(
+		"SELECT comments_fetched FROM patches WHERE id = ?",
+		patchID).Scan(&fetched)
+	return err == nil && fetched == 0
+}
+
+func (d *DB) NeedsCoverComments(coverID int) bool {
+	var fetched int
+	err := d.conn.QueryRow(
+		"SELECT comments_fetched FROM covers WHERE id = ?",
+		coverID).Scan(&fetched)
+	return err == nil && fetched == 0
+}
+
 func (d *DB) GetCover(seriesID int) (*CoverRow, error) {
 	row := d.conn.QueryRow(`
 		SELECT id, series_id, name, date,

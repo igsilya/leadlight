@@ -514,9 +514,13 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 		m.viewMode = viewPatch
 		m.viewingPatchID = 0
 		m.viewingCoverID = seriesID
-		m.viewComments = nil
+		m.viewComments = GetCommentsForCover(m.db, cover.ID)
 		m.viewCommentIdx = -1
 		m.viewportOffset = 0
+
+		if len(m.viewComments) == 0 && m.FetchCoverComments != nil {
+			m.FetchCoverComments(cover.ID)
+		}
 
 		if cover.MboxContent != "" {
 			m.buildViewportContent(cover.MboxContent, nil)
@@ -571,6 +575,10 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	m.viewComments = GetCommentsForPatch(m.db, patchID)
 	m.viewCommentIdx = -1
 	m.viewportOffset = 0
+
+	if len(m.viewComments) == 0 && m.FetchPatchComments != nil {
+		m.FetchPatchComments(patchID)
+	}
 
 	if row.MboxContent != "" {
 		log.Printf("TUI: mbox cached (%d bytes) for %q",

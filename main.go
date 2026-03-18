@@ -109,6 +109,13 @@ func main() {
 		})
 	}
 
+	m.FetchPatchComments = func(patchID int) {
+		go syncer.RequestComments(patchID, false)
+	}
+	m.FetchCoverComments = func(coverID int) {
+		go syncer.RequestComments(coverID, true)
+	}
+
 	m.RequestCoverMbox = func(seriesID int) {
 		log.Printf("MAIN: RequestCoverMbox series=%d", seriesID)
 		go func() {

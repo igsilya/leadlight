@@ -24,6 +24,7 @@ type Syncer struct {
 	priorityC chan int
 	mboxC     chan MboxRequest
 	updateC   chan PatchUpdateRequest
+	commentC  chan CommentRequest
 }
 
 type MboxRequest struct {
@@ -44,6 +45,11 @@ type PatchUpdateRequest struct {
 	ResultC    chan<- error
 }
 
+type CommentRequest struct {
+	ID      int
+	IsCover bool
+}
+
 func NewSyncer(
 	client *api.Client,
 	d *db.DB,
@@ -58,6 +64,7 @@ func NewSyncer(
 		priorityC: make(chan int, 16),
 		mboxC:     make(chan MboxRequest, 4),
 		updateC:   make(chan PatchUpdateRequest, 4),
+		commentC:  make(chan CommentRequest, 4),
 	}
 }
 
@@ -86,6 +93,13 @@ func (s *Syncer) RequestMbox(patchID int) MboxResult {
 		ResultC: resultC,
 	}
 	return <-resultC
+}
+
+func (s *Syncer) RequestComments(id int, isCover bool) {
+	select {
+	case s.commentC <- CommentRequest{ID: id, IsCover: isCover}:
+	default:
+	}
 }
 
 const (
@@ -140,6 +154,13 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 		case seriesID := <-s.priorityC:
 			s.fetchSeriesDetail(ctx, seriesID)
 			s.notify()
+		case req := <-s.commentC:
+			if req.IsCover {
+				s.fetchCommentsForCover(ctx, req.ID)
+			} else {
+				s.fetchCommentsForPatch(ctx, req.ID)
+			}
+			s.notify()
 		}
 	}
 }
@@ -177,6 +198,7 @@ func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
 	s.fetchNextComments(ctx)
+	s.fetchNextCoverComments(ctx)
 	s.notify()
 
 	ticker := time.NewTicker(commentInterval)
@@ -188,6 +210,7 @@ func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 			return
 		case <-ticker.C:
 			s.fetchNextComments(ctx)
+			s.fetchNextCoverComments(ctx)
 			s.notify()
 		}
 	}
@@ -425,7 +448,7 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 	case *api.PatchCommentCreatedPayload:
 		return s.db.ResetCommentsFetched(p.Patch.ID)
 	case *api.CoverCommentCreatedPayload:
-		return nil
+		return s.db.ResetCoverCommentsFetched(p.Cover.ID)
 	}
 	return nil
 }
@@ -612,6 +635,86 @@ func (s *Syncer) fetchNextComments(ctx context.Context) {
 	}
 	s.updatePatchTagsFromComments(patchID)
 	s.db.MarkCommentsFetched(patchID)
+}
+
+func (s *Syncer) fetchNextCoverComments(ctx context.Context) {
+	ids := s.db.GetCoversNeedingComments()
+	if len(ids) == 0 {
+		return
+	}
+
+	coverID := ids[0]
+	log.Printf("SYNC: fetchNextCoverComments: cover %d", coverID)
+	comments, err := s.client.GetCoverComments(ctx, coverID)
+	if err != nil {
+		log.Printf("fetch cover comments %d: %v", coverID, err)
+		s.db.MarkCoverCommentsFetched(coverID)
+		return
+	}
+
+	for _, c := range comments {
+		s.db.InsertComment(db.CommentRow{
+			ID:        c.ID,
+			CoverID:   coverID,
+			Submitter: c.Submitter.Name,
+			Date:      c.Date,
+			Subject:   c.Subject,
+			Content:   c.Content,
+			MsgID:     c.MsgID,
+		})
+	}
+	s.db.MarkCoverCommentsFetched(coverID)
+}
+
+func (s *Syncer) fetchCommentsForPatch(ctx context.Context, patchID int) {
+	if !s.db.NeedsPatchComments(patchID) {
+		return
+	}
+	log.Printf("SYNC: fetchCommentsForPatch: %d", patchID)
+	comments, err := s.client.GetPatchComments(ctx, patchID)
+	if err != nil {
+		log.Printf("fetch comments %d: %v", patchID, err)
+		s.db.MarkCommentsFetched(patchID)
+		return
+	}
+	for _, c := range comments {
+		s.db.InsertComment(db.CommentRow{
+			ID:        c.ID,
+			PatchID:   patchID,
+			Submitter: c.Submitter.Name,
+			Date:      c.Date,
+			Subject:   c.Subject,
+			Content:   c.Content,
+			MsgID:     c.MsgID,
+		})
+	}
+	s.updatePatchTagsFromComments(patchID)
+	s.db.MarkCommentsFetched(patchID)
+}
+
+func (s *Syncer) fetchCommentsForCover(ctx context.Context, coverID int) {
+	if !s.db.NeedsCoverComments(coverID) {
+		return
+	}
+	log.Printf("SYNC: fetchCommentsForCover: %d", coverID)
+	comments, err := s.client.GetCoverComments(ctx, coverID)
+	if err != nil {
+		log.Printf("fetch cover comments %d: %v", coverID, err)
+		s.db.MarkCoverCommentsFetched(coverID)
+		return
+	}
+	for _, c := range comments {
+		s.db.InsertComment(db.CommentRow{
+			ID:        c.ID,
+			CoverID:   coverID,
+			Submitter: c.Submitter.Name,
+			Date:      c.Date,
+			Subject:   c.Subject,
+			Content:   c.Content,
+			MsgID:     c.MsgID,
+		})
+	}
+	s.db.MarkCoverCommentsFetched(coverID)
 }
 
 func (s *Syncer) checkMailArchive(ctx context.Context) {

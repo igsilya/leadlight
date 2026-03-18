@@ -337,6 +337,29 @@ func TestGetPatchComments(t *testing.T) {
 	}
 }
 
+func TestGetCoverComments(t *testing.T) {
+	c := testClient(t, http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/covers/99/comments/" {
+				t.Errorf("path = %q", r.URL.Path)
+			}
+			json.NewEncoder(w).Encode([]Comment{
+				{ID: 10, Subject: "Re: lorem cover", Content: "Acked-by: Dolor <dolor@amet.example>"},
+			})
+		}))
+
+	comments, err := c.GetCoverComments(context.Background(), 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("len = %d", len(comments))
+	}
+	if comments[0].ID != 10 {
+		t.Errorf("[0].ID = %d", comments[0].ID)
+	}
+}
+
 func TestGetPatchChecks(t *testing.T) {
 	c := testClient(t, http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {

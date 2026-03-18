@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS covers (
     content           TEXT DEFAULT '',
     headers           TEXT DEFAULT '',
     mbox_content      TEXT DEFAULT '',
-    detail_fetched    INTEGER DEFAULT 0
+    detail_fetched    INTEGER DEFAULT 0,
+    comments_fetched  INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS checks (
@@ -126,6 +127,7 @@ WHERE id IN (
 
 var alterStatements = []string{
 	`ALTER TABLE patches ADD COLUMN comments_fetched INTEGER DEFAULT 0`,
+	`ALTER TABLE covers ADD COLUMN comments_fetched INTEGER DEFAULT 0`,
 }
 
 func migrate(db *sql.DB) error {
