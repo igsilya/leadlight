@@ -15,7 +15,7 @@ import (
 
 type ColumnDef struct {
 	Title      string
-	Percentage float64
+	FixedWidth int // 0 = flex column (gets remainder)
 }
 
 type RowStyle struct {
@@ -491,8 +491,21 @@ func (m *Model) columnWidths() []int {
 	}
 	available := m.width - indicatorWidth
 	widths := make([]int, len(m.ColumnDefs))
+	used := 0
+	flex := -1
 	for i, col := range m.ColumnDefs {
-		widths[i] = int(float64(available) * col.Percentage)
+		if col.FixedWidth > 0 {
+			widths[i] = col.FixedWidth
+			used += col.FixedWidth
+		} else {
+			flex = i
+		}
+	}
+	if flex >= 0 {
+		widths[flex] = available - used
+		if widths[flex] < 1 {
+			widths[flex] = 1
+		}
 	}
 	return widths
 }

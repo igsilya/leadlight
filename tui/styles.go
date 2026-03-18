@@ -16,7 +16,7 @@ const (
 	gradientStartG = 0
 	gradientStartB = 255
 
-	subRowIndent   = "    "
+	subRowIndent   = " "
 	scrollBuffer   = 2
 	reservedLines  = 3
 	indicatorWidth = 2

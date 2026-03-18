@@ -12,10 +12,10 @@ import (
 
 func testModel() *Model {
 	columns := []ColumnDef{
-		{Title: "ID", Percentage: 0.10},
-		{Title: "Name", Percentage: 0.25},
-		{Title: "Status", Percentage: 0.20},
-		{Title: "Desc", Percentage: 0.45},
+		{Title: "ID", FixedWidth: 10},
+		{Title: "Name"},
+		{Title: "Status", FixedWidth: 15},
+		{Title: "Desc", FixedWidth: 15},
 	}
 	rows := []RowData{
 		{

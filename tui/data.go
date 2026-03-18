@@ -9,13 +9,30 @@ import (
 )
 
 var PatchworkColumns = []ColumnDef{
-	{Title: "ID", Percentage: 0.06},
-	{Title: "Name", Percentage: 0.30},
-	{Title: "State", Percentage: 0.10},
-	{Title: "Submitter", Percentage: 0.15},
-	{Title: "Age", Percentage: 0.07},
-	{Title: "A/F/R/T", Percentage: 0.12},
-	{Title: "Checks", Percentage: 0.10},
+	{Title: "ID", FixedWidth: 10},
+	{Title: "Name"},
+	{Title: "State", FixedWidth: 8},
+	{Title: "Submitter", FixedWidth: 20},
+	{Title: "Age", FixedWidth: 5},
+	{Title: "A/F/R/T", FixedWidth: 8},
+	{Title: "Checks", FixedWidth: 8},
+}
+
+var stateDisplay = map[string]string{
+	"under-review":      "review",
+	"accepted":          "accept",
+	"rejected":          "reject",
+	"superseded":        "supersed",
+	"changes-requested": "changes",
+	"not-applicable":    "n/a",
+	"handled-elsewhere": "handled",
+}
+
+func displayState(state string) string {
+	if short, ok := stateDisplay[state]; ok {
+		return short
+	}
+	return state
 }
 
 const (
@@ -69,7 +86,7 @@ func patchToSubRow(p db.PatchRow) []string {
 	return []string{
 		strconv.Itoa(p.ID),
 		p.Name,
-		p.State,
+		displayState(p.State),
 		p.Submitter,
 		formatAge(p.Date),
 		formatPatchReviews(p),
@@ -87,7 +104,7 @@ func aggregateState(patches []db.PatchRow) string {
 	}
 	if len(states) == 1 {
 		for s := range states {
-			return s
+			return displayState(s)
 		}
 	}
 	return "mixed"

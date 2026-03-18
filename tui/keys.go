@@ -278,7 +278,7 @@ func (m *Model) openStateSelector() {
 			current = items[m.selectedRow].data[m.StatusColIdx]
 		}
 		for i, opt := range m.selectorOptions {
-			if opt == current {
+			if displayState(opt) == current {
 				m.selectorCursor = i
 				break
 			}

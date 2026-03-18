@@ -108,6 +108,29 @@ func TestFormatSeriesChecks(t *testing.T) {
 	}
 }
 
+func TestDisplayState(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"new", "new"},
+		{"rfc", "rfc"},
+		{"deferred", "deferred"},
+		{"mixed", "mixed"},
+		{"under-review", "review"},
+		{"accepted", "accept"},
+		{"rejected", "reject"},
+		{"superseded", "supersed"},
+		{"changes-requested", "changes"},
+		{"not-applicable", "n/a"},
+		{"handled-elsewhere", "handled"},
+	}
+	for _, tt := range tests {
+		got := displayState(tt.in)
+		if got != tt.want {
+			t.Errorf("displayState(%q) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestAggregateState_Uniform(t *testing.T) {
 	patches := []db.PatchRow{
 		{State: "new"}, {State: "new"},
