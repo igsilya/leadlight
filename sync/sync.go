@@ -137,7 +137,6 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 
 	s.incrementalSync(ctx)
 	s.fetchMissingSeries(ctx)
-	s.fetchNextDetail(ctx)
 	s.fixIncompletePatches(ctx)
 	s.notify()
 
@@ -151,7 +150,6 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 			return
 		case <-ticker.C:
 			s.incrementalSync(ctx)
-			s.fetchNextDetail(ctx)
 			s.fixIncompletePatches(ctx)
 			s.notify()
 
@@ -526,28 +524,6 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 	}
 }
 
-func (s *Syncer) fetchNextDetail(ctx context.Context) {
-	ids := s.db.GetPatchesNeedingDetail()
-	if len(ids) == 0 {
-		return
-	}
-	id := ids[0]
-	detail, err := s.client.GetPatch(ctx, id)
-	if err != nil {
-		log.Printf("fetch detail %d: %v", id, err)
-		// Mark as fetched to avoid infinite retry on
-		// permanently missing patches (e.g. covers
-		// mistakenly saved as patches)
-		s.db.UpdatePatchDetail(id, "", "", "", "")
-		return
-	}
-	prefixes, _ := json.Marshal(detail.Prefixes)
-	headers, _ := json.Marshal(detail.Headers)
-	s.db.UpdatePatchDetail(id,
-		detail.Content, detail.Diff,
-		string(headers), string(prefixes))
-}
-
 func (s *Syncer) fetchSeriesDetail(
 	ctx context.Context, seriesID int,
 ) {
@@ -577,6 +553,11 @@ func (s *Syncer) fetchNextComments(ctx context.Context) {
 	}
 
 	patchID := ids[0]
+	row, _ := s.db.GetPatch(patchID)
+	if row != nil {
+		log.Printf("SYNC: fetchNextComments: patch %d %q",
+			patchID, row.Name)
+	}
 	comments, err := s.client.GetPatchComments(ctx, patchID)
 	if err != nil {
 		log.Printf("fetch comments %d: %v", patchID, err)

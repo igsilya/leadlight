@@ -200,6 +200,52 @@ func truncateLine(s string, width int) string {
 	return string(runes[:width-1]) + "…"
 }
 
+type CheckInfo struct {
+	Context   string
+	State     string
+	TargetURL string
+}
+
+func FormatChecks(checks []CheckInfo, width int) string {
+	if len(checks) == 0 {
+		return ""
+	}
+
+	maxCtx := 0
+	for _, c := range checks {
+		if len(c.Context) > maxCtx {
+			maxCtx = len(c.Context)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(mboxHeaderLabel.Render("Checks:"))
+	b.WriteByte('\n')
+	for _, c := range checks {
+		icon := "?"
+		style := checksPendingStyle
+		switch c.State {
+		case "success":
+			icon = "✓"
+			style = checksPassStyle
+		case "fail":
+			icon = "✗"
+			style = checksFailStyle
+		case "warning":
+			icon = "!"
+			style = checksPendingStyle
+		}
+		line := fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context)
+		if c.TargetURL != "" {
+			line += "  " + c.TargetURL
+		}
+		line = truncateLine(line, width)
+		b.WriteString(style.Render(line))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 func FormatMboxError(patchName string, err error) string {
 	return fmt.Sprintf(
 		"%s\n\n%s",

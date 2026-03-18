@@ -190,3 +190,19 @@ func colorForSeries(
 		return "yellow"
 	}
 }
+
+func GetChecksForPatch(d *db.DB, patchID int) []CheckInfo {
+	if d == nil {
+		return nil
+	}
+	rows := d.GetChecksForPatch(patchID)
+	checks := make([]CheckInfo, len(rows))
+	for i, r := range rows {
+		checks[i] = CheckInfo{
+			Context:   r.Context,
+			State:     r.State,
+			TargetURL: r.TargetURL,
+		}
+	}
+	return checks
+}

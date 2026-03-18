@@ -382,9 +382,8 @@ func (m *Model) refreshViewport() {
 	}
 	log.Printf("TUI: refreshViewport: %q got %d bytes",
 		row.Name, len(row.MboxContent))
-	parsed := ParseMbox(row.MboxContent)
-	formatted := FormatMbox(parsed, m.width)
-	m.viewportLines = splitLines(formatted)
+	checks := GetChecksForPatch(m.db, m.viewingPatchID)
+	m.buildViewportContent(row.MboxContent, checks)
 }
 
 func splitLines(content string) []string {

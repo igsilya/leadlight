@@ -417,6 +417,18 @@ func (m *Model) viewportScrollToEnd() {
 	}
 }
 
+func (m *Model) buildViewportContent(
+	mboxContent string, checks []CheckInfo,
+) {
+	parsed := ParseMbox(mboxContent)
+	formatted := FormatMbox(parsed, m.width)
+	checksSection := FormatChecks(checks, m.width)
+	if checksSection != "" {
+		formatted = checksSection + "\n" + formatted
+	}
+	m.viewportLines = splitLines(formatted)
+}
+
 func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	if m.db == nil {
 		log.Println("TUI: openPatchView: no DB")
@@ -445,9 +457,8 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	if row.MboxContent != "" {
 		log.Printf("TUI: mbox cached (%d bytes) for %q",
 			len(row.MboxContent), row.Name)
-		parsed := ParseMbox(row.MboxContent)
-		formatted := FormatMbox(parsed, m.width)
-		m.viewportLines = splitLines(formatted)
+		checks := GetChecksForPatch(m.db, patchID)
+		m.buildViewportContent(row.MboxContent, checks)
 	} else {
 		log.Printf("TUI: mbox not cached for %q, "+
 			"mboxURL=%q msgID=%q",

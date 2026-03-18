@@ -669,23 +669,6 @@ func (d *DB) GetOldestPatchDate() string {
 	return date
 }
 
-func (d *DB) GetPatchesNeedingDetail() []int {
-	rows, err := d.conn.Query(
-		"SELECT id FROM patches WHERE detail_fetched = 0 ORDER BY id")
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var ids []int
-	for rows.Next() {
-		var id int
-		rows.Scan(&id)
-		ids = append(ids, id)
-	}
-	return ids
-}
-
 func (d *DB) GetPatchesNeedingComments(
 	priorityStates []string,
 ) []int {
@@ -757,6 +740,27 @@ func (d *DB) ResetAllCommentsFetched(states []string) error {
 		strings.Join(placeholders, ","))
 	_, err := d.conn.Exec(query, args...)
 	return err
+}
+
+func (d *DB) GetChecksForPatch(patchID int) []CheckRow {
+	rows, err := d.conn.Query(`
+		SELECT id, patch_id, context, state,
+			COALESCE(target_url, ''), COALESCE(date, '')
+		FROM checks WHERE patch_id = ?
+		ORDER BY context`, patchID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var result []CheckRow
+	for rows.Next() {
+		var r CheckRow
+		rows.Scan(&r.ID, &r.PatchID, &r.Context,
+			&r.State, &r.TargetURL, &r.Date)
+		result = append(result, r)
+	}
+	return result
 }
 
 func (d *DB) GetComments(patchID int) []CommentRow {

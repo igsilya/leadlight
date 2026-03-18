@@ -567,31 +567,37 @@ func TestGetOldestPatchDate(t *testing.T) {
 	}
 }
 
-func TestGetPatchesNeedingDetail(t *testing.T) {
+func TestGetChecksForPatch(t *testing.T) {
 	d := openTestDB(t)
-
 	d.SavePatch(PatchRow{
 		ID: 100, Name: "p1",
-		Date: "2026-03-10T12:00:00", State: "new",
+		Date: "2026-03-10", State: "new",
 		Submitter: "Lorem",
 	})
-	d.SavePatch(PatchRow{
-		ID: 101, Name: "p2",
-		Date: "2026-03-10T12:00:00", State: "new",
-		Submitter: "Lorem",
+	d.InsertCheck(CheckRow{
+		ID: 1, PatchID: 100,
+		Context: "ci/build", State: "success",
+		TargetURL: "https://ci.example.com/1",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 2, PatchID: 100,
+		Context: "ci/test", State: "fail",
+		TargetURL: "https://ci.example.com/2",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 3, PatchID: 200,
+		Context: "ci/other", State: "success",
 	})
 
-	ids := d.GetPatchesNeedingDetail()
-	if len(ids) != 2 {
-		t.Fatalf("got %d, want 2", len(ids))
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2", len(checks))
 	}
-
-	// Mark one as fetched
-	d.UpdatePatchDetail(100, "c", "d", "{}", "[]")
-
-	ids = d.GetPatchesNeedingDetail()
-	if len(ids) != 1 || ids[0] != 101 {
-		t.Errorf("got %v, want [101]", ids)
+	if checks[0].Context != "ci/build" {
+		t.Errorf("[0].Context = %q", checks[0].Context)
+	}
+	if checks[1].State != "fail" {
+		t.Errorf("[1].State = %q", checks[1].State)
 	}
 }
 

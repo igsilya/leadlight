@@ -546,47 +546,6 @@ func TestProcessEvent_CoverCreated(t *testing.T) {
 	}
 }
 
-func TestFetchNextDetail_404MarksAsFetched(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(404)
-			w.Write([]byte(`{"detail":"Not found."}`))
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test",
-		States:  []string{"new"},
-	}
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {})
-
-	savePatch(d, 100, "test", "2026-03-10", "new")
-
-	// Verify it needs detail
-	ids := d.GetPatchesNeedingDetail()
-	if len(ids) != 1 || ids[0] != 100 {
-		t.Fatalf("needs detail = %v, want [100]", ids)
-	}
-
-	// Fetch detail — will get 404
-	s.fetchNextDetail(context.Background())
-
-	// Should be marked as fetched despite 404
-	ids = d.GetPatchesNeedingDetail()
-	if len(ids) != 0 {
-		t.Errorf("needs detail = %v, want empty (404 should mark as fetched)",
-			ids)
-	}
-}
-
 func TestFetchEvents_NotifiesPerPage(t *testing.T) {
 	pageNum := 0
 	var srvURL string
