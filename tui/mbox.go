@@ -125,7 +125,8 @@ func FormatMbox(p ParsedMbox, width int) string {
 
 	if p.Body != "" {
 		b.WriteByte('\n')
-		for _, line := range strings.Split(p.Body, "\n") {
+		body := replaceControlChars(p.Body)
+		for _, line := range strings.Split(body, "\n") {
 			b.WriteString(truncateLine(line, width))
 			b.WriteByte('\n')
 		}
@@ -133,7 +134,7 @@ func FormatMbox(p ParsedMbox, width int) string {
 
 	if p.Diff != "" {
 		b.WriteByte('\n')
-		b.WriteString(formatDiff(p.Diff, width))
+		b.WriteString(formatDiff(replaceControlChars(p.Diff), width))
 	}
 
 	return b.String()
@@ -187,6 +188,23 @@ func wrapHeaderValue(s string, width int) []string {
 		runes = runes[end:]
 	}
 	return lines
+}
+
+func replaceControlChars(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 && r != '\t' && r != '\n' }) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r < 0x20 && r != '\t' && r != '\n' {
+			b.WriteByte('^')
+			b.WriteRune(r + 0x40)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func truncateLine(s string, width int) string {
@@ -286,7 +304,8 @@ func FormatComment(c CommentInfo, width int) string {
 
 	if c.Content != "" {
 		b.WriteByte('\n')
-		for _, line := range strings.Split(c.Content, "\n") {
+		content := replaceControlChars(c.Content)
+		for _, line := range strings.Split(content, "\n") {
 			b.WriteString(truncateLine(line, width))
 			b.WriteByte('\n')
 		}

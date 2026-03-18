@@ -157,6 +157,53 @@ func TestFormatComment_Empty(t *testing.T) {
 	_ = FormatComment(c, 120)
 }
 
+func TestReplaceControlChars(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"normal text", "normal text"},
+		{" \f", " ^L"},
+		{"a\vb\fc", "a^Kb^Lc"},
+		{"\x00null", "^@null"},
+		{"tab\there", "tab\there"},
+		{"\nnewline", "\nnewline"},
+		{"clean", "clean"},
+	}
+	for _, tt := range tests {
+		got := replaceControlChars(tt.in)
+		if got != tt.want {
+			t.Errorf("replaceControlChars(%q) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestFormatMbox_FormFeed(t *testing.T) {
+	raw := "Subject: test\n\n" +
+		"body line\n" +
+		"diff --git a/f b/f\n" +
+		" }\n \f\n+new code\n"
+	p := ParseMbox(raw)
+	result := FormatMbox(p, 80)
+	if !strings.Contains(result, "^L") {
+		t.Error("form feed should render as ^L")
+	}
+	if strings.Contains(result, "\f") {
+		t.Error("raw form feed should not be in output")
+	}
+}
+
+func TestFormatComment_ControlChars(t *testing.T) {
+	c := CommentInfo{
+		Subject: "Re: test",
+		Content: "looks good\x0c\nAcked-by: Lorem <lorem@ipsum.example>",
+	}
+	result := FormatComment(c, 80)
+	if !strings.Contains(result, "^L") {
+		t.Error("form feed should render as ^L")
+	}
+}
+
 func TestFormatDiff_Colors(t *testing.T) {
 	diff := "diff --git a/f b/f\n" +
 		"--- a/f\n+++ b/f\n" +
