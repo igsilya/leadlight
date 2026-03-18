@@ -73,6 +73,8 @@ type cachedBgStyle struct {
 	checkFail lipgloss.Style
 	checkPend lipgloss.Style
 	checkZero lipgloss.Style
+	bgHex     string
+	fgHex     string
 }
 
 var bgStyles = map[string]*cachedBgStyle{}
@@ -85,6 +87,8 @@ func init() {
 		fg := lipgloss.Color(fgHex)
 
 		bgStyles[name] = &cachedBgStyle{
+			bgHex:     bgHex,
+			fgHex:     fgHex,
 			row:       lipgloss.NewStyle().Background(bg).Foreground(fg),
 			rowFaint:  lipgloss.NewStyle().Background(bg).Foreground(fg).Faint(true),
 			checkPass: lipgloss.NewStyle().Background(bg).Foreground(checksPassStyle.GetForeground()).Bold(true),

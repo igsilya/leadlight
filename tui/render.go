@@ -258,56 +258,91 @@ func (m *Model) renderSelectedRow(
 	raw := m.buildRawRow(item, widths)
 	fullRaw := indicator + raw
 	bgName := item.style.Background
-
-	if m.ChecksColIdx < 0 || checksWidth == 0 {
-		return m.renderGradientRow(fullRaw, bgName)
+	checksText := ""
+	if m.ChecksColIdx >= 0 && m.ChecksColIdx < len(item.data) {
+		checksText = item.data[m.ChecksColIdx]
 	}
+	return m.renderGradientRow(
+		fullRaw, bgName, checksStart, checksWidth, checksText)
+}
 
-	runes := []rune(fullRaw)
+func (m *Model) renderGradientRow(
+	rawRow, bgName string,
+	checksStart, checksWidth int, checksText string,
+) string {
+	runes := []rune(rawRow)
 	total := len(runes)
+	fill := min(
+		int(m.highlightProgress*float64(total)), total)
 
-	if checksStart >= total {
-		return m.renderGradientRow(fullRaw, bgName)
+	palette, ok := gradientPalettes[bgName]
+	if !ok {
+		palette = gradientPalettes["black"]
 	}
 
+	leftWidth := max(fill*40/100, 1)
+	rightWidth := max(fill*40/100, 1)
+	rightStart := total - rightWidth
+
+	checkColors := buildCheckColors(checksText)
 	checksEnd := checksStart + checksWidth
-	if checksEnd > total {
-		checksEnd = total
+
+	cached := bgStyles[bgName]
+	var flatBg, flatFg string
+	if cached != nil {
+		flatBg = cached.bgHex
+		flatFg = cached.fgHex
 	}
 
-	prefix := string(runes[:checksStart])
-	checksText := item.data[m.ChecksColIdx]
-	suffix := ""
-	if checksEnd < total {
-		suffix = string(runes[checksEnd:])
-	}
+	var b strings.Builder
+	b.Grow(total * 30)
 
-	gradientPart := m.renderGradientRow(prefix, bgName)
-	checksPart := renderChecksCellWithBg(
-		checksText, checksWidth, bgName)
-	suffixPart := ""
-	if suffix != "" {
-		if cached, ok := bgStyles[bgName]; ok {
-			suffixPart = cached.row.Render(suffix)
+	for pos := 0; pos < total; pos++ {
+		var bg, fg string
+		bold := false
+
+		if pos < leftWidth {
+			idx := pos * 255 / max(leftWidth-1, 1)
+			bg = palette[idx].bg
+			fg = palette[idx].fg
+			bold = true
+		} else if pos >= rightStart && rightStart > leftWidth {
+			idx := (total - 1 - pos) * 255 / max(rightWidth-1, 1)
+			bg = palette[idx].bg
+			fg = palette[idx].fg
+			bold = true
 		} else {
-			suffixPart = suffix
+			bg = flatBg
+			fg = flatFg
 		}
-	}
 
-	return gradientPart + checksPart + suffixPart
+		if pos >= checksStart && pos < checksEnd {
+			ci := pos - checksStart
+			if ci < len(checkColors) && checkColors[ci] != "" {
+				fg = checkColors[ci]
+				bold = true
+			}
+		}
+
+		style := lipgloss.NewStyle().
+			Background(lipgloss.Color(bg)).
+			Foreground(lipgloss.Color(fg))
+		if bold {
+			style = style.Bold(true)
+		}
+		b.WriteString(style.Render(string(runes[pos : pos+1])))
+	}
+	return b.String()
 }
 
 func renderChecksCellWithBg(text string, width int, bgName string) string {
 	cached := bgStyles[bgName]
-
 	if text == "-" || text == "" {
 		if cached != nil {
-			return cached.checkZero.Render(
-				renderCell("-", width))
+			return cached.checkZero.Render(renderCell("-", width))
 		}
 		return checksZeroStyle.Render(renderCell("-", width))
 	}
-
 	parts := strings.SplitN(text, "/", 3)
 	if len(parts) != 3 {
 		if cached != nil {
@@ -315,7 +350,6 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 		}
 		return renderCell(text, width)
 	}
-
 	var b strings.Builder
 	for i, part := range parts {
 		if i > 0 {
@@ -348,7 +382,6 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 			b.WriteString(styles[i].Render(part))
 		}
 	}
-
 	rendered := b.String()
 	visualWidth := lipgloss.Width(rendered)
 	if visualWidth < width {
@@ -362,40 +395,38 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 	return rendered
 }
 
-func (m *Model) renderGradientRow(
-	rawRow string, bgName string,
-) string {
-	runes := []rune(rawRow)
-	total := len(runes)
-	fill := min(
-		int(m.highlightProgress*float64(total)), total)
+var (
+	checkPassColor = "34"
+	checkFailColor = "196"
+	checkPendColor = "214"
+	checkZeroColor = "240"
+)
 
-	palette, ok := gradientPalettes[bgName]
-	if !ok {
-		palette = gradientPalettes["black"]
+func buildCheckColors(text string) []string {
+	if text == "" || text == "-" {
+		return nil
 	}
-
-	gradientWidth := max(fill*75/100, 1)
-
-	var b strings.Builder
-	b.Grow(total * 30)
-
-	for pos := 0; pos < gradientWidth && pos < total; pos++ {
-		idx := pos * 255 / max(gradientWidth-1, 1)
-		entry := palette[idx]
-		style := lipgloss.NewStyle().
-			Background(lipgloss.Color(entry.bg)).
-			Foreground(lipgloss.Color(entry.fg)).
-			Bold(true)
-		b.WriteString(style.Render(string(runes[pos : pos+1])))
+	parts := strings.SplitN(text, "/", 3)
+	if len(parts) != 3 {
+		return nil
 	}
-
-	if cached, ok := bgStyles[bgName]; ok && gradientWidth < total {
-		b.WriteString(cached.row.Render(string(runes[gradientWidth:])))
-	} else if gradientWidth < total {
-		b.WriteString(string(runes[gradientWidth:]))
+	fgColors := [3]string{
+		checkPassColor, checkFailColor, checkPendColor,
 	}
-	return b.String()
+	var result []string
+	for i, part := range parts {
+		if i > 0 {
+			result = append(result, checkZeroColor)
+		}
+		color := fgColors[i]
+		if part == "0" {
+			color = checkZeroColor
+		}
+		for range part {
+			result = append(result, color)
+		}
+	}
+	return result
 }
 
 func firstName(s string) string {
