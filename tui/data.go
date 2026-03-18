@@ -11,7 +11,7 @@ import (
 )
 
 var PatchworkColumns = []ColumnDef{
-	{Title: "ID", FixedWidth: 10},
+	{Title: "ID", FixedWidth: 9},
 	{Title: "Ver", FixedWidth: 4},
 	{Title: "Name"},
 	{Title: "State", FixedWidth: 8},
