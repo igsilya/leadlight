@@ -204,6 +204,27 @@ func TestFormatComment_ControlChars(t *testing.T) {
 	}
 }
 
+func TestIsQuotedLine(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"> quoted text", true},
+		{">> nested quote", true},
+		{" > indented quote", true},
+		{"not quoted", false},
+		{"", false},
+		{">", true},
+	}
+	for _, tt := range tests {
+		got := isQuotedLine(tt.in)
+		if got != tt.want {
+			t.Errorf("isQuotedLine(%q) = %v, want %v",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestFormatDiff_Colors(t *testing.T) {
 	diff := "diff --git a/f b/f\n" +
 		"--- a/f\n+++ b/f\n" +

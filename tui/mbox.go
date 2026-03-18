@@ -20,6 +20,8 @@ var (
 	diffHunkStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("6"))
 	diffHeaderStyle = lipgloss.NewStyle().Bold(true)
+	quotedLineStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("168"))
 )
 
 type ParsedMbox struct {
@@ -127,7 +129,12 @@ func FormatMbox(p ParsedMbox, width int) string {
 		b.WriteByte('\n')
 		body := replaceControlChars(p.Body)
 		for _, line := range strings.Split(body, "\n") {
-			b.WriteString(truncateLine(line, width))
+			line = truncateLine(line, width)
+			if isQuotedLine(line) {
+				b.WriteString(quotedLineStyle.Render(line))
+			} else {
+				b.WriteString(line)
+			}
 			b.WriteByte('\n')
 		}
 	}
@@ -205,6 +212,10 @@ func replaceControlChars(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func isQuotedLine(s string) bool {
+	return strings.HasPrefix(strings.TrimLeft(s, " "), ">")
 }
 
 func truncateLine(s string, width int) string {
@@ -306,7 +317,12 @@ func FormatComment(c CommentInfo, width int) string {
 		b.WriteByte('\n')
 		content := replaceControlChars(c.Content)
 		for _, line := range strings.Split(content, "\n") {
-			b.WriteString(truncateLine(line, width))
+			line = truncateLine(line, width)
+			if isQuotedLine(line) {
+				b.WriteString(quotedLineStyle.Render(line))
+			} else {
+				b.WriteString(line)
+			}
 			b.WriteByte('\n')
 		}
 	}
