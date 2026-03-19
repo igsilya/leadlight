@@ -5,26 +5,6 @@ import (
 	"mime"
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	mboxHeaderLabel = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("15"))
-	mboxHeaderValue = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-	diffAddStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("34"))
-	diffDelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
-	diffHunkStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6"))
-	diffHeaderStyle = lipgloss.NewStyle().Bold(true)
-	quotedLineStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("168"))
-	wrapIndicatorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("242"))
 )
 
 type ParsedMbox struct {

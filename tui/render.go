@@ -263,21 +263,27 @@ func (m *Model) renderSelectedRow(
 		checksText = item.data[m.ChecksColIdx]
 	}
 	return m.renderGradientRow(
-		fullRaw, bgName, checksStart, checksWidth, checksText)
+		fullRaw, bgName, checksStart, checksWidth,
+		checksText, item.isSubRow)
 }
 
 func (m *Model) renderGradientRow(
 	rawRow, bgName string,
-	checksStart, checksWidth int, checksText string,
+	checksStart, checksWidth int,
+	checksText string, isSubRow bool,
 ) string {
 	runes := []rune(rawRow)
 	total := len(runes)
 	fill := min(
 		int(m.highlightProgress*float64(total)), total)
 
-	palette, ok := gradientPalettes[bgName]
+	palettes := gradientPalettes
+	if isSubRow {
+		palettes = subRowGradientPalettes
+	}
+	palette, ok := palettes[bgName]
 	if !ok {
-		palette = gradientPalettes["black"]
+		palette = palettes["black"]
 	}
 
 	leftWidth := max(fill*40/100, 1)
@@ -289,8 +295,12 @@ func (m *Model) renderGradientRow(
 
 	cached := bgStyles[bgName]
 	var flatBg, flatFg string
-	if cached != nil {
+	if isSubRow {
+		flatBg = termBgHex
+	} else if cached != nil {
 		flatBg = cached.bgHex
+	}
+	if cached != nil {
 		flatFg = cached.fgHex
 	}
 
@@ -394,13 +404,6 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 	}
 	return rendered
 }
-
-var (
-	checkPassColor = "34"
-	checkFailColor = "196"
-	checkPendColor = "214"
-	checkZeroColor = "240"
-)
 
 func buildCheckColors(text string) []string {
 	if text == "" || text == "-" {
@@ -624,12 +627,6 @@ func (m *Model) logHelp() lipgloss.Style {
 	}
 	return helpDimStyle
 }
-
-var logSepStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("240"))
-
-var logLineStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("245"))
 
 func (m *Model) renderLogConsole(height int) string {
 	var out strings.Builder

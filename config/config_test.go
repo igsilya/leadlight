@@ -370,6 +370,35 @@ func TestLoad_FullConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_Theme(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"pw.server":       "https://pw.example.com/api/1.2",
+		"pw.project":      "lorem",
+		"leadlight.theme": "light",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme != "light" {
+		t.Errorf("Theme = %q, want light", cfg.Theme)
+	}
+}
+
+func TestLoad_ThemeDefault(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"pw.server":  "https://pw.example.com/api/1.2",
+		"pw.project": "lorem",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme != "" {
+		t.Errorf("Theme = %q, want empty (auto)", cfg.Theme)
+	}
+}
+
 func TestLoad_MinimalConfig(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
 		"pw.server":  "https://pw2.example.com/api/1.3/",

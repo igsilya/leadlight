@@ -42,6 +42,10 @@ func main() {
 
 	client := api.NewClient(cfg)
 
+	if cfg.Theme != "" {
+		tui.SetTheme(cfg.Theme)
+	}
+
 	m := tui.NewModel(database, cfg.States, cfg.Token)
 	m.LogBuf = logBuf
 	p := tea.NewProgram(m, tea.WithAltScreen())

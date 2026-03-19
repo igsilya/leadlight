@@ -17,6 +17,7 @@ type Config struct {
 	States      []string
 	LoreURL     string
 	MailArchive string
+	Theme       string
 	BaseURL     string
 	APIVersion  string
 }
@@ -31,6 +32,7 @@ func Load(dir string) (*Config, error) {
 		DBPath:      gitConfigGet(dir, "leadlight.db"),
 		LoreURL:     gitConfigGet(dir, "leadlight.lore"),
 		MailArchive: gitConfigGet(dir, "leadlight.mailarchive"),
+		Theme:       gitConfigGet(dir, "leadlight.theme"),
 	}
 
 	if cfg.DBPath == "" {
