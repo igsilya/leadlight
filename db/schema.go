@@ -105,6 +105,18 @@ CREATE TABLE IF NOT EXISTS sync_state (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS tags (
+    patch_id   INTEGER DEFAULT 0,
+    cover_id   INTEGER DEFAULT 0,
+    comment_id INTEGER DEFAULT 0,
+    source     TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    identity   TEXT NOT NULL,
+    UNIQUE(patch_id, cover_id, source, type, identity)
+);
+CREATE INDEX IF NOT EXISTS idx_tags_patch ON tags(patch_id);
+CREATE INDEX IF NOT EXISTS idx_tags_cover ON tags(cover_id);
 `
 
 const recountChecks = `

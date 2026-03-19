@@ -728,6 +728,78 @@ func (d *DB) GetCoversNeedingDetail() []int {
 	return ids
 }
 
+type TagRow struct {
+	PatchID   int
+	CoverID   int
+	CommentID int
+	Source    string
+	Type      string
+	Identity  string
+}
+
+func (d *DB) ClearTags(patchID, coverID int, source string) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(`DELETE FROM tags
+		WHERE patch_id = ? AND cover_id = ? AND source = ?`,
+		patchID, coverID, source)
+}
+
+func (d *DB) SaveTags(
+	patchID, coverID, commentID int,
+	source string, tags map[string]map[string]bool,
+) {
+	d.ClearTags(patchID, coverID, source)
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	for tagType, identities := range tags {
+		for identity := range identities {
+			d.conn.Exec(`INSERT OR IGNORE INTO tags
+				(patch_id, cover_id, comment_id,
+				 source, type, identity)
+				VALUES (?,?,?,?,?,?)`,
+				patchID, coverID, commentID,
+				source, tagType, identity)
+		}
+	}
+}
+
+func (d *DB) GetTagsForSeries(seriesID int) []TagRow {
+	rows, err := d.conn.Query(`
+		SELECT patch_id, cover_id, comment_id,
+			source, type, identity
+		FROM tags
+		WHERE patch_id IN
+			(SELECT id FROM patches WHERE series_id = ?)
+		   OR cover_id IN
+			(SELECT id FROM covers WHERE series_id = ?)`,
+		seriesID, seriesID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var result []TagRow
+	for rows.Next() {
+		var r TagRow
+		rows.Scan(&r.PatchID, &r.CoverID, &r.CommentID,
+			&r.Source, &r.Type, &r.Identity)
+		result = append(result, r)
+	}
+	return result
+}
+
+func (d *DB) GetCommentCountForSeries(seriesID int) int {
+	var count int
+	d.conn.QueryRow(`
+		SELECT COUNT(*) FROM comments
+		WHERE patch_id IN
+			(SELECT id FROM patches WHERE series_id = ?)
+		   OR cover_id IN
+			(SELECT id FROM covers WHERE series_id = ?)`,
+		seriesID, seriesID).Scan(&count)
+	return count
+}
+
 func (d *DB) GetAllPatchNames() map[int]string {
 	return d.getAllNames("patches")
 }

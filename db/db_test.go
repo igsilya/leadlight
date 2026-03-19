@@ -475,6 +475,162 @@ func TestSaveMaintainers(t *testing.T) {
 	}
 }
 
+func TestSaveTags(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	tags := map[string]map[string]bool{
+		"acked":    {"Lorem <lorem@ipsum.example>": true},
+		"reviewed": {"Dolor <dolor@amet.example>": true},
+	}
+	d.SaveTags(100, 0, 500, "comment", tags)
+
+	rows := d.GetTagsForSeries(50)
+	if len(rows) != 2 {
+		t.Fatalf("len=%d, want 2", len(rows))
+	}
+}
+
+func TestSaveTags_ClearsOnResave(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+
+	tags1 := map[string]map[string]bool{
+		"acked": {"Lorem <lorem@ipsum.example>": true},
+	}
+	d.SaveTags(100, 0, 0, "original", tags1)
+
+	rows := d.GetTagsForSeries(50)
+	if len(rows) != 1 {
+		t.Fatalf("after first save: len=%d", len(rows))
+	}
+
+	tags2 := map[string]map[string]bool{
+		"reviewed": {"Dolor <dolor@amet.example>": true},
+	}
+	d.SaveTags(100, 0, 0, "original", tags2)
+
+	rows = d.GetTagsForSeries(50)
+	if len(rows) != 1 {
+		t.Fatalf("after resave: len=%d, want 1", len(rows))
+	}
+	if rows[0].Type != "reviewed" {
+		t.Errorf("type=%q, want reviewed", rows[0].Type)
+	}
+}
+
+func TestSaveTags_Cover(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover", Date: "2026-03-10",
+	})
+	tags := map[string]map[string]bool{
+		"acked": {"Lorem <lorem@ipsum.example>": true},
+	}
+	d.SaveTags(0, 99, 600, "comment", tags)
+
+	rows := d.GetTagsForSeries(50)
+	if len(rows) != 1 {
+		t.Fatalf("len=%d, want 1", len(rows))
+	}
+	if rows[0].CoverID != 99 {
+		t.Errorf("CoverID=%d", rows[0].CoverID)
+	}
+	if rows[0].CommentID != 600 {
+		t.Errorf("CommentID=%d", rows[0].CommentID)
+	}
+}
+
+func TestGetTagsForSeries(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "p2",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover", Date: "2026-03-10",
+	})
+
+	d.SaveTags(100, 0, 0, "original", map[string]map[string]bool{
+		"acked": {"Lorem <lorem@ex>": true},
+	})
+	d.SaveTags(101, 0, 500, "comment", map[string]map[string]bool{
+		"reviewed": {"Dolor <dolor@ex>": true},
+	})
+	d.SaveTags(0, 99, 600, "comment", map[string]map[string]bool{
+		"acked": {"Sit <sit@ex>": true},
+	})
+
+	rows := d.GetTagsForSeries(50)
+	if len(rows) != 3 {
+		t.Fatalf("len=%d, want 3", len(rows))
+	}
+}
+
+func TestGetTagsForSeries_Empty(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+
+	rows := d.GetTagsForSeries(50)
+	if len(rows) != 0 {
+		t.Errorf("len=%d, want 0", len(rows))
+	}
+}
+
+func TestGetCommentCountForSeries(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover", Date: "2026-03-10",
+	})
+
+	d.InsertComment(CommentRow{
+		ID: 500, PatchID: 100, Submitter: "Dolor",
+		Date: "2026-03-11", Subject: "Re: p1",
+		Content: "lorem ipsum",
+	})
+	d.InsertComment(CommentRow{
+		ID: 501, PatchID: 100, Submitter: "Sit",
+		Date: "2026-03-12", Subject: "Re: p1",
+		Content: "dolor amet",
+	})
+	d.InsertComment(CommentRow{
+		ID: 600, CoverID: 99, Submitter: "Amet",
+		Date: "2026-03-11", Subject: "Re: cover",
+		Content: "consectetur",
+	})
+
+	count := d.GetCommentCountForSeries(50)
+	if count != 3 {
+		t.Errorf("count=%d, want 3", count)
+	}
+
+	count = d.GetCommentCountForSeries(999)
+	if count != 0 {
+		t.Errorf("nonexistent series: count=%d, want 0", count)
+	}
+}
+
 func TestGetPatchesNeedingDetail(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{
