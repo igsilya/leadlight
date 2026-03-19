@@ -732,14 +732,21 @@ func (s *Syncer) checkArchiveMonth(
 	}
 
 	patchNames := s.db.GetAllPatchNames()
-	matchedIDs := api.MatchPatchSubjects(newMsgs, patchNames)
-	for _, id := range matchedIDs {
+	matchedPatchIDs := api.MatchPatchSubjects(newMsgs, patchNames)
+	for _, id := range matchedPatchIDs {
 		s.db.ResetCommentsFetched(id)
 	}
 
-	if len(matchedIDs) > 0 {
-		log.Printf("archive: %d new messages, %d patches to re-check",
-			len(newMsgs), len(matchedIDs))
+	coverNames := s.db.GetAllCoverNames()
+	matchedCoverIDs := api.MatchPatchSubjects(newMsgs, coverNames)
+	for _, id := range matchedCoverIDs {
+		s.db.ResetCoverCommentsFetched(id)
+	}
+
+	if len(matchedPatchIDs) > 0 || len(matchedCoverIDs) > 0 {
+		log.Printf(
+			"archive: %d new messages, %d patches, %d covers to re-check",
+			len(newMsgs), len(matchedPatchIDs), len(matchedCoverIDs))
 	}
 
 	maxNum := lastSeen

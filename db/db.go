@@ -693,8 +693,16 @@ func (d *DB) GetIncompletePatches() []int {
 }
 
 func (d *DB) GetAllPatchNames() map[int]string {
+	return d.getAllNames("patches")
+}
+
+func (d *DB) GetAllCoverNames() map[int]string {
+	return d.getAllNames("covers")
+}
+
+func (d *DB) getAllNames(table string) map[int]string {
 	rows, err := d.conn.Query(
-		"SELECT id, name FROM patches")
+		"SELECT id, name FROM " + table)
 	if err != nil {
 		return nil
 	}

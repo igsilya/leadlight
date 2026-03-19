@@ -475,6 +475,31 @@ func TestSaveMaintainers(t *testing.T) {
 	}
 }
 
+func TestGetAllCoverNames(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "[lorem,0/3] Dolor sit amet",
+		Date: "2026-03-10",
+	})
+	d.SaveCover(CoverRow{
+		ID: 100, SeriesID: 51,
+		Name: "[lorem,0/2] Consectetur adipiscing",
+		Date: "2026-03-11",
+	})
+
+	names := d.GetAllCoverNames()
+	if len(names) != 2 {
+		t.Fatalf("len = %d, want 2", len(names))
+	}
+	if names[99] != "[lorem,0/3] Dolor sit amet" {
+		t.Errorf("[99] = %q", names[99])
+	}
+	if names[100] != "[lorem,0/2] Consectetur adipiscing" {
+		t.Errorf("[100] = %q", names[100])
+	}
+}
+
 func TestGetDelegateDisplayNames(t *testing.T) {
 	d := openTestDB(t)
 

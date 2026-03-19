@@ -1284,6 +1284,54 @@ func TestCheckMailArchive_SkipsOldMessages(t *testing.T) {
 	}
 }
 
+func TestCheckMailArchive_CoverComments(t *testing.T) {
+	archiveHTML := `<HTML><BODY><ul>
+<LI><A HREF="300.html">Re: [dev] [PATCH 0/3] Lorem ipsum dolor
+</A><A NAME="300">&nbsp;</A>
+<I>Dolor</I>
+</ul></BODY></HTML>`
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(archiveHTML))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 3)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "[dev,0/3] Lorem ipsum dolor",
+		Date: "2026-03-10",
+	})
+	d.MarkCoverCommentsFetched(99)
+
+	cfg := &config.Config{
+		Server:      srv.URL,
+		Project:     "test",
+		APIVersion:  "1.2",
+		MailArchive: srv.URL + "/",
+		States:      []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+
+	s := NewSyncer(client, d, cfg, func() {})
+	s.checkMailArchive(context.Background())
+
+	ids := d.GetCoversNeedingComments()
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got[99] {
+		t.Error("cover 99 should be reset (matches archive)")
+	}
+}
+
 func TestNeedsArchiveMonitoring(t *testing.T) {
 	tests := []struct {
 		version string
