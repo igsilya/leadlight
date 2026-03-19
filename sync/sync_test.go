@@ -1257,6 +1257,173 @@ func TestFetchNextDetail_PatchThenCover(t *testing.T) {
 	}
 }
 
+func TestUpdatePatchTagsFromComments_SavesTags(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/patches/100/comments/" {
+				json.NewEncoder(w).Encode([]api.Comment{
+					{
+						ID:      500,
+						Subject: "Re: Lorem",
+						Date:    "2026-03-11T09:00:00",
+						Submitter: api.Person{
+							Name: "Dolor Amet",
+						},
+						Content: "Acked-by: Dolor Amet <dolor@amet.example>\nReviewed-by: Sit <sit@ex>",
+					},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	s.fetchCommentsForPatch(context.Background(), 100)
+
+	tags := d.GetTagsForSeries(50)
+	if len(tags) != 2 {
+		t.Fatalf("tags len=%d, want 2", len(tags))
+	}
+	hasAcked, hasReviewed := false, false
+	for _, tag := range tags {
+		if tag.Type == "acked" && tag.Source == "comment" {
+			hasAcked = true
+		}
+		if tag.Type == "reviewed" && tag.Source == "comment" {
+			hasReviewed = true
+		}
+	}
+	if !hasAcked {
+		t.Error("missing acked tag")
+	}
+	if !hasReviewed {
+		t.Error("missing reviewed tag")
+	}
+}
+
+func TestUpdateCoverTagsFromComments(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/covers/99/comments/" {
+				json.NewEncoder(w).Encode([]api.Comment{
+					{
+						ID:      600,
+						Subject: "Re: Cover",
+						Date:    "2026-03-11T10:00:00",
+						Submitter: api.Person{
+							Name: "Dolor Amet",
+						},
+						Content: "Acked-by: Dolor Amet <dolor@amet.example>",
+					},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover", Date: "2026-03-10",
+	})
+
+	s.fetchCommentsForCover(context.Background(), 99)
+
+	tags := d.GetTagsForSeries(50)
+	if len(tags) != 1 {
+		t.Fatalf("tags len=%d, want 1", len(tags))
+	}
+	if tags[0].CoverID != 99 || tags[0].Source != "comment" || tags[0].Type != "acked" {
+		t.Errorf("unexpected tag: %+v", tags[0])
+	}
+}
+
+func TestFetchNextDetail_ExtractsOriginalTags(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/patches/100/" {
+				json.NewEncoder(w).Encode(api.PatchDetail{
+					Patch: api.Patch{
+						ID: 100, Name: "p1", Date: "2026-03-10",
+					},
+					Content: "Lorem ipsum dolor sit amet\n\n" +
+						"Acked-by: Dolor <dolor@ex>\n" +
+						"Reviewed-by: Sit <sit@ex>\n",
+					Diff:     "diff --git a/f b/f\n",
+					Headers:  map[string]interface{}{},
+					Prefixes: []string{},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	s.fetchNextDetail(context.Background())
+
+	tags := d.GetTagsForSeries(50)
+	if len(tags) != 2 {
+		t.Fatalf("tags len=%d, want 2", len(tags))
+	}
+	for _, tag := range tags {
+		if tag.Source != "original" {
+			t.Errorf("source=%q, want original", tag.Source)
+		}
+		if tag.PatchID != 100 {
+			t.Errorf("patch_id=%d, want 100", tag.PatchID)
+		}
+	}
+}
+
+func TestFetchNextDetail_CoverExtractsOriginalTags(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/covers/99/" {
+				json.NewEncoder(w).Encode(api.CoverDetail{
+					Cover: api.Cover{
+						ID: 99, Name: "cover", Date: "2026-03-10",
+					},
+					Content: "Cover body\n\n" +
+						"Tested-by: Lorem <lorem@ex>\n",
+					Headers: map[string]interface{}{},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover", Date: "2026-03-10",
+	})
+
+	s.fetchNextDetail(context.Background())
+
+	tags := d.GetTagsForSeries(50)
+	if len(tags) != 1 {
+		t.Fatalf("tags len=%d, want 1", len(tags))
+	}
+	if tags[0].CoverID != 99 || tags[0].Source != "original" || tags[0].Type != "tested" {
+		t.Errorf("unexpected tag: %+v", tags[0])
+	}
+}
+
 func TestFilterHeaders(t *testing.T) {
 	raw := map[string]interface{}{
 		"From":                    "Lorem Ipsum <lorem@ipsum.example>",

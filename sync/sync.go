@@ -283,9 +283,6 @@ func (s *Syncer) fetchListPages(ctx context.Context) {
 					p.SeriesID, p.SeriesName, "", 0)
 			}
 
-			s.db.UpdatePatchTags(p.PatchID,
-				p.AckedBy, p.Fixes,
-				p.ReviewedBy, p.TestedBy)
 			s.db.UpdatePatchChecks(p.PatchID,
 				p.ChecksPass, p.ChecksFail, p.ChecksWarn)
 
@@ -633,6 +630,7 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) {
 		}
 		delete(s.commentSkip, coverID)
 		s.saveComments(comments, 0, coverID)
+		s.updateCoverTagsFromComments(coverID)
 		s.db.MarkCoverCommentsFetched(coverID)
 		return
 	}
@@ -666,6 +664,7 @@ func (s *Syncer) fetchCommentsForCover(ctx context.Context, coverID int) {
 	}
 	delete(s.commentSkip, coverID)
 	s.saveComments(comments, 0, coverID)
+	s.updateCoverTagsFromComments(coverID)
 	s.db.MarkCoverCommentsFetched(coverID)
 }
 
@@ -766,6 +765,10 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 		s.db.UpdatePatchDetail(id,
 			detail.Content, detail.Diff,
 			string(headers), string(prefixes))
+		if detail.Content != "" {
+			tags := extractReviewTags(detail.Content)
+			s.db.SaveTags(id, 0, 0, "original", tags)
+		}
 		return
 	}
 
@@ -786,6 +789,10 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 		hdrs, _ := json.Marshal(cover.Headers)
 		s.db.UpdateCoverDetail(id,
 			cover.Content, string(hdrs))
+		if cover.Content != "" {
+			tags := extractReviewTags(cover.Content)
+			s.db.SaveTags(0, id, 0, "original", tags)
+		}
 		return
 	}
 }
@@ -845,15 +852,15 @@ func (s *Syncer) saveComments(comments []api.Comment, patchID, coverID int) {
 	}
 }
 
-func (s *Syncer) updatePatchTagsFromComments(
-	patchID int,
-) {
+func (s *Syncer) updatePatchTagsFromComments(patchID int) {
 	comments := s.db.GetComments(patchID)
 	merged := tagMap{}
 
+	s.db.ClearTags(patchID, 0, "comment")
 	for _, c := range comments {
 		tags := extractReviewTags(c.Content)
 		merged = mergeTagMaps(merged, tags)
+		s.db.SaveTags(patchID, 0, c.ID, "comment", tags)
 	}
 
 	s.db.UpdatePatchTags(patchID,
@@ -862,6 +869,15 @@ func (s *Syncer) updatePatchTagsFromComments(
 		len(merged["reviewed"]),
 		len(merged["tested"]),
 	)
+}
+
+func (s *Syncer) updateCoverTagsFromComments(coverID int) {
+	comments := s.db.GetCommentsForCover(coverID)
+	s.db.ClearTags(0, coverID, "comment")
+	for _, c := range comments {
+		tags := extractReviewTags(c.Content)
+		s.db.SaveTags(0, coverID, c.ID, "comment", tags)
+	}
 }
 
 func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) error {
