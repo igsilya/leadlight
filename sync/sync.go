@@ -23,12 +23,12 @@ type Syncer struct {
 	db          *db.DB
 	cfg         *config.Config
 	notify      func()
-	priorityC   chan int
 	mboxC       chan MboxRequest
 	updateC     chan PatchUpdateRequest
 	commentC    chan CommentRequest
 	syncNowC    chan struct{}
 	commentSkip map[int]time.Time
+	detailSkip  map[int]time.Time
 }
 
 type MboxRequest struct {
@@ -65,19 +65,12 @@ func NewSyncer(
 		db:          d,
 		cfg:         cfg,
 		notify:      notify,
-		priorityC:   make(chan int, 16),
 		mboxC:       make(chan MboxRequest, 4),
 		updateC:     make(chan PatchUpdateRequest, 4),
 		commentC:    make(chan CommentRequest, 4),
 		syncNowC:    make(chan struct{}, 1),
 		commentSkip: map[int]time.Time{},
-	}
-}
-
-func (s *Syncer) PrioritizeSeries(seriesID int) {
-	select {
-	case s.priorityC <- seriesID:
-	default:
+		detailSkip:  map[int]time.Time{},
 	}
 }
 
@@ -118,6 +111,7 @@ func (s *Syncer) RequestSync() {
 const (
 	syncInterval      = 5 * time.Minute
 	commentInterval   = 5 * time.Second
+	detailInterval    = 5 * time.Second
 	archiveInterval   = 5 * time.Minute
 	maintainerRefresh = 24 * time.Hour
 )
@@ -134,11 +128,12 @@ func (s *Syncer) Run(ctx context.Context) {
 	}
 
 	var wg gosync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 	go s.runUserRequests(ctx, &wg)
 	go s.runSyncLoop(ctx, &wg)
 	go s.runCommentLoop(ctx, &wg)
 	go s.runArchiveLoop(ctx, &wg)
+	go s.runDetailLoop(ctx, &wg)
 	wg.Wait()
 }
 
@@ -164,9 +159,6 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 			log.Printf("SYNC: update request for patch %d",
 				req.PatchID)
 			req.ResultC <- s.handlePatchUpdate(ctx, req)
-		case seriesID := <-s.priorityC:
-			s.fetchSeriesDetail(ctx, seriesID)
-			s.notify()
 		case req := <-s.commentC:
 			if req.IsCover {
 				s.fetchCommentsForCover(ctx, req.ID)
@@ -586,7 +578,6 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 		if err != nil {
 			log.Printf("SYNC: fixIncomplete patch %d: %v",
 				id, err)
-			s.db.UpdatePatchDetail(id, "", "", "", "")
 			return
 		}
 		log.Printf("SYNC: fixIncomplete patch %d %q -> series %v",
@@ -596,28 +587,6 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 			s.db.SaveSeriesSummary(
 				ss.ID, ss.Name, ss.Date, ss.Version)
 		}
-	}
-}
-
-func (s *Syncer) fetchSeriesDetail(
-	ctx context.Context, seriesID int,
-) {
-	patches := s.db.GetPatchesForSeries(seriesID)
-	for _, p := range patches {
-		if p.DetailFetched {
-			continue
-		}
-		detail, err := s.client.GetPatch(ctx, p.ID)
-		if err != nil {
-			log.Printf("fetch detail %d: %v", p.ID, err)
-			s.db.UpdatePatchDetail(p.ID, "", "", "", "")
-			continue
-		}
-		prefixes, _ := json.Marshal(detail.Prefixes)
-		headers, _ := json.Marshal(detail.Headers)
-		s.db.UpdatePatchDetail(p.ID,
-			detail.Content, detail.Diff,
-			string(headers), string(prefixes))
 	}
 }
 
@@ -756,6 +725,69 @@ func (s *Syncer) checkArchiveMonth(
 		}
 	}
 	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
+}
+
+func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
+	defer wg.Done()
+
+	s.fetchNextDetail(ctx)
+	s.notify()
+
+	ticker := time.NewTicker(detailInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.fetchNextDetail(ctx)
+		}
+	}
+}
+
+func (s *Syncer) fetchNextDetail(ctx context.Context) {
+	patchIDs := s.db.GetPatchesNeedingDetail()
+	for _, id := range patchIDs {
+		if t, ok := s.detailSkip[id]; ok &&
+			time.Since(t) < commentSkipCooldown {
+			continue
+		}
+		log.Printf("SYNC: fetchNextDetail: patch %d", id)
+		detail, err := s.client.GetPatch(ctx, id)
+		if err != nil {
+			log.Printf("fetch detail %d: %v", id, err)
+			s.detailSkip[id] = time.Now()
+			return
+		}
+		delete(s.detailSkip, id)
+		prefixes, _ := json.Marshal(detail.Prefixes)
+		headers, _ := json.Marshal(detail.Headers)
+		s.db.UpdatePatchDetail(id,
+			detail.Content, detail.Diff,
+			string(headers), string(prefixes))
+		return
+	}
+
+	coverIDs := s.db.GetCoversNeedingDetail()
+	for _, id := range coverIDs {
+		if t, ok := s.detailSkip[id]; ok &&
+			time.Since(t) < commentSkipCooldown {
+			continue
+		}
+		log.Printf("SYNC: fetchNextDetail: cover %d", id)
+		cover, err := s.client.GetCover(ctx, id)
+		if err != nil {
+			log.Printf("fetch cover detail %d: %v", id, err)
+			s.detailSkip[id] = time.Now()
+			return
+		}
+		delete(s.detailSkip, id)
+		hdrs, _ := json.Marshal(cover.Headers)
+		s.db.UpdateCoverDetail(id,
+			cover.Content, string(hdrs))
+		return
+	}
 }
 
 var keepHeaders = []string{

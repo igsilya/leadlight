@@ -475,6 +475,42 @@ func TestSaveMaintainers(t *testing.T) {
 	}
 }
 
+func TestGetPatchesNeedingDetail(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, Name: "p2", Date: "2026-03-11",
+		State: "new", Submitter: "Lorem",
+	})
+	d.UpdatePatchDetail(100, "body", "diff", "{}", "[]")
+
+	ids := d.GetPatchesNeedingDetail()
+	if len(ids) != 1 || ids[0] != 101 {
+		t.Errorf("got %v, want [101]", ids)
+	}
+}
+
+func TestGetCoversNeedingDetail(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover1", Date: "2026-03-10",
+	})
+	d.SaveCover(CoverRow{
+		ID: 100, SeriesID: 51,
+		Name: "cover2", Date: "2026-03-11",
+	})
+	d.UpdateCoverDetail(99, "body", "{}")
+
+	ids := d.GetCoversNeedingDetail()
+	if len(ids) != 1 || ids[0] != 100 {
+		t.Errorf("got %v, want [100]", ids)
+	}
+}
+
 func TestGetAllCoverNames(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveCover(CoverRow{

@@ -163,5 +163,7 @@ func migrate(db *sql.DB) error {
 			 (key, value) VALUES
 			 ('comment_schema', ?)`, commentSchemaVersion)
 	}
+	db.Exec(`UPDATE patches SET detail_fetched = 0
+		WHERE detail_fetched = 1 AND content = ''`)
 	return nil
 }

@@ -692,6 +692,42 @@ func (d *DB) GetIncompletePatches() []int {
 	return ids
 }
 
+func (d *DB) GetPatchesNeedingDetail() []int {
+	rows, err := d.conn.Query(`
+		SELECT id FROM patches
+		WHERE COALESCE(detail_fetched, 0) = 0
+		ORDER BY id DESC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (d *DB) GetCoversNeedingDetail() []int {
+	rows, err := d.conn.Query(`
+		SELECT id FROM covers
+		WHERE COALESCE(detail_fetched, 0) = 0
+		ORDER BY id DESC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (d *DB) GetAllPatchNames() map[int]string {
 	return d.getAllNames("patches")
 }

@@ -1062,6 +1062,201 @@ func TestFetchNextComments_CooldownExpires(t *testing.T) {
 	}
 }
 
+func TestFetchNextDetail_Patch(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/patches/100/" {
+				json.NewEncoder(w).Encode(api.PatchDetail{
+					Patch: api.Patch{
+						ID:   100,
+						Name: "Lorem ipsum",
+						Date: "2026-03-10",
+					},
+					Content:  "Commit message body\n\nSigned-off-by: Lorem",
+					Diff:     "diff --git a/f b/f\n",
+					Headers:  map[string]interface{}{},
+					Prefixes: []string{},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	savePatch(d, 100, "Lorem ipsum", "2026-03-10", "new")
+
+	ids := d.GetPatchesNeedingDetail()
+	if len(ids) != 1 {
+		t.Fatalf("before: %v", ids)
+	}
+
+	s.fetchNextDetail(context.Background())
+
+	ids = d.GetPatchesNeedingDetail()
+	if len(ids) != 0 {
+		t.Errorf("after: %v, want empty", ids)
+	}
+}
+
+func TestFetchNextDetail_ErrorNoMark(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(500)
+		})
+
+	s, d := setupSyncer(t, handler)
+	savePatch(d, 100, "Lorem ipsum", "2026-03-10", "new")
+
+	s.fetchNextDetail(context.Background())
+
+	ids := d.GetPatchesNeedingDetail()
+	if len(ids) != 1 || ids[0] != 100 {
+		t.Errorf("should stay unfetched: %v", ids)
+	}
+}
+
+func TestFetchNextDetail_SkipsFailed(t *testing.T) {
+	var called []string
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			called = append(called, r.URL.Path)
+			if r.URL.Path == "/patches/200/" {
+				w.WriteHeader(500)
+				return
+			}
+			if r.URL.Path == "/patches/100/" {
+				json.NewEncoder(w).Encode(api.PatchDetail{
+					Patch: api.Patch{
+						ID: 100, Name: "p1", Date: "2026-03-10",
+					},
+					Content: "body", Diff: "diff",
+					Headers:  map[string]interface{}{},
+					Prefixes: []string{},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	savePatch(d, 200, "p2", "2026-03-11", "new")
+
+	// First call hits 200 (higher ID, returned first), fails
+	s.fetchNextDetail(context.Background())
+	if len(called) != 1 || called[0] != "/patches/200/" {
+		t.Fatalf("first call: %v", called)
+	}
+
+	// Second call skips 200 (cooldown), fetches 100
+	called = nil
+	s.fetchNextDetail(context.Background())
+	if len(called) != 1 || called[0] != "/patches/100/" {
+		t.Errorf("second call should skip 200: %v", called)
+	}
+
+	// Third call: 200 still on cooldown, 100 already fetched
+	called = nil
+	s.fetchNextDetail(context.Background())
+	if len(called) != 0 {
+		t.Errorf("third call should do nothing: %v", called)
+	}
+}
+
+func TestFetchNextDetail_Cover(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/covers/99/" {
+				json.NewEncoder(w).Encode(api.CoverDetail{
+					Cover: api.Cover{
+						ID:   99,
+						Name: "Lorem cover",
+						Date: "2026-03-10",
+					},
+					Content: "Cover body text",
+					Headers: map[string]interface{}{},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "Lorem cover", Date: "2026-03-10",
+	})
+
+	ids := d.GetCoversNeedingDetail()
+	if len(ids) != 1 {
+		t.Fatalf("before: %v", ids)
+	}
+
+	s.fetchNextDetail(context.Background())
+
+	ids = d.GetCoversNeedingDetail()
+	if len(ids) != 0 {
+		t.Errorf("after: %v, want empty", ids)
+	}
+}
+
+func TestFetchNextDetail_PatchThenCover(t *testing.T) {
+	var called []string
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			called = append(called, r.URL.Path)
+			if r.URL.Path == "/patches/100/" {
+				json.NewEncoder(w).Encode(api.PatchDetail{
+					Patch: api.Patch{
+						ID: 100, Name: "p1", Date: "2026-03-10",
+					},
+					Content: "body", Diff: "diff",
+					Headers:  map[string]interface{}{},
+					Prefixes: []string{},
+				})
+				return
+			}
+			if r.URL.Path == "/covers/99/" {
+				json.NewEncoder(w).Encode(api.CoverDetail{
+					Cover: api.Cover{
+						ID: 99, Name: "cover", Date: "2026-03-10",
+					},
+					Content: "cover body",
+					Headers: map[string]interface{}{},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover", Date: "2026-03-10",
+	})
+
+	// First call fetches the patch
+	s.fetchNextDetail(context.Background())
+	if len(called) != 1 || called[0] != "/patches/100/" {
+		t.Fatalf("first call: %v", called)
+	}
+
+	// Second call: patch done, fetches the cover
+	called = nil
+	s.fetchNextDetail(context.Background())
+	if len(called) != 1 || called[0] != "/covers/99/" {
+		t.Errorf("second call should fetch cover: %v", called)
+	}
+
+	// Third call: nothing left
+	called = nil
+	s.fetchNextDetail(context.Background())
+	if len(called) != 0 {
+		t.Errorf("third call should do nothing: %v", called)
+	}
+}
+
 func TestFilterHeaders(t *testing.T) {
 	raw := map[string]interface{}{
 		"From":                    "Lorem Ipsum <lorem@ipsum.example>",
