@@ -16,15 +16,18 @@ import (
 	"leadlight/db"
 )
 
+const commentSkipCooldown = 30 * time.Minute
+
 type Syncer struct {
-	client    *api.Client
-	db        *db.DB
-	cfg       *config.Config
-	notify    func()
-	priorityC chan int
-	mboxC     chan MboxRequest
-	updateC   chan PatchUpdateRequest
-	commentC  chan CommentRequest
+	client      *api.Client
+	db          *db.DB
+	cfg         *config.Config
+	notify      func()
+	priorityC   chan int
+	mboxC       chan MboxRequest
+	updateC     chan PatchUpdateRequest
+	commentC    chan CommentRequest
+	commentSkip map[int]time.Time
 }
 
 type MboxRequest struct {
@@ -57,14 +60,15 @@ func NewSyncer(
 	notify func(),
 ) *Syncer {
 	return &Syncer{
-		client:    client,
-		db:        d,
-		cfg:       cfg,
-		notify:    notify,
-		priorityC: make(chan int, 16),
-		mboxC:     make(chan MboxRequest, 4),
-		updateC:   make(chan PatchUpdateRequest, 4),
-		commentC:  make(chan CommentRequest, 4),
+		client:      client,
+		db:          d,
+		cfg:         cfg,
+		notify:      notify,
+		priorityC:   make(chan int, 16),
+		mboxC:       make(chan MboxRequest, 4),
+		updateC:     make(chan PatchUpdateRequest, 4),
+		commentC:    make(chan CommentRequest, 4),
+		commentSkip: map[int]time.Time{},
 	}
 }
 
@@ -605,65 +609,50 @@ func (s *Syncer) fetchSeriesDetail(
 
 func (s *Syncer) fetchNextComments(ctx context.Context) {
 	ids := s.db.GetPatchesNeedingComments(s.cfg.States)
-	if len(ids) == 0 {
-		return
-	}
-
-	patchID := ids[0]
-	row, _ := s.db.GetPatch(patchID)
-	if row != nil {
-		log.Printf("SYNC: fetchNextComments: patch %d %q",
-			patchID, row.Name)
-	}
-	comments, err := s.client.GetPatchComments(ctx, patchID)
-	if err != nil {
-		log.Printf("fetch comments %d: %v", patchID, err)
+	for _, patchID := range ids {
+		if t, ok := s.commentSkip[patchID]; ok &&
+			time.Since(t) < commentSkipCooldown {
+			continue
+		}
+		row, _ := s.db.GetPatch(patchID)
+		if row != nil {
+			log.Printf("SYNC: fetchNextComments: patch %d %q",
+				patchID, row.Name)
+		}
+		comments, err := s.client.GetPatchComments(ctx, patchID)
+		if err != nil {
+			log.Printf("fetch comments %d: %v", patchID, err)
+			s.commentSkip[patchID] = time.Now()
+			return
+		}
+		delete(s.commentSkip, patchID)
+		s.saveComments(comments, patchID, 0)
+		s.updatePatchTagsFromComments(patchID)
 		s.db.MarkCommentsFetched(patchID)
 		return
 	}
-
-	for _, c := range comments {
-		s.db.InsertComment(db.CommentRow{
-			ID:        c.ID,
-			PatchID:   patchID,
-			Submitter: c.Submitter.Name,
-			Date:      c.Date,
-			Subject:   c.Subject,
-			Content:   c.Content,
-			MsgID:     c.MsgID,
-		})
-	}
-	s.updatePatchTagsFromComments(patchID)
-	s.db.MarkCommentsFetched(patchID)
 }
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) {
 	ids := s.db.GetCoversNeedingComments()
-	if len(ids) == 0 {
-		return
-	}
-
-	coverID := ids[0]
-	log.Printf("SYNC: fetchNextCoverComments: cover %d", coverID)
-	comments, err := s.client.GetCoverComments(ctx, coverID)
-	if err != nil {
-		log.Printf("fetch cover comments %d: %v", coverID, err)
+	for _, coverID := range ids {
+		if t, ok := s.commentSkip[coverID]; ok &&
+			time.Since(t) < commentSkipCooldown {
+			continue
+		}
+		log.Printf("SYNC: fetchNextCoverComments: cover %d", coverID)
+		comments, err := s.client.GetCoverComments(ctx, coverID)
+		if err != nil {
+			log.Printf("fetch cover comments %d: %v",
+				coverID, err)
+			s.commentSkip[coverID] = time.Now()
+			return
+		}
+		delete(s.commentSkip, coverID)
+		s.saveComments(comments, 0, coverID)
 		s.db.MarkCoverCommentsFetched(coverID)
 		return
 	}
-
-	for _, c := range comments {
-		s.db.InsertComment(db.CommentRow{
-			ID:        c.ID,
-			CoverID:   coverID,
-			Submitter: c.Submitter.Name,
-			Date:      c.Date,
-			Subject:   c.Subject,
-			Content:   c.Content,
-			MsgID:     c.MsgID,
-		})
-	}
-	s.db.MarkCoverCommentsFetched(coverID)
 }
 
 func (s *Syncer) fetchCommentsForPatch(ctx context.Context, patchID int) {
@@ -674,20 +663,10 @@ func (s *Syncer) fetchCommentsForPatch(ctx context.Context, patchID int) {
 	comments, err := s.client.GetPatchComments(ctx, patchID)
 	if err != nil {
 		log.Printf("fetch comments %d: %v", patchID, err)
-		s.db.MarkCommentsFetched(patchID)
 		return
 	}
-	for _, c := range comments {
-		s.db.InsertComment(db.CommentRow{
-			ID:        c.ID,
-			PatchID:   patchID,
-			Submitter: c.Submitter.Name,
-			Date:      c.Date,
-			Subject:   c.Subject,
-			Content:   c.Content,
-			MsgID:     c.MsgID,
-		})
-	}
+	delete(s.commentSkip, patchID)
+	s.saveComments(comments, patchID, 0)
 	s.updatePatchTagsFromComments(patchID)
 	s.db.MarkCommentsFetched(patchID)
 }
@@ -700,20 +679,10 @@ func (s *Syncer) fetchCommentsForCover(ctx context.Context, coverID int) {
 	comments, err := s.client.GetCoverComments(ctx, coverID)
 	if err != nil {
 		log.Printf("fetch cover comments %d: %v", coverID, err)
-		s.db.MarkCoverCommentsFetched(coverID)
 		return
 	}
-	for _, c := range comments {
-		s.db.InsertComment(db.CommentRow{
-			ID:        c.ID,
-			CoverID:   coverID,
-			Submitter: c.Submitter.Name,
-			Date:      c.Date,
-			Subject:   c.Subject,
-			Content:   c.Content,
-			MsgID:     c.MsgID,
-		})
-	}
+	delete(s.commentSkip, coverID)
+	s.saveComments(comments, 0, coverID)
 	s.db.MarkCoverCommentsFetched(coverID)
 }
 
@@ -766,6 +735,61 @@ func (s *Syncer) checkArchiveMonth(
 		}
 	}
 	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
+}
+
+var keepHeaders = []string{
+	"From", "Date", "To", "Cc",
+	"In-Reply-To", "References", "Content-Type",
+}
+
+func filterHeaders(raw map[string]interface{}) string {
+	if raw == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, key := range keepHeaders {
+		val, ok := raw[key]
+		if !ok {
+			continue
+		}
+		switch v := val.(type) {
+		case string:
+			b.WriteString(key + ": " + v + "\n")
+		case []interface{}:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					b.WriteString(key + ": " + s + "\n")
+				}
+			}
+		}
+	}
+	return b.String()
+}
+
+func commentArchiveURL(c api.Comment) string {
+	if c.ListArchiveURL != nil {
+		return *c.ListArchiveURL
+	}
+	return ""
+}
+
+func (s *Syncer) saveComments(comments []api.Comment, patchID, coverID int) {
+	for _, c := range comments {
+		s.db.InsertComment(db.CommentRow{
+			ID:             c.ID,
+			PatchID:        patchID,
+			CoverID:        coverID,
+			Submitter:      c.Submitter.Name,
+			SubmitterEmail: c.Submitter.Email,
+			Date:           c.Date,
+			Subject:        c.Subject,
+			Content:        c.Content,
+			MsgID:          c.MsgID,
+			Headers:        filterHeaders(c.Headers),
+			WebURL:         c.WebURL,
+			ListArchiveURL: commentArchiveURL(c),
+		})
+	}
 }
 
 func (s *Syncer) updatePatchTagsFromComments(

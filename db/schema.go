@@ -87,14 +87,18 @@ CREATE TABLE IF NOT EXISTS checks (
 );
 
 CREATE TABLE IF NOT EXISTS comments (
-    id          INTEGER PRIMARY KEY,
-    patch_id    INTEGER DEFAULT 0,
-    cover_id    INTEGER DEFAULT 0,
-    submitter   TEXT,
-    date        TEXT,
-    subject     TEXT,
-    content     TEXT,
-    msgid       TEXT
+    id               INTEGER PRIMARY KEY,
+    patch_id         INTEGER DEFAULT 0,
+    cover_id         INTEGER DEFAULT 0,
+    submitter        TEXT,
+    date             TEXT,
+    subject          TEXT,
+    content          TEXT,
+    msgid            TEXT,
+    submitter_email  TEXT DEFAULT '',
+    headers          TEXT DEFAULT '',
+    web_url          TEXT DEFAULT '',
+    list_archive_url TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -128,6 +132,10 @@ WHERE id IN (
 var alterStatements = []string{
 	`ALTER TABLE patches ADD COLUMN comments_fetched INTEGER DEFAULT 0`,
 	`ALTER TABLE covers ADD COLUMN comments_fetched INTEGER DEFAULT 0`,
+	`ALTER TABLE comments ADD COLUMN submitter_email TEXT DEFAULT ''`,
+	`ALTER TABLE comments ADD COLUMN headers TEXT DEFAULT ''`,
+	`ALTER TABLE comments ADD COLUMN web_url TEXT DEFAULT ''`,
+	`ALTER TABLE comments ADD COLUMN list_archive_url TEXT DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {
@@ -138,5 +146,22 @@ func migrate(db *sql.DB) error {
 		db.Exec(stmt) // ignore "duplicate column" errors
 	}
 	_, err := db.Exec(recountChecks)
-	return err
+	if err != nil {
+		return err
+	}
+	// Bump this version when comment schema changes require re-fetch
+	const commentSchemaVersion = "2"
+	var ver string
+	db.QueryRow(
+		"SELECT value FROM sync_state WHERE key = 'comment_schema'",
+	).Scan(&ver)
+	if ver != commentSchemaVersion {
+		db.Exec("UPDATE patches SET comments_fetched = 0")
+		db.Exec("UPDATE covers SET comments_fetched = 0")
+		db.Exec(
+			`INSERT OR REPLACE INTO sync_state
+			 (key, value) VALUES
+			 ('comment_schema', ?)`, commentSchemaVersion)
+	}
+	return nil
 }

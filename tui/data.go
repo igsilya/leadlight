@@ -358,40 +358,36 @@ func colorForSeries(
 	}
 }
 
+func convertComments(rows []db.CommentRow) []CommentInfo {
+	comments := make([]CommentInfo, len(rows))
+	for i, r := range rows {
+		comments[i] = CommentInfo{
+			ID:             r.ID,
+			Submitter:      r.Submitter,
+			SubmitterEmail: r.SubmitterEmail,
+			Date:           r.Date,
+			Subject:        r.Subject,
+			Content:        r.Content,
+			Headers:        r.Headers,
+			WebURL:         r.WebURL,
+			ListArchiveURL: r.ListArchiveURL,
+		}
+	}
+	return comments
+}
+
 func GetCommentsForPatch(d *db.DB, patchID int) []CommentInfo {
 	if d == nil {
 		return nil
 	}
-	rows := d.GetComments(patchID)
-	comments := make([]CommentInfo, len(rows))
-	for i, r := range rows {
-		comments[i] = CommentInfo{
-			ID:        r.ID,
-			Submitter: r.Submitter,
-			Date:      r.Date,
-			Subject:   r.Subject,
-			Content:   r.Content,
-		}
-	}
-	return comments
+	return convertComments(d.GetComments(patchID))
 }
 
 func GetCommentsForCover(d *db.DB, coverID int) []CommentInfo {
 	if d == nil {
 		return nil
 	}
-	rows := d.GetCommentsForCover(coverID)
-	comments := make([]CommentInfo, len(rows))
-	for i, r := range rows {
-		comments[i] = CommentInfo{
-			ID:        r.ID,
-			Submitter: r.Submitter,
-			Date:      r.Date,
-			Subject:   r.Subject,
-			Content:   r.Content,
-		}
-	}
-	return comments
+	return convertComments(d.GetCommentsForCover(coverID))
 }
 
 func GetChecksForPatch(d *db.DB, patchID int) []CheckInfo {

@@ -587,8 +587,8 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 		m.viewCommentIdx = -1
 		m.viewportOffset = 0
 
-		if len(m.viewComments) == 0 && m.FetchCoverComments != nil {
-			m.fetchingComments = true
+		if m.FetchCoverComments != nil && m.db.NeedsCoverComments(cover.ID) {
+			m.status = "Fetching comments..."
 			m.FetchCoverComments(cover.ID)
 		}
 
@@ -646,8 +646,8 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	m.viewCommentIdx = -1
 	m.viewportOffset = 0
 
-	if len(m.viewComments) == 0 && m.FetchPatchComments != nil {
-		m.fetchingComments = true
+	if m.FetchPatchComments != nil && m.db.NeedsPatchComments(patchID) {
+		m.status = "Fetching comments..."
 		m.FetchPatchComments(patchID)
 	}
 

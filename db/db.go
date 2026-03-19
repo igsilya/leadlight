@@ -92,14 +92,18 @@ type CheckRow struct {
 }
 
 type CommentRow struct {
-	ID        int
-	PatchID   int
-	CoverID   int
-	Submitter string
-	Date      string
-	Subject   string
-	Content   string
-	MsgID     string
+	ID             int
+	PatchID        int
+	CoverID        int
+	Submitter      string
+	SubmitterEmail string
+	Date           string
+	Subject        string
+	Content        string
+	MsgID          string
+	Headers        string
+	WebURL         string
+	ListArchiveURL string
 }
 
 type CoverRow struct {
@@ -361,12 +365,16 @@ func (d *DB) InsertComment(c CommentRow) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
-		INSERT OR IGNORE INTO comments
+		INSERT OR REPLACE INTO comments
 			(id, patch_id, cover_id, submitter,
-			 date, subject, content, msgid)
-		VALUES (?,?,?,?,?,?,?,?)`,
+			 submitter_email, date, subject,
+			 content, msgid, headers,
+			 web_url, list_archive_url)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.PatchID, c.CoverID, c.Submitter,
-		c.Date, c.Subject, c.Content, c.MsgID)
+		c.SubmitterEmail, c.Date, c.Subject,
+		c.Content, c.MsgID, c.Headers,
+		c.WebURL, c.ListArchiveURL)
 	return err
 }
 
@@ -807,7 +815,11 @@ func (d *DB) GetChecksForPatch(patchID int) []CheckRow {
 func (d *DB) GetComments(patchID int) []CommentRow {
 	rows, err := d.conn.Query(`
 		SELECT id, patch_id, cover_id, submitter,
-			date, subject, content, msgid
+			COALESCE(submitter_email, ''),
+			date, subject, content, msgid,
+			COALESCE(headers, ''),
+			COALESCE(web_url, ''),
+			COALESCE(list_archive_url, '')
 		FROM comments WHERE patch_id = ?
 		ORDER BY date`, patchID)
 	if err != nil {
@@ -819,8 +831,9 @@ func (d *DB) GetComments(patchID int) []CommentRow {
 	for rows.Next() {
 		var r CommentRow
 		rows.Scan(&r.ID, &r.PatchID, &r.CoverID,
-			&r.Submitter, &r.Date, &r.Subject,
-			&r.Content, &r.MsgID)
+			&r.Submitter, &r.SubmitterEmail,
+			&r.Date, &r.Subject, &r.Content, &r.MsgID,
+			&r.Headers, &r.WebURL, &r.ListArchiveURL)
 		result = append(result, r)
 	}
 	return result
@@ -829,7 +842,11 @@ func (d *DB) GetComments(patchID int) []CommentRow {
 func (d *DB) GetCommentsForCover(coverID int) []CommentRow {
 	rows, err := d.conn.Query(`
 		SELECT id, patch_id, cover_id, submitter,
-			date, subject, content, msgid
+			COALESCE(submitter_email, ''),
+			date, subject, content, msgid,
+			COALESCE(headers, ''),
+			COALESCE(web_url, ''),
+			COALESCE(list_archive_url, '')
 		FROM comments WHERE cover_id = ?
 		ORDER BY date`, coverID)
 	if err != nil {
@@ -841,8 +858,9 @@ func (d *DB) GetCommentsForCover(coverID int) []CommentRow {
 	for rows.Next() {
 		var r CommentRow
 		rows.Scan(&r.ID, &r.PatchID, &r.CoverID,
-			&r.Submitter, &r.Date, &r.Subject,
-			&r.Content, &r.MsgID)
+			&r.Submitter, &r.SubmitterEmail,
+			&r.Date, &r.Subject, &r.Content, &r.MsgID,
+			&r.Headers, &r.WebURL, &r.ListArchiveURL)
 		result = append(result, r)
 	}
 	return result

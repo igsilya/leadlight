@@ -576,6 +576,146 @@ func TestWrapLogLine_MultiWord(t *testing.T) {
 	}
 }
 
+func TestFormatDate_ISO(t *testing.T) {
+	got := formatDate("2025-12-04T09:17:04")
+	want := "Thu, 04 Dec 2025 09:17:04 +0000"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatDate_RFC(t *testing.T) {
+	in := "Wed, 18 Mar 2026 14:41:13 +0100"
+	got := formatDate(in)
+	if got != in {
+		t.Errorf("got %q, want passthrough", got)
+	}
+}
+
+func TestFormatDate_Invalid(t *testing.T) {
+	got := formatDate("lorem ipsum")
+	if got != "lorem ipsum" {
+		t.Errorf("got %q, want passthrough", got)
+	}
+}
+
+func TestFormatComment_WithHeaders(t *testing.T) {
+	c := CommentInfo{
+		Subject:        "Re: Lorem ipsum",
+		Submitter:      "Lorem Ipsum",
+		SubmitterEmail: "lorem@ipsum.example",
+		Date:           "2025-12-04T09:17:04",
+		Content:        "Looks good.",
+		Headers: "Date: Thu, 04 Dec 2025 14:57:28 +0530\n" +
+			"To: Dolor Amet <dolor@amet.example>\n" +
+			"Cc: sit@amet.example\n",
+		ListArchiveURL: "https://archive.example.com/lorem/123",
+	}
+	result := FormatComment(c, 120, false)
+	if !strings.Contains(result, "lorem@ipsum.example") {
+		t.Error("should show submitter email")
+	}
+	if !strings.Contains(result, "+0530") {
+		t.Error("should show date from headers with timezone")
+	}
+	if !strings.Contains(result, "dolor@amet.example") {
+		t.Error("should show To header")
+	}
+	if !strings.Contains(result, "sit@amet.example") {
+		t.Error("should show Cc header")
+	}
+	if !strings.Contains(result, "archive.example.com") {
+		t.Error("should show archive URL")
+	}
+}
+
+func TestFormatComment_HeaderFallback(t *testing.T) {
+	c := CommentInfo{
+		Subject:   "Re: Lorem ipsum",
+		Submitter: "Lorem Ipsum",
+		Date:      "2025-12-04T09:17:04",
+		Content:   "Looks good.",
+	}
+	result := FormatComment(c, 120, false)
+	if !strings.Contains(result, "Lorem Ipsum") {
+		t.Error("should fall back to Submitter")
+	}
+	if !strings.Contains(result, "Thu, 04 Dec 2025") {
+		t.Error("should convert ISO date to RFC")
+	}
+}
+
+func TestFormatComment_FromUsesSubmitterEmail(t *testing.T) {
+	c := CommentInfo{
+		Subject:        "Re: Lorem ipsum",
+		Submitter:      "Lorem Ipsum",
+		SubmitterEmail: "lorem@ipsum.example",
+		Date:           "2025-12-04T09:17:04",
+		Content:        "Looks good.",
+		Headers: "From: =?utf-8?q?Lorem_via_dev?= <dev@lorem.example>\n" +
+			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
+	}
+	result := FormatComment(c, 120, false)
+	if !strings.Contains(result, "lorem@ipsum.example") {
+		t.Error("should use submitter email, not mangled headers.From")
+	}
+	if strings.Contains(result, "dev@lorem.example") {
+		t.Error("should not use mangled list From")
+	}
+}
+
+func TestFormatComment_FromFallbackNoEmail(t *testing.T) {
+	c := CommentInfo{
+		Subject:   "Re: Lorem ipsum",
+		Submitter: "Lorem Ipsum",
+		Date:      "2025-12-04T09:17:04",
+		Content:   "Looks good.",
+	}
+	result := FormatComment(c, 120, false)
+	if !strings.Contains(result, "Lorem Ipsum") {
+		t.Error("should show submitter name")
+	}
+	if strings.Contains(result, "<") {
+		t.Error("should not have angle brackets without email")
+	}
+}
+
+func TestFormatComment_DecodesHeaderMIME(t *testing.T) {
+	c := CommentInfo{
+		Subject:        "Re: Lorem",
+		Submitter:      "Lorem",
+		SubmitterEmail: "lorem@ipsum.example",
+		Date:           "2025-12-04T09:17:04",
+		Content:        "Looks good.",
+		Headers: "To: =?utf-8?q?Dol=C3=B6r_Amet?= <dolor@amet.example>\n" +
+			"Cc: =?utf-8?q?S=C3=ADt?= <sit@amet.example>\n" +
+			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
+	}
+	result := FormatComment(c, 120, false)
+	if !strings.Contains(result, "Dolör Amet") {
+		t.Error("To header should be MIME decoded")
+	}
+	if !strings.Contains(result, "Sít") {
+		t.Error("Cc header should be MIME decoded")
+	}
+}
+
+func TestFormatMbox_ToHeader(t *testing.T) {
+	raw := "Subject: Lorem ipsum\n" +
+		"From: Lorem <lorem@ipsum.example>\n" +
+		"To: dolor@amet.example, sit@amet.example\n" +
+		"Date: Wed, 18 Mar 2026 14:41:13 +0100\n\n" +
+		"Body text here."
+	p := ParseMbox(raw)
+	if p.To == "" {
+		t.Fatal("ParseMbox should extract To header")
+	}
+	result := FormatMbox(p, 120)
+	if !strings.Contains(result, "dolor@amet.example") {
+		t.Error("should display To header")
+	}
+}
+
 func TestFormatDiff_Colors(t *testing.T) {
 	diff := "diff --git a/f b/f\n" +
 		"--- a/f\n+++ b/f\n" +

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"mime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -29,6 +30,7 @@ var (
 type ParsedMbox struct {
 	Subject string
 	From    string
+	To      string
 	Cc      string
 	Date    string
 	Body    string
@@ -40,6 +42,7 @@ func ParseMbox(raw string) ParsedMbox {
 	p := ParsedMbox{
 		Subject: decodeHeader(extractHeader(headers, "Subject")),
 		From:    decodeHeader(extractHeader(headers, "From")),
+		To:      decodeHeader(extractHeader(headers, "To")),
 		Cc:      decodeHeader(extractHeader(headers, "Cc")),
 		Date:    extractHeader(headers, "Date"),
 	}
@@ -119,6 +122,9 @@ func FormatMbox(p ParsedMbox, width int) string {
 	}
 	if p.From != "" {
 		writeHeader("From:    ", p.From)
+	}
+	if p.To != "" {
+		writeHeader("To:      ", p.To)
 	}
 	if p.Cc != "" {
 		writeHeader("Cc:      ", p.Cc)
@@ -213,6 +219,14 @@ func replaceControlChars(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func formatDate(s string) string {
+	t, err := time.Parse("2006-01-02T15:04:05", s)
+	if err != nil {
+		return s
+	}
+	return t.Format("Mon, 02 Jan 2006 15:04:05 +0000")
 }
 
 func isQuotedLine(s string) bool {
@@ -412,11 +426,15 @@ func FormatChecks(checks []CheckInfo, width int) string {
 }
 
 type CommentInfo struct {
-	ID        int
-	Submitter string
-	Date      string
-	Subject   string
-	Content   string
+	ID             int
+	Submitter      string
+	SubmitterEmail string
+	Date           string
+	Subject        string
+	Content        string
+	Headers        string
+	WebURL         string
+	ListArchiveURL string
 }
 
 func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
@@ -442,11 +460,39 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 	if c.Subject != "" {
 		writeHeader("Subject: ", c.Subject)
 	}
-	if c.Submitter != "" {
-		writeHeader("From:    ", c.Submitter)
+
+	from := c.Submitter
+	if c.SubmitterEmail != "" {
+		from += " <" + c.SubmitterEmail + ">"
 	}
-	if c.Date != "" {
-		writeHeader("Date:    ", c.Date)
+	if from != "" {
+		writeHeader("From:    ", from)
+	}
+
+	to := decodeHeader(extractHeader(c.Headers, "To"))
+	if to != "" {
+		writeHeader("To:      ", to)
+	}
+
+	cc := decodeHeader(extractHeader(c.Headers, "Cc"))
+	if cc != "" {
+		writeHeader("Cc:      ", cc)
+	}
+
+	date := extractHeader(c.Headers, "Date")
+	if date == "" {
+		date = formatDate(c.Date)
+	}
+	if date != "" {
+		writeHeader("Date:    ", date)
+	}
+
+	url := c.ListArchiveURL
+	if url == "" {
+		url = c.WebURL
+	}
+	if url != "" {
+		writeHeader("URL:     ", url)
 	}
 
 	if c.Content != "" {

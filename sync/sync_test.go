@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	gosync "sync"
 	"testing"
 	"time"
@@ -986,6 +987,148 @@ func TestFetchCommentsForCover(t *testing.T) {
 	s.fetchCommentsForCover(context.Background(), 99)
 	if apiCalled {
 		t.Error("API should NOT be called when comments_fetched = 1")
+	}
+}
+
+func TestFetchNextComments_SkipsFailedPatch(t *testing.T) {
+	var called []string
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			called = append(called, r.URL.Path)
+			if r.URL.Path == "/patches/100/comments/" {
+				w.WriteHeader(500)
+				return
+			}
+			if r.URL.Path == "/patches/200/comments/" {
+				json.NewEncoder(w).Encode([]api.Comment{})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	savePatch(d, 200, "p2", "2026-03-11", "new")
+
+	s.fetchNextComments(context.Background())
+	if len(called) != 1 || called[0] != "/patches/100/comments/" {
+		t.Fatalf("first call: %v", called)
+	}
+
+	// Second call should skip 100 (cooldown) and try 200
+	called = nil
+	s.fetchNextComments(context.Background())
+	if len(called) != 1 || called[0] != "/patches/200/comments/" {
+		t.Errorf("second call should skip 100: %v", called)
+	}
+}
+
+func TestFetchNextComments_CooldownExpires(t *testing.T) {
+	var called []string
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			called = append(called, r.URL.Path)
+			if r.URL.Path == "/patches/100/comments/" {
+				w.WriteHeader(500)
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+
+	// First call fails, adds to skip set
+	s.fetchNextComments(context.Background())
+	if len(called) != 1 {
+		t.Fatalf("first call: %v", called)
+	}
+
+	// Second call within cooldown — should skip
+	called = nil
+	s.fetchNextComments(context.Background())
+	if len(called) != 0 {
+		t.Errorf("should skip during cooldown: %v", called)
+	}
+
+	// Simulate cooldown expiry by backdating the skip entry
+	s.commentSkip[100] = time.Now().Add(-31 * time.Minute)
+
+	// Third call after cooldown — should retry
+	called = nil
+	s.fetchNextComments(context.Background())
+	if len(called) != 1 || called[0] != "/patches/100/comments/" {
+		t.Errorf("should retry after cooldown: %v", called)
+	}
+}
+
+func TestFilterHeaders(t *testing.T) {
+	raw := map[string]interface{}{
+		"From":                    "Lorem Ipsum <lorem@ipsum.example>",
+		"Date":                    "Thu, 04 Dec 2025 14:57:28 +0530",
+		"To":                      "Dolor Amet <dolor@amet.example>, dev@lorem.example",
+		"Cc":                      "sit@amet.example",
+		"In-Reply-To":             "<20260306-lorem@ipsum.example>",
+		"References":              "<20260226-dolor@ipsum.example>",
+		"Content-Type":            "text/plain; charset=UTF-8",
+		"Subject":                 "Re: [PATCH] Lorem ipsum",
+		"Message-ID":              "<abc123@ipsum.example>",
+		"DKIM-Signature":          "v=1; a=rsa-sha256; ...",
+		"X-MS-Exchange-Something": "trash",
+		"Return-Path":             "<bounces@lorem.example>",
+		"Received": []interface{}{
+			"from lorem.example (lorem.example [1.2.3.4])",
+			"from dolor.example (dolor.example [5.6.7.8])",
+		},
+	}
+	result := filterHeaders(raw)
+	if !strings.Contains(result, "From: Lorem Ipsum") {
+		t.Error("missing From")
+	}
+	if !strings.Contains(result, "Date: Thu, 04 Dec") {
+		t.Error("missing Date")
+	}
+	if !strings.Contains(result, "To: Dolor Amet") {
+		t.Error("missing To")
+	}
+	if !strings.Contains(result, "Cc: sit@amet") {
+		t.Error("missing Cc")
+	}
+	if !strings.Contains(result, "In-Reply-To:") {
+		t.Error("missing In-Reply-To")
+	}
+	if !strings.Contains(result, "References:") {
+		t.Error("missing References")
+	}
+	if !strings.Contains(result, "Content-Type:") {
+		t.Error("missing Content-Type")
+	}
+	if strings.Contains(result, "DKIM") {
+		t.Error("should not contain DKIM")
+	}
+	if strings.Contains(result, "X-MS") {
+		t.Error("should not contain X-MS")
+	}
+	if strings.Contains(result, "Return-Path") {
+		t.Error("should not contain Return-Path")
+	}
+	if strings.Contains(result, "Received") {
+		t.Error("should not contain Received")
+	}
+	if strings.Contains(result, "Subject") {
+		t.Error("should not contain Subject (stored separately)")
+	}
+	if strings.Contains(result, "Message-ID") {
+		t.Error("should not contain Message-ID (stored separately)")
+	}
+}
+
+func TestFilterHeaders_Empty(t *testing.T) {
+	if filterHeaders(nil) != "" {
+		t.Error("nil map should return empty")
+	}
+	if filterHeaders(map[string]interface{}{}) != "" {
+		t.Error("empty map should return empty")
 	}
 }
 
