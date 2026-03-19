@@ -156,6 +156,7 @@ type Model struct {
 	RequestMbox        func(patchID int)
 	RequestCoverMbox   func(seriesID int)
 	FetchSeriesCover   func(seriesID int)
+	RequestSync        func()
 	FetchPatchComments func(patchID int)
 	FetchCoverComments func(coverID int)
 	RequestPatchUpdate func(
@@ -380,6 +381,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SyncUpdateMsg:
 		m.reloadData()
+		if m.status == "Syncing..." {
+			m.status = ""
+		}
 		if m.viewMode == viewPatch {
 			if len(m.viewportLines) == 1 &&
 				(m.viewportLines[0] == "Fetching..." ||

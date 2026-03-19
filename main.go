@@ -102,6 +102,10 @@ func main() {
 		})
 	}
 
+	m.RequestSync = func() {
+		go syncer.RequestSync()
+	}
+
 	m.FetchPatchComments = func(patchID int) {
 		go syncer.RequestComments(patchID, false)
 	}

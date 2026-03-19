@@ -27,6 +27,7 @@ type Syncer struct {
 	mboxC       chan MboxRequest
 	updateC     chan PatchUpdateRequest
 	commentC    chan CommentRequest
+	syncNowC    chan struct{}
 	commentSkip map[int]time.Time
 }
 
@@ -68,6 +69,7 @@ func NewSyncer(
 		mboxC:       make(chan MboxRequest, 4),
 		updateC:     make(chan PatchUpdateRequest, 4),
 		commentC:    make(chan CommentRequest, 4),
+		syncNowC:    make(chan struct{}, 1),
 		commentSkip: map[int]time.Time{},
 	}
 }
@@ -106,8 +108,15 @@ func (s *Syncer) RequestComments(id int, isCover bool) {
 	}
 }
 
+func (s *Syncer) RequestSync() {
+	select {
+	case s.syncNowC <- struct{}{}:
+	default:
+	}
+}
+
 const (
-	syncInterval      = 30 * time.Second
+	syncInterval      = 5 * time.Minute
 	commentInterval   = 5 * time.Second
 	archiveInterval   = 5 * time.Minute
 	maintainerRefresh = 24 * time.Hour
@@ -181,19 +190,24 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer ticker.Stop()
 	lastMaintainerRefresh := time.Now()
 
+	doSync := func() {
+		s.incrementalSync(ctx)
+		s.fixIncompletePatches(ctx)
+		s.notify()
+		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
+			s.fetchMaintainers(ctx)
+			lastMaintainerRefresh = time.Now()
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.incrementalSync(ctx)
-			s.fixIncompletePatches(ctx)
-			s.notify()
-
-			if time.Since(lastMaintainerRefresh) > maintainerRefresh {
-				s.fetchMaintainers(ctx)
-				lastMaintainerRefresh = time.Now()
-			}
+			doSync()
+		case <-s.syncNowC:
+			doSync()
 		}
 	}
 }

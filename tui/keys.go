@@ -39,8 +39,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			"pgup", "ctrl+u", "pgdown", "ctrl+d",
 			"home", "g", "end", "G", "w":
 			return m.handleLogKey(msg)
+		case "f5":
+			// fall through to main pane dispatch
+		default:
+			return m, nil
 		}
-		return m, nil
 	}
 	switch m.viewMode {
 	case viewPatch:
@@ -198,6 +201,12 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		m.showAll = !m.showAll
 		m.reloadData()
+
+	case "f5":
+		if m.RequestSync != nil {
+			m.status = "Syncing..."
+			m.RequestSync()
+		}
 	}
 
 	return m, nil
@@ -286,6 +295,11 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.nextComment()
 	case "left", "h", "f7":
 		m.prevComment()
+	case "f5":
+		if m.RequestSync != nil {
+			m.status = "Syncing..."
+			m.RequestSync()
+		}
 	}
 	return m, nil
 }
