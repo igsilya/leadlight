@@ -6,9 +6,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/text/unicode/norm"
 
 	"leadlight/db"
 )
@@ -252,9 +254,38 @@ func (m *Model) restoreSelection() {
 	m.updateSelectedID()
 }
 
+// NFD decomposition handles most accented Latin characters (é→e,
+// ñ→n, ö→o) by splitting into base + combining mark, then stripping
+// marks. These characters are distinct codepoints that don't
+// decompose under NFD, so they need explicit mapping.
+var specialFold = map[rune]rune{
+	'ø': 'o', 'Ø': 'O',
+	'æ': 'a', 'Æ': 'A',
+	'ð': 'd', 'Ð': 'D',
+	'ł': 'l', 'Ł': 'L',
+	'đ': 'd', 'Đ': 'D',
+	'ß': 's',
+}
+
+func foldAccents(s string) string {
+	var b strings.Builder
+	for _, r := range norm.NFD.String(s) {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		if mapped, ok := specialFold[r]; ok {
+			b.WriteRune(mapped)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func matchesFilter(data []string, filter string) bool {
 	for _, field := range data {
-		if strings.Contains(strings.ToLower(field), filter) {
+		folded := strings.ToLower(foldAccents(field))
+		if strings.Contains(folded, filter) {
 			return true
 		}
 	}
@@ -446,7 +477,7 @@ func splitLines(content string) []string {
 }
 
 func (m *Model) getVisibleItems() []visibleItem {
-	filter := strings.ToLower(m.filterText)
+	filter := strings.ToLower(foldAccents(m.filterText))
 	var items []visibleItem
 
 	for i, rd := range m.RowData {

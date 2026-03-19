@@ -669,6 +669,35 @@ func TestFilterMode_ClearCollapsesExceptSelected(t *testing.T) {
 	}
 }
 
+func TestFoldAccents(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"lorem", "lorem"},
+		{"lorém", "lorem"},
+		{"dölor", "dolor"},
+		{"lørem", "lorem"},
+		{"dølör", "dolor"},
+		{"ßit", "sit"},
+		{"LORÉM", "LOREM"},
+	}
+	for _, tt := range tests {
+		got := foldAccents(tt.in)
+		if got != tt.want {
+			t.Errorf("foldAccents(%q) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestMatchesFilter_Accented(t *testing.T) {
+	data := []string{"1", "Lorém Ípsum", "new"}
+	if !matchesFilter(data, "lorem") {
+		t.Error("should match accented lorem")
+	}
+	if !matchesFilter(data, "ipsum") {
+		t.Error("should match accented ipsum")
+	}
+}
+
 func TestToggleShowAll(t *testing.T) {
 	m, d := testModelWithDB(t)
 
