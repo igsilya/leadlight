@@ -235,11 +235,13 @@ func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 }
 
 func (s *Syncer) runCommentCycle(ctx context.Context) {
-	s.fetchNextComments(ctx)
-	s.fetchNextCoverComments(ctx)
+	changed := s.fetchNextComments(ctx)
+	changed = s.fetchNextCoverComments(ctx) || changed
 	s.status.Clear(status.BgComments)
 	s.status.Clear(status.BgCoverComments)
-	s.notify()
+	if changed {
+		s.notify()
+	}
 }
 
 func (s *Syncer) runArchiveLoop(ctx context.Context, wg *gosync.WaitGroup) {
@@ -603,7 +605,7 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 	}
 }
 
-func (s *Syncer) fetchNextComments(ctx context.Context) {
+func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 	ids := s.db.GetPatchesNeedingComments(s.cfg.States)
 	if len(ids) > 0 {
 		s.status.Set(status.BgComments,
@@ -624,17 +626,20 @@ func (s *Syncer) fetchNextComments(ctx context.Context) {
 		if err != nil {
 			log.Printf("fetch comments %d: %v", patchID, err)
 			s.commentSkip[patchID] = time.Now()
-			return
+			return false
 		}
 		delete(s.commentSkip, patchID)
 		s.saveComments(comments, patchID, 0)
 		s.updatePatchTagsFromComments(patchID)
 		s.db.MarkCommentsFetched(patchID)
-		return
+		log.Printf("SYNC: fetched %d comments for patch %d",
+			len(comments), patchID)
+		return true
 	}
+	return false
 }
 
-func (s *Syncer) fetchNextCoverComments(ctx context.Context) {
+func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 	ids := s.db.GetCoversNeedingComments()
 	if len(ids) > 0 {
 		s.status.Set(status.BgCoverComments,
@@ -652,14 +657,17 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) {
 			log.Printf("fetch cover comments %d: %v",
 				coverID, err)
 			s.commentSkip[coverID] = time.Now()
-			return
+			return false
 		}
 		delete(s.commentSkip, coverID)
 		s.saveComments(comments, 0, coverID)
 		s.updateCoverTagsFromComments(coverID)
 		s.db.MarkCoverCommentsFetched(coverID)
-		return
+		log.Printf("SYNC: fetched %d comments for cover %d",
+			len(comments), coverID)
+		return true
 	}
+	return false
 }
 
 func (s *Syncer) fetchCommentsForPatch(ctx context.Context, patchID int) {
@@ -768,24 +776,25 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.fetchNextDetail(ctx)
-			s.notify()
+			if s.fetchNextDetail(ctx) {
+				s.notify()
+			}
 		}
 	}
 }
 
-func (s *Syncer) fetchNextDetail(ctx context.Context) {
+func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 	patchIDs := s.db.GetPatchesNeedingDetail()
 	coverIDs := s.db.GetCoversNeedingDetail()
 	total := len(patchIDs) + len(coverIDs)
-	if total > 0 {
-		s.status.Set(status.Detail,
-			fmt.Sprintf("Fetching details (%d remaining)...",
-				total), true)
-	} else {
+	if total == 0 {
 		s.status.Clear(status.Detail)
-		return
+		return false
 	}
+	s.status.Set(status.Detail,
+		fmt.Sprintf("Fetching details (%d remaining)...",
+			total), true)
+
 	for _, id := range patchIDs {
 		if t, ok := s.detailSkip[id]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -796,7 +805,7 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 		if err != nil {
 			log.Printf("fetch detail %d: %v", id, err)
 			s.detailSkip[id] = time.Now()
-			return
+			return false
 		}
 		delete(s.detailSkip, id)
 		prefixes, _ := json.Marshal(detail.Prefixes)
@@ -809,7 +818,9 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 			tags := extractReviewTags(detail.Content)
 			s.db.SaveTags(id, 0, 0, "original", tags)
 		}
-		return
+		log.Printf("SYNC: fetched detail for patch %d (%d bytes)",
+			id, len(detail.Content))
+		return true
 	}
 
 	for _, id := range coverIDs {
@@ -822,7 +833,7 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 		if err != nil {
 			log.Printf("fetch cover detail %d: %v", id, err)
 			s.detailSkip[id] = time.Now()
-			return
+			return false
 		}
 		delete(s.detailSkip, id)
 		hdrs, _ := json.Marshal(cover.Headers)
@@ -833,8 +844,11 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 			tags := extractReviewTags(cover.Content)
 			s.db.SaveTags(0, id, 0, "original", tags)
 		}
-		return
+		log.Printf("SYNC: fetched detail for cover %d (%d bytes)",
+			id, len(cover.Content))
+		return true
 	}
+	return false
 }
 
 const tagSchemaVersion = "2"
