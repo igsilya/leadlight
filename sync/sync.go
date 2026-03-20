@@ -160,12 +160,14 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 				req.PatchID)
 			req.ResultC <- s.handlePatchUpdate(ctx, req)
 		case req := <-s.commentC:
-			if req.IsCover {
-				s.fetchCommentsForCover(ctx, req.ID)
-			} else {
-				s.fetchCommentsForPatch(ctx, req.ID)
-			}
-			s.notify()
+			go func() {
+				if req.IsCover {
+					s.fetchCommentsForCover(ctx, req.ID)
+				} else {
+					s.fetchCommentsForPatch(ctx, req.ID)
+				}
+				s.notify()
+			}()
 		}
 	}
 }
