@@ -797,6 +797,29 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 	}
 }
 
+func MigrateTagsFromContent(d *db.DB) {
+	if d.GetSyncState("tags_content_migrated") == "done" {
+		return
+	}
+	patches := d.GetPatchContent()
+	for id, content := range patches {
+		tags := extractReviewTags(content)
+		if len(tags) > 0 {
+			d.SaveTags(id, 0, 0, "original", tags)
+		}
+	}
+	covers := d.GetCoverContent()
+	for id, content := range covers {
+		tags := extractReviewTags(content)
+		if len(tags) > 0 {
+			d.SaveTags(0, id, 0, "original", tags)
+		}
+	}
+	log.Printf("SYNC: migrated original tags: %d patches, %d covers",
+		len(patches), len(covers))
+	d.SetSyncState("tags_content_migrated", "done")
+}
+
 var keepHeaders = []string{
 	"From", "Date", "To", "Cc",
 	"In-Reply-To", "References", "Content-Type",

@@ -1424,6 +1424,70 @@ func TestFetchNextDetail_CoverExtractsOriginalTags(t *testing.T) {
 	}
 }
 
+func TestMigrateTagsFromContent(t *testing.T) {
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.UpdatePatchDetail(100,
+		"Commit message\n\nAcked-by: Lorem <lorem@ex>\n",
+		"diff --git a/f b/f\n", "{}", "[]")
+
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50,
+		Name: "cover", Date: "2026-03-10",
+	})
+	d.UpdateCoverDetail(99,
+		"Cover body\n\nReviewed-by: Dolor <dolor@ex>\n", "{}")
+
+	MigrateTagsFromContent(d)
+
+	tags := d.GetTagsForSeries(50)
+	if len(tags) != 2 {
+		t.Fatalf("tags len=%d, want 2", len(tags))
+	}
+
+	hasAcked, hasReviewed := false, false
+	for _, tag := range tags {
+		if tag.PatchID == 100 && tag.Type == "acked" &&
+			tag.Source == "original" {
+			hasAcked = true
+		}
+		if tag.CoverID == 99 && tag.Type == "reviewed" &&
+			tag.Source == "original" {
+			hasReviewed = true
+		}
+	}
+	if !hasAcked {
+		t.Error("missing patch original acked tag")
+	}
+	if !hasReviewed {
+		t.Error("missing cover original reviewed tag")
+	}
+}
+
+func TestMigrateTagsFromContent_SkipsEmpty(t *testing.T) {
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	MigrateTagsFromContent(d)
+
+	tags := d.GetTagsForSeries(50)
+	if len(tags) != 0 {
+		t.Errorf("tags len=%d, want 0 (no content)", len(tags))
+	}
+}
+
 func TestFilterHeaders(t *testing.T) {
 	raw := map[string]interface{}{
 		"From":                    "Lorem Ipsum <lorem@ipsum.example>",

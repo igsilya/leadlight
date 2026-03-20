@@ -170,12 +170,22 @@ func migrate(db *sql.DB) error {
 	if ver != commentSchemaVersion {
 		db.Exec("UPDATE patches SET comments_fetched = 0")
 		db.Exec("UPDATE covers SET comments_fetched = 0")
-		db.Exec(
-			`INSERT OR REPLACE INTO sync_state
-			 (key, value) VALUES
-			 ('comment_schema', ?)`, commentSchemaVersion)
+		db.Exec(`INSERT OR REPLACE INTO sync_state
+			(key, value) VALUES ('comment_schema', ?)`,
+			commentSchemaVersion)
 	}
 	db.Exec(`UPDATE patches SET detail_fetched = 0
 		WHERE detail_fetched = 1 AND content = ''`)
+
+	var tagVer string
+	db.QueryRow(
+		`SELECT value FROM sync_state WHERE key = 'tag_schema'`,
+	).Scan(&tagVer)
+	if tagVer != "1" {
+		db.Exec("UPDATE patches SET comments_fetched = 0")
+		db.Exec("UPDATE covers SET comments_fetched = 0")
+		db.Exec(`INSERT OR REPLACE INTO sync_state
+			(key, value) VALUES ('tag_schema', '1')`)
+	}
 	return nil
 }

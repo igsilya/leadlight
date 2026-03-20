@@ -800,6 +800,32 @@ func (d *DB) GetCommentCountForSeries(seriesID int) int {
 	return count
 }
 
+func (d *DB) GetPatchContent() map[int]string {
+	return d.getContentMap(
+		"SELECT id, content FROM patches WHERE content != ''")
+}
+
+func (d *DB) GetCoverContent() map[int]string {
+	return d.getContentMap(
+		"SELECT id, content FROM covers WHERE content != ''")
+}
+
+func (d *DB) getContentMap(query string) map[int]string {
+	rows, err := d.conn.Query(query)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int]string{}
+	for rows.Next() {
+		var id int
+		var content string
+		rows.Scan(&id, &content)
+		result[id] = content
+	}
+	return result
+}
+
 func (d *DB) GetAllPatchNames() map[int]string {
 	return d.getAllNames("patches")
 }
