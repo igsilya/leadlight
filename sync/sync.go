@@ -799,10 +799,13 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 	}
 }
 
-func MigrateTagsFromContent(d *db.DB) {
-	if d.GetSyncState("tags_content_migrated") == "done" {
+const tagSchemaVersion = "2"
+
+func MigrateTags(d *db.DB) {
+	if d.GetSyncState("tag_schema") == tagSchemaVersion {
 		return
 	}
+
 	patches := d.GetPatchContent()
 	for id, content := range patches {
 		tags := extractReviewTags(content)
@@ -819,9 +822,27 @@ func MigrateTagsFromContent(d *db.DB) {
 			d.SaveTags(0, id, 0, "original", tags)
 		}
 	}
-	log.Printf("SYNC: migrated original tags: %d patches, %d covers",
+
+	for _, patchID := range d.GetPatchIDsWithComments() {
+		comments := d.GetComments(patchID)
+		d.ClearTags(patchID, 0, "comment")
+		for _, c := range comments {
+			tags := extractReviewTags(c.Content)
+			d.SaveTags(patchID, 0, c.ID, "comment", tags)
+		}
+	}
+	for _, coverID := range d.GetCoverIDsWithComments() {
+		comments := d.GetCommentsForCover(coverID)
+		d.ClearTags(0, coverID, "comment")
+		for _, c := range comments {
+			tags := extractReviewTags(c.Content)
+			d.SaveTags(0, coverID, c.ID, "comment", tags)
+		}
+	}
+
+	log.Printf("SYNC: migrated tags: %d patches, %d covers (content)",
 		len(patches), len(covers))
-	d.SetSyncState("tags_content_migrated", "done")
+	d.SetSyncState("tag_schema", tagSchemaVersion)
 }
 
 var keepHeaders = []string{

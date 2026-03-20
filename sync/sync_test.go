@@ -1431,7 +1431,7 @@ func TestFetchNextDetail_CoverExtractsOriginalTags(t *testing.T) {
 	}
 }
 
-func TestMigrateTagsFromContent(t *testing.T) {
+func TestMigrateTags(t *testing.T) {
 	d, _ := db.Open(":memory:")
 	defer d.Close()
 
@@ -1443,41 +1443,48 @@ func TestMigrateTagsFromContent(t *testing.T) {
 	d.UpdatePatchDetail(100,
 		"Commit message\n\nAcked-by: Lorem <lorem@ex>\n",
 		"diff --git a/f b/f\n", "{}", "[]")
-
 	d.SaveCover(db.CoverRow{
 		ID: 99, SeriesID: 50,
 		Name: "cover", Date: "2026-03-10",
 	})
 	d.UpdateCoverDetail(99,
 		"Cover body\n\nReviewed-by: Dolor <dolor@ex>\n", "{}")
+	d.InsertComment(db.CommentRow{
+		ID: 500, PatchID: 100, Submitter: "Sit",
+		Date: "2026-03-11", Subject: "Re: p1",
+		Content: "Acked-by: Sit <sit@ex>",
+	})
 
-	MigrateTagsFromContent(d)
+	MigrateTags(d)
 
 	tags := d.GetTagsForSeries(50)
-	if len(tags) != 2 {
-		t.Fatalf("tags len=%d, want 2", len(tags))
-	}
-
-	hasAcked, hasReviewed := false, false
+	origAcked, origReviewed, commentAcked := false, false, false
 	for _, tag := range tags {
-		if tag.PatchID == 100 && tag.Type == "acked" &&
-			tag.Source == "original" {
-			hasAcked = true
+		if tag.PatchID == 100 && tag.Source == "original" &&
+			tag.Type == "acked" {
+			origAcked = true
 		}
-		if tag.CoverID == 99 && tag.Type == "reviewed" &&
-			tag.Source == "original" {
-			hasReviewed = true
+		if tag.CoverID == 99 && tag.Source == "original" &&
+			tag.Type == "reviewed" {
+			origReviewed = true
+		}
+		if tag.PatchID == 100 && tag.Source == "comment" &&
+			tag.Type == "acked" {
+			commentAcked = true
 		}
 	}
-	if !hasAcked {
+	if !origAcked {
 		t.Error("missing patch original acked tag")
 	}
-	if !hasReviewed {
+	if !origReviewed {
 		t.Error("missing cover original reviewed tag")
+	}
+	if !commentAcked {
+		t.Error("missing patch comment acked tag")
 	}
 }
 
-func TestMigrateTagsFromContent_SkipsEmpty(t *testing.T) {
+func TestMigrateTags_SkipsIfDone(t *testing.T) {
 	d, _ := db.Open(":memory:")
 	defer d.Close()
 
@@ -1486,12 +1493,16 @@ func TestMigrateTagsFromContent_SkipsEmpty(t *testing.T) {
 		ID: 100, SeriesID: 50, Name: "p1",
 		Date: "2026-03-10", State: "new", Submitter: "Lorem",
 	})
+	d.UpdatePatchDetail(100,
+		"Acked-by: Lorem <lorem@ex>\n",
+		"", "{}", "[]")
 
-	MigrateTagsFromContent(d)
+	d.SetSyncState("tag_schema", tagSchemaVersion)
+	MigrateTags(d)
 
 	tags := d.GetTagsForSeries(50)
 	if len(tags) != 0 {
-		t.Errorf("tags len=%d, want 0 (no content)", len(tags))
+		t.Errorf("should skip: len=%d, want 0", len(tags))
 	}
 }
 

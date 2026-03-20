@@ -42,7 +42,7 @@ func main() {
 
 	client := api.NewClient(cfg)
 
-	appSync.MigrateTagsFromContent(database)
+	appSync.MigrateTags(database)
 
 	if cfg.Theme != "" {
 		tui.SetTheme(cfg.Theme)

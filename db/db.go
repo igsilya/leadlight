@@ -774,6 +774,31 @@ func (d *DB) GetCommentCountForSeries(seriesID int) int {
 	return count
 }
 
+func (d *DB) GetPatchIDsWithComments() []int {
+	return d.getIDList(
+		"SELECT DISTINCT patch_id FROM comments WHERE patch_id > 0")
+}
+
+func (d *DB) GetCoverIDsWithComments() []int {
+	return d.getIDList(
+		"SELECT DISTINCT cover_id FROM comments WHERE cover_id > 0")
+}
+
+func (d *DB) getIDList(query string) []int {
+	rows, err := d.conn.Query(query)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (d *DB) GetPatchContent() map[int]string {
 	return d.getContentMap(
 		"SELECT id, content FROM patches WHERE content != ''")
