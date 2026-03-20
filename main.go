@@ -11,6 +11,7 @@ import (
 	"leadlight/api"
 	"leadlight/config"
 	"leadlight/db"
+	"leadlight/status"
 	appSync "leadlight/sync"
 	"leadlight/tui"
 )
@@ -52,13 +53,18 @@ func main() {
 	m.LogBuf = logBuf
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
+	statusReg := status.NewRegistry(func() {
+		p.Send(tui.StatusUpdateMsg{})
+	})
+	m.Status = statusReg
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	syncer := appSync.NewSyncer(
 		client, database, cfg, func() {
 			p.Send(tui.SyncUpdateMsg{})
-		})
+		}, statusReg)
 
 	m.RequestMbox = func(patchID int) {
 		log.Printf("MAIN: RequestMbox callback called, patchID=%d",

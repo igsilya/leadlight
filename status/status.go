@@ -1,0 +1,99 @@
+package status
+
+import (
+	"sync"
+	"time"
+)
+
+type Key string
+
+const (
+	Sync            Key = "sync"
+	BgSync          Key = "bgsync"
+	Comments        Key = "comments"
+	BgComments      Key = "bgcomments"
+	BgCoverComments Key = "bgcovercomments"
+	Detail          Key = "detail"
+	Archive         Key = "archive"
+	Update          Key = "update"
+	Info            Key = "info"
+)
+
+type entry struct {
+	message   string
+	spinner   bool
+	updatedAt time.Time
+	expireAt  time.Time
+}
+
+type Registry struct {
+	mu       sync.Mutex
+	entries  map[Key]entry
+	onChange func()
+}
+
+func NewRegistry(onChange func()) *Registry {
+	return &Registry{
+		entries:  map[Key]entry{},
+		onChange: onChange,
+	}
+}
+
+func (r *Registry) Set(key Key, msg string, spinner bool) {
+	r.mu.Lock()
+	r.entries[key] = entry{
+		message: msg, spinner: spinner,
+		updatedAt: time.Now(),
+	}
+	r.mu.Unlock()
+	if r.onChange != nil {
+		r.onChange()
+	}
+}
+
+func (r *Registry) SetTimed(
+	key Key, msg string, d time.Duration,
+) {
+	r.mu.Lock()
+	now := time.Now()
+	r.entries[key] = entry{
+		message: msg, updatedAt: now,
+		expireAt: now.Add(d),
+	}
+	r.mu.Unlock()
+	if r.onChange != nil {
+		r.onChange()
+	}
+}
+
+func (r *Registry) Clear(key Key) {
+	r.mu.Lock()
+	delete(r.entries, key)
+	r.mu.Unlock()
+	if r.onChange != nil {
+		r.onChange()
+	}
+}
+
+func (r *Registry) Active() (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for key, e := range r.entries {
+		if !e.expireAt.IsZero() && now.After(e.expireAt) {
+			delete(r.entries, key)
+		}
+	}
+	var latest entry
+	found := false
+	for _, e := range r.entries {
+		if !found || e.updatedAt.After(latest.updatedAt) {
+			latest = e
+			found = true
+		}
+	}
+	if !found {
+		return "", false
+	}
+	return latest.message, latest.spinner
+}

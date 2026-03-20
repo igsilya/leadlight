@@ -96,18 +96,7 @@ func (m *Model) renderPatchView() string {
 			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%", pct))
 	}
 
-	if m.status != "" && strings.HasSuffix(m.status, "...") {
-		spinner := spinnerFrames[m.spinnerFrame]
-		right := statusStyle.Render(
-			fmt.Sprintf("%s %s", spinner, m.status))
-		gap := m.width - lipgloss.Width(status) -
-			lipgloss.Width(right)
-		if gap < 2 {
-			gap = 2
-		}
-		status += lipgloss.NewStyle().Width(gap).Render("") + right
-	}
-
+	status = m.appendActiveStatus(status)
 	return body + "\n" + status
 }
 
@@ -555,23 +544,7 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		filterLabel + " q quit | ↑/↓ pgup/dn navigate" +
 			" | enter view | space expand | / filter | " + toggleHint)
 
-	if m.status == "" {
-		out.WriteString(help)
-		return
-	}
-
-	spinner := spinnerFrames[m.spinnerFrame]
-	status := statusStyle.Render(
-		fmt.Sprintf("%s %s", spinner, m.status))
-
-	gap := m.width - lipgloss.Width(help) - lipgloss.Width(status)
-	if gap < 2 {
-		gap = 2
-	}
-
-	out.WriteString(help)
-	out.WriteString(lipgloss.NewStyle().Width(gap).Render(""))
-	out.WriteString(status)
+	out.WriteString(m.appendActiveStatus(help))
 }
 
 func (m *Model) renderSelectorBar(out *strings.Builder) {
@@ -679,6 +652,25 @@ func (m *Model) renderLogConsole(height int) string {
 	out.WriteString(m.logHelp().Render(
 		"tab switch  ` close  ↑/↓ scroll  w write"))
 	return out.String()
+}
+
+func (m *Model) appendActiveStatus(left string) string {
+	msg, spinner := m.Status.Active()
+	if msg == "" {
+		return left
+	}
+	var right string
+	if spinner {
+		frame := spinnerFrames[m.spinnerFrame]
+		right = statusStyle.Render(fmt.Sprintf("%s %s", frame, msg))
+	} else {
+		right = statusStyle.Render(msg)
+	}
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 2 {
+		gap = 2
+	}
+	return left + lipgloss.NewStyle().Width(gap).Render("") + right
 }
 
 func renderCell(text string, width int) string {

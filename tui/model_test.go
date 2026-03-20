@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"leadlight/db"
+	"leadlight/status"
 )
 
 func testModel() *Model {
@@ -41,6 +42,7 @@ func testModel() *Model {
 	m := NewModelWithData(columns, rows, 2)
 	m.states = []string{"Active", "Inactive", "Pending", "Away"}
 	m.token = "test-token"
+	m.Status = status.NewRegistry(nil)
 	m.width = 120
 	m.height = 30
 	return m
@@ -257,7 +259,8 @@ func TestKeyD_NoToken(t *testing.T) {
 	if m.selectorMode != selectorNone {
 		t.Error("selector should not open without token")
 	}
-	if m.status == "" {
+	msg, _ := m.Status.Active()
+	if msg == "" {
 		t.Error("should show error status")
 	}
 }

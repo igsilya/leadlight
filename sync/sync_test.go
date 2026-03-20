@@ -14,6 +14,7 @@ import (
 	"leadlight/api"
 	"leadlight/config"
 	"leadlight/db"
+	"leadlight/status"
 )
 
 const testProjectJSON = `{
@@ -52,7 +53,8 @@ func setupSyncer(
 		srv.URL, "test-project", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	return s, d
 }
 
@@ -306,7 +308,8 @@ func TestFetchMbox_FromLore(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 
 	d.SavePatch(db.PatchRow{
 		ID: 100, Name: "test",
@@ -353,7 +356,8 @@ func TestFetchMbox_FromPatchwork(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 
 	d.SavePatch(db.PatchRow{
 		ID: 100, Name: "test",
@@ -416,7 +420,8 @@ func TestIncrementalSync(t *testing.T) {
 		srv.URL, "test-project", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.incrementalSync(context.Background())
 
 	row, _ := d.GetPatch(100)
@@ -486,7 +491,8 @@ func TestInitialSync(t *testing.T) {
 		srv.URL, "test-project", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.initialSync(context.Background())
 
 	v := d.GetSyncState("initial_sync_complete")
@@ -614,7 +620,7 @@ func TestFetchEvents_NotifiesPerPage(t *testing.T) {
 	notifyCount := 0
 	s := NewSyncer(client, d, cfg, func() {
 		notifyCount++
-	})
+	}, status.NewRegistry(nil))
 
 	s.fetchEventsSince(context.Background(), "2026-03-10")
 
@@ -682,7 +688,7 @@ func TestFetchPatches_NotifiesPerPage(t *testing.T) {
 	notifyCount := 0
 	s := NewSyncer(client, d, cfg, func() {
 		notifyCount++
-	})
+	}, status.NewRegistry(nil))
 
 	s.fetchAllPatches(context.Background())
 
@@ -749,7 +755,8 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 
 	s.fetchNextComments(context.Background())
 
@@ -1637,7 +1644,8 @@ func TestCheckMailArchive(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 
 	s.checkMailArchive(context.Background())
 
@@ -1712,7 +1720,8 @@ func TestCheckMailArchive_SkipsOldMessages(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.checkMailArchive(context.Background())
 
 	// Patch 1000 should be reset (new message 200 matches)
@@ -1763,7 +1772,8 @@ func TestCheckMailArchive_CoverComments(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.checkMailArchive(context.Background())
 
 	ids := d.GetCoversNeedingComments()
@@ -1875,7 +1885,8 @@ func TestFetchMbox_DoesNotCacheBotChallenge(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	result := s.fetchMbox(context.Background(), 100, false)
 
 	if result.Err == nil {
@@ -1910,7 +1921,8 @@ func TestUserRequestLoop_HandlesMbox(t *testing.T) {
 		"https://example.com", "test", nil,
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1978,7 +1990,8 @@ func TestFixIncompletePatches_FixesOrphan(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.fixIncompletePatches(context.Background())
 
 	row, _ := d.GetPatch(100)
@@ -2040,7 +2053,8 @@ func TestFixIncompletePatches_FixesViaSeries(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.fixIncompletePatches(context.Background())
 
 	// Both patches should have submitter set
@@ -2138,7 +2152,8 @@ func TestFetchMissingSeries_BulkUpdate(t *testing.T) {
 		10*time.Millisecond)
 
 	notified := false
-	s := NewSyncer(client, d, cfg, func() { notified = true })
+	s := NewSyncer(client, d, cfg, func() { notified = true },
+		status.NewRegistry(nil))
 	s.fetchMissingSeries(context.Background())
 
 	if d.GetOldestIncompleteSeriesDate() != "" {
@@ -2186,7 +2201,8 @@ func TestFetchMissingSeries_SkipsWhenComplete(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.fetchMissingSeries(context.Background())
 
 	if apiCalled {
@@ -2224,7 +2240,8 @@ func TestFetchMissingSeries_StopsWhenStuck(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	s.fetchMissingSeries(context.Background())
 
 	if reqCount != 1 {
@@ -2262,7 +2279,8 @@ func TestFetchCoverMbox(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	result := s.fetchCoverMbox(context.Background(), 50)
 
 	if result.Err != nil {
@@ -2296,7 +2314,8 @@ func TestFetchCoverMbox_Cached(t *testing.T) {
 		"https://pw.example.com", "test", nil,
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	result := s.fetchCoverMbox(context.Background(), 50)
 
 	if result.Err != nil {
@@ -2319,7 +2338,8 @@ func TestFetchCoverMbox_NotFound(t *testing.T) {
 		"https://pw.example.com", "test", nil,
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {})
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
 	result := s.fetchCoverMbox(context.Background(), 999)
 
 	if result.Err == nil {

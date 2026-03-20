@@ -4,8 +4,11 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"leadlight/status"
 )
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -14,17 +17,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.logConsole = !m.logConsole
 		m.logFocused = m.logConsole
 		m.logOffset = 0
-		if !m.logConsole {
-			m.status = ""
-		}
 		m.invalidateRowCache()
 		return m, nil
 	}
 	if m.logConsole && key == "tab" {
 		m.logFocused = !m.logFocused
-		if !strings.HasSuffix(m.status, "...") {
-			m.status = ""
-		}
 		return m, nil
 	}
 	if m.logConsole && m.logFocused {
@@ -32,7 +29,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "esc":
 			m.logConsole = false
 			m.logFocused = false
-			m.status = ""
 			m.invalidateRowCache()
 			return m, nil
 		case "up", "k", "down", "j",
@@ -83,10 +79,6 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "q", "ctrl+c":
-		if !strings.HasSuffix(m.status, "...") {
-			m.status = ""
-		}
-
 		if m.filterMode {
 			m.clearFilter()
 			return m, nil
@@ -204,7 +196,6 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "f5":
 		if m.RequestSync != nil {
-			m.status = "Syncing..."
 			m.RequestSync()
 		}
 	}
@@ -297,7 +288,6 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prevComment()
 	case "f5":
 		if m.RequestSync != nil {
-			m.status = "Syncing..."
 			m.RequestSync()
 		}
 	}
@@ -322,7 +312,8 @@ func (m *Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "w":
 		if m.LogBuf != nil {
 			m.LogBuf.SaveToFile("leadlight.log")
-			m.status = "Wrote leadlight.log"
+			m.Status.SetTimed(status.Info,
+				"Wrote leadlight.log", 3*time.Second)
 		}
 	}
 	if m.logOffset < 0 {
@@ -334,7 +325,8 @@ func (m *Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) openStateSelector() {
 	if m.token == "" {
 		log.Println("TUI: no auth token for state selector")
-		m.status = "No auth token configured"
+		m.Status.SetTimed(status.Info,
+			"No auth token configured", 3*time.Second)
 		return
 	}
 	log.Printf("TUI: opening state selector with %d options",
@@ -365,7 +357,8 @@ func (m *Model) openStateSelector() {
 func (m *Model) openDelegateSelector() {
 	if m.token == "" {
 		log.Println("TUI: no auth token for delegate selector")
-		m.status = "No auth token configured"
+		m.Status.SetTimed(status.Info,
+			"No auth token configured", 3*time.Second)
 		return
 	}
 	if m.db == nil {
@@ -376,7 +369,8 @@ func (m *Model) openDelegateSelector() {
 	log.Printf("TUI: opening delegate selector with %d maintainers",
 		len(maintainers))
 	if len(maintainers) == 0 {
-		m.status = "No maintainers found"
+		m.Status.SetTimed(status.Info,
+			"No maintainers found", 3*time.Second)
 		return
 	}
 
@@ -422,7 +416,6 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 	switch mode {
 	case selectorState:
 		state := filtered[filteredIdx]
-		m.status = "Updating state..."
 		return func() tea.Msg {
 			for _, pid := range patchIDs {
 				m.RequestPatchUpdate(pid, &state, nil)
@@ -434,7 +427,6 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 			return nil
 		}
 		delegateID := filteredIDs[filteredIdx]
-		m.status = "Updating delegate..."
 		return func() tea.Msg {
 			for _, pid := range patchIDs {
 				m.RequestPatchUpdate(
@@ -602,7 +594,6 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 		m.viewportOffset = 0
 
 		if m.FetchCoverComments != nil && m.db.NeedsCoverComments(cover.ID) {
-			m.status = "Fetching comments..."
 			m.FetchCoverComments(cover.ID)
 		}
 
@@ -628,7 +619,8 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 		})
 	}
 
-	m.status = "No patches in this series"
+	m.Status.SetTimed(status.Info,
+		"No patches in this series", 3*time.Second)
 	return nil
 }
 
@@ -661,7 +653,6 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	m.viewportOffset = 0
 
 	if m.FetchPatchComments != nil && m.db.NeedsPatchComments(patchID) {
-		m.status = "Fetching comments..."
 		m.FetchPatchComments(patchID)
 	}
 

@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/text/unicode/norm"
 
+	"leadlight/status"
+
 	"leadlight/db"
 )
 
@@ -67,6 +69,7 @@ type visibleItem struct {
 }
 
 type SyncUpdateMsg struct{}
+type StatusUpdateMsg struct{}
 type patchUpdateResultMsg struct{ err error }
 type mboxResultMsg struct {
 	patchID int
@@ -118,8 +121,9 @@ type Model struct {
 	scrollOffset    int
 	lastRowsVisible int
 	mu              sync.Mutex
-	status          string
+	Status          *status.Registry
 	spinnerFrame    int
+	spinnerRunning  bool
 
 	highlightProgress  float64
 	highlightAnimating bool
@@ -364,8 +368,18 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinnerTickMsg:
-		if m.status != "" {
+		_, spinning := m.Status.Active()
+		if spinning {
 			m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+			return m, spinnerTickCmd()
+		}
+		m.spinnerRunning = false
+		return m, nil
+
+	case StatusUpdateMsg:
+		_, spinning := m.Status.Active()
+		if spinning && !m.spinnerRunning {
+			m.spinnerRunning = true
 			return m, spinnerTickCmd()
 		}
 		return m, nil
@@ -384,9 +398,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SyncUpdateMsg:
 		m.reloadData()
-		if m.status == "Syncing..." {
-			m.status = ""
-		}
 		if m.viewMode == viewPatch {
 			if len(m.viewportLines) == 1 &&
 				(m.viewportLines[0] == "Fetching..." ||
@@ -400,10 +411,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case patchUpdateResultMsg:
 		if msg.err != nil {
 			log.Printf("TUI: patch update error: %v", msg.err)
-			m.status = "Update failed: " + msg.err.Error()
 		} else {
 			log.Println("TUI: patch update success")
-			m.status = ""
 		}
 		return m, nil
 
@@ -474,9 +483,6 @@ func (m *Model) refreshViewportComments() {
 		m.viewComments = GetCommentsForCover(m.db, cover.ID)
 	} else if m.viewingPatchID != 0 {
 		m.viewComments = GetCommentsForPatch(m.db, m.viewingPatchID)
-	}
-	if m.status == "Fetching comments..." {
-		m.status = ""
 	}
 }
 

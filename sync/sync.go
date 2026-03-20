@@ -14,6 +14,7 @@ import (
 	"leadlight/api"
 	"leadlight/config"
 	"leadlight/db"
+	"leadlight/status"
 )
 
 const commentSkipCooldown = 30 * time.Minute
@@ -29,6 +30,7 @@ type Syncer struct {
 	syncNowC    chan struct{}
 	commentSkip map[int]time.Time
 	detailSkip  map[int]time.Time
+	status      *status.Registry
 }
 
 type MboxRequest struct {
@@ -59,12 +61,14 @@ func NewSyncer(
 	d *db.DB,
 	cfg *config.Config,
 	notify func(),
+	st *status.Registry,
 ) *Syncer {
 	return &Syncer{
 		client:      client,
 		db:          d,
 		cfg:         cfg,
 		notify:      notify,
+		status:      st,
 		mboxC:       make(chan MboxRequest, 4),
 		updateC:     make(chan PatchUpdateRequest, 4),
 		commentC:    make(chan CommentRequest, 4),
@@ -97,6 +101,7 @@ func (s *Syncer) RequestMbox(patchID int) MboxResult {
 func (s *Syncer) RequestComments(id int, isCover bool) {
 	select {
 	case s.commentC <- CommentRequest{ID: id, IsCover: isCover}:
+		s.status.Set(status.Comments, "Fetching comments...", true)
 	default:
 	}
 }
@@ -104,6 +109,7 @@ func (s *Syncer) RequestComments(id int, isCover bool) {
 func (s *Syncer) RequestSync() {
 	select {
 	case s.syncNowC <- struct{}{}:
+		s.status.Set(status.Sync, "Syncing...", true)
 	default:
 	}
 }
@@ -166,6 +172,7 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 				} else {
 					s.fetchCommentsForPatch(ctx, req.ID)
 				}
+				s.status.Clear(status.Comments)
 				s.notify()
 			}()
 		}
@@ -185,8 +192,11 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	lastMaintainerRefresh := time.Now()
 
 	doSync := func() {
+		s.status.Set(status.BgSync, "Checking events...", true)
 		s.incrementalSync(ctx)
 		s.fixIncompletePatches(ctx)
+		s.status.Clear(status.BgSync)
+		s.status.Clear(status.Sync)
 		s.notify()
 		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
 			s.fetchMaintainers(ctx)
@@ -209,9 +219,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
-	s.fetchNextComments(ctx)
-	s.fetchNextCoverComments(ctx)
-	s.notify()
+	s.runCommentCycle(ctx)
 
 	ticker := time.NewTicker(commentInterval)
 	defer ticker.Stop()
@@ -221,11 +229,17 @@ func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.fetchNextComments(ctx)
-			s.fetchNextCoverComments(ctx)
-			s.notify()
+			s.runCommentCycle(ctx)
 		}
 	}
+}
+
+func (s *Syncer) runCommentCycle(ctx context.Context) {
+	s.fetchNextComments(ctx)
+	s.fetchNextCoverComments(ctx)
+	s.status.Clear(status.BgComments)
+	s.status.Clear(status.BgCoverComments)
+	s.notify()
 }
 
 func (s *Syncer) runArchiveLoop(ctx context.Context, wg *gosync.WaitGroup) {
@@ -591,6 +605,11 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 
 func (s *Syncer) fetchNextComments(ctx context.Context) {
 	ids := s.db.GetPatchesNeedingComments(s.cfg.States)
+	if len(ids) > 0 {
+		s.status.Set(status.BgComments,
+			fmt.Sprintf("Fetching comments (%d remaining)...",
+				len(ids)), true)
+	}
 	for _, patchID := range ids {
 		if t, ok := s.commentSkip[patchID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -617,6 +636,11 @@ func (s *Syncer) fetchNextComments(ctx context.Context) {
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) {
 	ids := s.db.GetCoversNeedingComments()
+	if len(ids) > 0 {
+		s.status.Set(status.BgCoverComments,
+			fmt.Sprintf("Fetching cover comments (%d remaining)...",
+				len(ids)), true)
+	}
 	for _, coverID := range ids {
 		if t, ok := s.commentSkip[coverID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -671,6 +695,8 @@ func (s *Syncer) fetchCommentsForCover(ctx context.Context, coverID int) {
 }
 
 func (s *Syncer) checkMailArchive(ctx context.Context) {
+	s.status.Set(status.Archive, "Checking mail archive...", true)
+	defer s.status.Clear(status.Archive)
 	now := time.Now()
 	s.checkArchiveMonth(ctx, now.Year(), now.Month())
 	if now.Day() <= 2 {
@@ -743,12 +769,23 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 			return
 		case <-ticker.C:
 			s.fetchNextDetail(ctx)
+			s.notify()
 		}
 	}
 }
 
 func (s *Syncer) fetchNextDetail(ctx context.Context) {
 	patchIDs := s.db.GetPatchesNeedingDetail()
+	coverIDs := s.db.GetCoversNeedingDetail()
+	total := len(patchIDs) + len(coverIDs)
+	if total > 0 {
+		s.status.Set(status.Detail,
+			fmt.Sprintf("Fetching details (%d remaining)...",
+				total), true)
+	} else {
+		s.status.Clear(status.Detail)
+		return
+	}
 	for _, id := range patchIDs {
 		if t, ok := s.detailSkip[id]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -775,7 +812,6 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 		return
 	}
 
-	coverIDs := s.db.GetCoversNeedingDetail()
 	for _, id := range coverIDs {
 		if t, ok := s.detailSkip[id]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -923,6 +959,7 @@ func (s *Syncer) updateCoverTagsFromComments(coverID int) {
 func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) error {
 	log.Printf("SYNC: handlePatchUpdate patch %d state=%v delegate=%v",
 		req.PatchID, req.State, req.DelegateID)
+	s.status.Set(status.Update, "Updating...", true)
 	update := api.PatchUpdate{
 		State:    req.State,
 		Delegate: req.DelegateID,
@@ -930,9 +967,12 @@ func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) 
 	_, err := s.client.UpdatePatch(ctx, req.PatchID, update)
 	if err != nil {
 		log.Printf("SYNC: patch update %d failed: %v", req.PatchID, err)
+		s.status.SetTimed(status.Update,
+			fmt.Sprintf("Update failed: %v", err), 5*time.Second)
 		return err
 	}
 	log.Printf("SYNC: patch update %d success, syncing events", req.PatchID)
+	s.status.SetTimed(status.Update, "Updated", 3*time.Second)
 	s.incrementalSync(ctx)
 	s.notify()
 	return nil
