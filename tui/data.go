@@ -181,8 +181,11 @@ func LoadFromDB(
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		patches := d.GetPatchesForSeries(s.ID)
-		rows = append(rows,
-			seriesToRow(s, patches, listPrefix, delegateNames))
+		tags := d.GetTagsForSeries(s.ID)
+		comments := d.GetCommentCountForSeries(s.ID)
+		rows = append(rows, seriesToRow(
+			s, patches, listPrefix, delegateNames,
+			tags, comments))
 	}
 	return rows, nil
 }
@@ -190,6 +193,7 @@ func LoadFromDB(
 func seriesToRow(
 	s db.SeriesRow, patches []db.PatchRow,
 	listPrefix string, delegateNames map[string]string,
+	tags []db.TagRow, commentCount int,
 ) RowData {
 	name := s.Name
 	if name == "" && len(patches) > 0 {
@@ -213,23 +217,27 @@ func seriesToRow(
 			aggregateState(patches),
 			s.Submitter,
 			formatAge(s.Date),
-			formatSeriesReviews(patches),
+			formatSeriesReviews(patches, tags),
 			formatSeriesChecks(patches),
 			formatDelegate(aggregateDelegate(patches), delegateNames),
 		},
 		Style: RowStyle{
-			Background: colorForSeries(s, patches),
+			Background: colorForSeries(s, patches, tags, commentCount),
 		},
 	}
 
 	row.SubRows = make([][]string, len(patches))
 	for i, p := range patches {
-		row.SubRows[i] = patchToSubRow(p, listPrefix, delegateNames)
+		row.SubRows[i] = patchToSubRow(
+			p, listPrefix, delegateNames, tags)
 	}
 	return row
 }
 
-func patchToSubRow(p db.PatchRow, listPrefix string, dlgNames map[string]string) []string {
+func patchToSubRow(
+	p db.PatchRow, listPrefix string,
+	dlgNames map[string]string, tags []db.TagRow,
+) []string {
 	cleaned, ver := parsePatchName(p.Name, listPrefix)
 	return []string{
 		strconv.Itoa(p.ID),
@@ -238,7 +246,7 @@ func patchToSubRow(p db.PatchRow, listPrefix string, dlgNames map[string]string)
 		displayState(p.State),
 		p.Submitter,
 		formatAge(p.Date),
-		formatPatchReviews(p),
+		formatPatchReviews(p.ID, tags),
 		formatChecks(p),
 		formatDelegate(p.Delegate, dlgNames),
 	}
@@ -280,20 +288,54 @@ func formatAge(dateStr string) string {
 	}
 }
 
-func formatPatchReviews(p db.PatchRow) string {
-	return fmt.Sprintf("%d/%d/%d/%d",
-		p.AckedBy, p.Fixes, p.ReviewedBy, p.TestedBy)
+func computePatchAFRT(patchID int, tags []db.TagRow) (a, f, r, t int) {
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		if tag.PatchID != patchID && tag.CoverID == 0 {
+			continue
+		}
+		key := tag.Type + "\x00" + tag.Identity
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		switch tag.Type {
+		case "acked":
+			a++
+		case "fixes":
+			f++
+		case "reviewed":
+			r++
+		case "tested":
+			t++
+		}
+	}
+	return
 }
 
-func formatSeriesReviews(patches []db.PatchRow) string {
-	a, f, r, te := 0, 0, 0, 0
+func formatPatchReviews(patchID int, tags []db.TagRow) string {
+	a, f, r, t := computePatchAFRT(patchID, tags)
+	return fmt.Sprintf("%d/%d/%d/%d", a, f, r, t)
+}
+
+func formatSeriesReviews(patches []db.PatchRow, tags []db.TagRow) string {
+	a, f, r, t := 0, 0, 0, 0
 	for _, p := range patches {
-		a += p.AckedBy
-		f += p.Fixes
-		r += p.ReviewedBy
-		te += p.TestedBy
+		pa, pf, pr, pt := computePatchAFRT(p.ID, tags)
+		a += pa
+		f += pf
+		r += pr
+		t += pt
 	}
-	return fmt.Sprintf("%d/%d/%d/%d", a, f, r, te)
+	return fmt.Sprintf("%d/%d/%d/%d", a, f, r, t)
+}
+
+func isTerminalState(state string) bool {
+	switch state {
+	case "new", "under-review":
+		return false
+	}
+	return true
 }
 
 func formatChecks(p db.PatchRow) string {
@@ -325,37 +367,77 @@ func parseDate(dateStr string) time.Time {
 
 func colorForSeries(
 	s db.SeriesRow, patches []db.PatchRow,
+	tags []db.TagRow, commentCount int,
 ) string {
-	totalAcked, totalFixes, totalReviewed := 0, 0, 0
-	hasDelegated := false
-
+	allTerminal := len(patches) > 0
 	for _, p := range patches {
-		totalAcked += p.AckedBy
-		totalFixes += p.Fixes
-		totalReviewed += p.ReviewedBy
-		if p.Delegate != "" {
-			hasDelegated = true
+		if !isTerminalState(p.State) {
+			allTerminal = false
+			break
 		}
+	}
+	if allTerminal {
+		return "grey"
+	}
+
+	if isAllReviewed(patches, tags) {
+		return "green"
 	}
 
 	age := time.Since(parseDate(s.Date))
+	hasComments := commentCount > 0
+	old := age > 14*24*time.Hour
+	veryOld := age > 60*24*time.Hour
 
 	switch {
-	case age > 60*24*time.Hour:
-		return "black"
-	case totalAcked > 0 || totalReviewed > 0 || totalFixes > 0:
-		return "green"
-	case hasDelegated:
-		return "grey"
-	case age > 28*24*time.Hour:
-		return "darkred"
-	case age > 14*24*time.Hour:
-		return "lightred"
-	case age > 7*24*time.Hour:
-		return "white"
-	default:
+	case old && hasComments:
 		return "yellow"
+	case !old && hasComments:
+		return "white"
+	case veryOld:
+		return "black"
+	case !old:
+		return "lightred"
+	default:
+		return "darkred"
 	}
+}
+
+func isAllReviewed(patches []db.PatchRow, tags []db.TagRow) bool {
+	if len(patches) == 0 {
+		return false
+	}
+	// R = all comment tags across the series
+	commentTags := map[string]bool{}
+	for _, tag := range tags {
+		if tag.Source == "comment" {
+			commentTags[tag.Type+"\x00"+tag.Identity] = true
+		}
+	}
+	if len(commentTags) == 0 {
+		return false
+	}
+	for _, p := range patches {
+		if !patchOverlapsComments(p.ID, tags, commentTags) {
+			return false
+		}
+	}
+	return true
+}
+
+func patchOverlapsComments(
+	patchID int, tags []db.TagRow, commentTags map[string]bool,
+) bool {
+	for _, tag := range tags {
+		if tag.PatchID != patchID && tag.CoverID == 0 {
+			continue
+		}
+		key := tag.Type + "\x00" + tag.Identity
+		if commentTags[key] {
+			return true
+		}
+	}
+	return false
 }
 
 func convertComments(rows []db.CommentRow) []CommentInfo {

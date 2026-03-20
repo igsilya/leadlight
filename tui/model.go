@@ -223,8 +223,11 @@ func (m *Model) reloadData() {
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		patches := m.db.GetPatchesForSeries(s.ID)
+		tags := m.db.GetTagsForSeries(s.ID)
+		comments := m.db.GetCommentCountForSeries(s.ID)
 		row := seriesToRow(
-			s, patches, m.listPrefix, m.delegateNames)
+			s, patches, m.listPrefix, m.delegateNames,
+			tags, comments)
 		sid := strconv.Itoa(s.ID)
 		if expanded[sid] {
 			row.Expanded = true

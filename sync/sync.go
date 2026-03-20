@@ -766,6 +766,7 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 			detail.Content, detail.Diff,
 			string(headers), string(prefixes))
 		if detail.Content != "" {
+			s.db.ClearTags(id, 0, "original")
 			tags := extractReviewTags(detail.Content)
 			s.db.SaveTags(id, 0, 0, "original", tags)
 		}
@@ -790,6 +791,7 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) {
 		s.db.UpdateCoverDetail(id,
 			cover.Content, string(hdrs))
 		if cover.Content != "" {
+			s.db.ClearTags(0, id, "original")
 			tags := extractReviewTags(cover.Content)
 			s.db.SaveTags(0, id, 0, "original", tags)
 		}
@@ -805,6 +807,7 @@ func MigrateTagsFromContent(d *db.DB) {
 	for id, content := range patches {
 		tags := extractReviewTags(content)
 		if len(tags) > 0 {
+			d.ClearTags(id, 0, "original")
 			d.SaveTags(id, 0, 0, "original", tags)
 		}
 	}
@@ -812,6 +815,7 @@ func MigrateTagsFromContent(d *db.DB) {
 	for id, content := range covers {
 		tags := extractReviewTags(content)
 		if len(tags) > 0 {
+			d.ClearTags(0, id, "original")
 			d.SaveTags(0, id, 0, "original", tags)
 		}
 	}
@@ -877,21 +881,11 @@ func (s *Syncer) saveComments(comments []api.Comment, patchID, coverID int) {
 
 func (s *Syncer) updatePatchTagsFromComments(patchID int) {
 	comments := s.db.GetComments(patchID)
-	merged := tagMap{}
-
 	s.db.ClearTags(patchID, 0, "comment")
 	for _, c := range comments {
 		tags := extractReviewTags(c.Content)
-		merged = mergeTagMaps(merged, tags)
 		s.db.SaveTags(patchID, 0, c.ID, "comment", tags)
 	}
-
-	s.db.UpdatePatchTags(patchID,
-		len(merged["acked"]),
-		len(merged["fixes"]),
-		len(merged["reviewed"]),
-		len(merged["tested"]),
-	)
 }
 
 func (s *Syncer) updateCoverTagsFromComments(coverID int) {
@@ -1150,19 +1144,4 @@ func addTag(tags tagMap, category, identity string) {
 		tags[category] = map[string]bool{}
 	}
 	tags[category][identity] = true
-}
-
-func mergeTagMaps(maps ...tagMap) tagMap {
-	result := tagMap{}
-	for _, m := range maps {
-		for cat, identities := range m {
-			if result[cat] == nil {
-				result[cat] = map[string]bool{}
-			}
-			for id := range identities {
-				result[cat][id] = true
-			}
-		}
-	}
-	return result
 }

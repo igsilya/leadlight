@@ -263,34 +263,6 @@ func TestUpdatePatchDetail(t *testing.T) {
 	}
 }
 
-func TestUpdatePatchTags(t *testing.T) {
-	d := openTestDB(t)
-
-	d.SavePatch(PatchRow{
-		ID: 100, Name: "test",
-		Date: "2026-03-10T12:00:00", State: "new",
-		Submitter: "Lorem",
-	})
-
-	if err := d.UpdatePatchTags(100, 2, 1, 3, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	row, _ := d.GetPatch(100)
-	if row.AckedBy != 2 {
-		t.Errorf("AckedBy = %d", row.AckedBy)
-	}
-	if row.Fixes != 1 {
-		t.Errorf("Fixes = %d", row.Fixes)
-	}
-	if row.ReviewedBy != 3 {
-		t.Errorf("ReviewedBy = %d", row.ReviewedBy)
-	}
-	if row.TestedBy != 1 {
-		t.Errorf("TestedBy = %d", row.TestedBy)
-	}
-}
-
 func TestUpdatePatchChecks(t *testing.T) {
 	d := openTestDB(t)
 
@@ -512,6 +484,7 @@ func TestSaveTags_ClearsOnResave(t *testing.T) {
 		t.Fatalf("after first save: len=%d", len(rows))
 	}
 
+	d.ClearTags(100, 0, "original")
 	tags2 := map[string]map[string]bool{
 		"reviewed": {"Dolor <dolor@amet.example>": true},
 	}
@@ -519,10 +492,32 @@ func TestSaveTags_ClearsOnResave(t *testing.T) {
 
 	rows = d.GetTagsForSeries(50)
 	if len(rows) != 1 {
-		t.Fatalf("after resave: len=%d, want 1", len(rows))
+		t.Fatalf("after clear+resave: len=%d, want 1", len(rows))
 	}
 	if rows[0].Type != "reviewed" {
 		t.Errorf("type=%q, want reviewed", rows[0].Type)
+	}
+}
+
+func TestSaveTags_MultipleComments(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	d.ClearTags(100, 0, "comment")
+	d.SaveTags(100, 0, 500, "comment", map[string]map[string]bool{
+		"acked": {"Lorem <lorem@ex>": true},
+	})
+	d.SaveTags(100, 0, 501, "comment", map[string]map[string]bool{
+		"acked": {"Dolor <dolor@ex>": true},
+	})
+
+	rows := d.GetTagsForSeries(50)
+	if len(rows) != 2 {
+		t.Fatalf("len=%d, want 2 (both comments)", len(rows))
 	}
 }
 

@@ -68,11 +68,6 @@ type PatchRow struct {
 	ChecksPass     int
 	ChecksFail     int
 	ChecksPending  int
-	CommentsCount  int
-	AckedBy        int
-	Fixes          int
-	ReviewedBy     int
-	TestedBy       int
 	Content        string
 	Diff           string
 	Headers        string
@@ -292,20 +287,6 @@ func (d *DB) UpdatePatchChecks(
 			checks_pending = ?
 		WHERE id = ?`,
 		pass, fail, pending, patchID)
-	return err
-}
-
-func (d *DB) UpdatePatchTags(
-	patchID, acked, fixes, reviewed, tested int,
-) error {
-	d.writeMu.Lock()
-	defer d.writeMu.Unlock()
-	_, err := d.conn.Exec(`
-		UPDATE patches
-		SET acked_by = ?, fixes = ?,
-			reviewed_by = ?, tested_by = ?
-		WHERE id = ?`,
-		acked, fixes, reviewed, tested, patchID)
 	return err
 }
 
@@ -598,11 +579,6 @@ const patchSelectSQL = `
 		COALESCE(checks_pass, 0),
 		COALESCE(checks_fail, 0),
 		COALESCE(checks_pending, 0),
-		COALESCE(comments_count, 0),
-		COALESCE(acked_by, 0),
-		COALESCE(fixes, 0),
-		COALESCE(reviewed_by, 0),
-		COALESCE(tested_by, 0),
 		COALESCE(content, ''),
 		COALESCE(diff, ''),
 		COALESCE(headers, ''),
@@ -622,8 +598,7 @@ func scanPatchRow(
 		&r.DelegateID, &r.Delegate, &r.DelegateEmail,
 		&r.WebURL, &r.MsgID, &r.MboxURL, &r.CommitRef,
 		&r.Archived, &r.ChecksPass, &r.ChecksFail,
-		&r.ChecksPending, &r.CommentsCount,
-		&r.AckedBy, &r.Fixes, &r.ReviewedBy, &r.TestedBy,
+		&r.ChecksPending,
 		&r.Content, &r.Diff, &r.Headers, &r.Prefixes,
 		&r.MboxContent, &r.DetailFetched, &r.UpdatedAt)
 }
@@ -749,7 +724,6 @@ func (d *DB) SaveTags(
 	patchID, coverID, commentID int,
 	source string, tags map[string]map[string]bool,
 ) {
-	d.ClearTags(patchID, coverID, source)
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	for tagType, identities := range tags {

@@ -181,11 +181,11 @@ func migrate(db *sql.DB) error {
 	db.QueryRow(
 		`SELECT value FROM sync_state WHERE key = 'tag_schema'`,
 	).Scan(&tagVer)
-	if tagVer != "1" {
+	if tagVer != "2" {
 		db.Exec("UPDATE patches SET comments_fetched = 0")
 		db.Exec("UPDATE covers SET comments_fetched = 0")
 		db.Exec(`INSERT OR REPLACE INTO sync_state
-			(key, value) VALUES ('tag_schema', '1')`)
+			(key, value) VALUES ('tag_schema', '2')`)
 	}
 	return nil
 }

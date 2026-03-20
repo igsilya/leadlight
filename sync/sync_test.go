@@ -238,17 +238,13 @@ func TestExtractReviewTags_SkipsQuoted(t *testing.T) {
 }
 
 func TestExtractReviewTags_Dedup(t *testing.T) {
-	c1 := "Acked-by: Lorem <lorem@ipsum.example>\n"
-	c2 := "Acked-by: Lorem <lorem@ipsum.example>\n" +
+	content := "Acked-by: Lorem <lorem@ipsum.example>\n" +
+		"Acked-by: Lorem <lorem@ipsum.example>\n" +
 		"Acked-by: Dolor <dolor@amet.example>\n"
-
-	all := mergeTagMaps(
-		extractReviewTags(c1),
-		extractReviewTags(c2),
-	)
-	if len(all["acked"]) != 2 {
+	tags := extractReviewTags(content)
+	if len(tags["acked"]) != 2 {
 		t.Errorf("acked = %d, want 2 (deduped)",
-			len(all["acked"]))
+			len(tags["acked"]))
 	}
 }
 
@@ -734,8 +730,15 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 	d, _ := db.Open(":memory:")
 	defer d.Close()
 
-	savePatch(d, 100, "p1", "2026-03-10", "new")
-	savePatch(d, 101, "p2", "2026-03-10", "new")
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 101, SeriesID: 50, Name: "p2",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
 
 	cfg := &config.Config{
 		Server:  srv.URL,
@@ -748,13 +751,17 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 
 	s := NewSyncer(client, d, cfg, func() {})
 
-	// First call: fetches comments for patch 100
 	s.fetchNextComments(context.Background())
 
-	row, _ := d.GetPatch(100)
-	if row.AckedBy != 1 {
-		t.Errorf("patch 100 AckedBy = %d, want 1",
-			row.AckedBy)
+	tags := d.GetTagsForSeries(50)
+	hasAcked := false
+	for _, tag := range tags {
+		if tag.PatchID == 100 && tag.Type == "acked" {
+			hasAcked = true
+		}
+	}
+	if !hasAcked {
+		t.Error("patch 100 should have acked tag")
 	}
 
 	// Second call: should progress to patch 101

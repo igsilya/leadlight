@@ -54,30 +54,47 @@ func TestFormatAge_Invalid(t *testing.T) {
 	}
 }
 
-func TestFormatReviews(t *testing.T) {
-	got := formatPatchReviews(db.PatchRow{
-		AckedBy: 2, Fixes: 1, ReviewedBy: 3, TestedBy: 0,
-	})
-	if got != "2/1/3/0" {
-		t.Errorf("got %q, want 2/1/3/0", got)
+func TestFormatReviewsFromTags(t *testing.T) {
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "A <a@ex>"},
+		{PatchID: 100, Source: "original", Type: "acked",
+			Identity: "B <b@ex>"},
+		{CoverID: 99, Source: "comment", Type: "reviewed",
+			Identity: "C <c@ex>"},
+	}
+	got := formatPatchReviews(100, tags)
+	if got != "2/0/1/0" {
+		t.Errorf("got %q, want 2/0/1/0", got)
 	}
 }
 
-func TestFormatReviews_AllZero(t *testing.T) {
-	got := formatPatchReviews(db.PatchRow{})
+func TestFormatReviews_NoTags(t *testing.T) {
+	got := formatPatchReviews(100, nil)
 	if got != "0/0/0/0" {
 		t.Errorf("got %q, want 0/0/0/0", got)
 	}
 }
 
-func TestFormatSeriesReviews(t *testing.T) {
+func TestFormatSeriesReviews_FromTags(t *testing.T) {
 	patches := []db.PatchRow{
-		{AckedBy: 1, Fixes: 0, ReviewedBy: 2, TestedBy: 1},
-		{AckedBy: 1, Fixes: 1, ReviewedBy: 0, TestedBy: 0},
+		{ID: 100, SeriesID: 50},
+		{ID: 101, SeriesID: 50},
 	}
-	got := formatSeriesReviews(patches)
-	if got != "2/1/2/1" {
-		t.Errorf("got %q, want 2/1/2/1", got)
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "A <a@ex>"},
+		{PatchID: 101, Source: "comment", Type: "reviewed",
+			Identity: "B <b@ex>"},
+		{CoverID: 99, Source: "comment", Type: "acked",
+			Identity: "C <c@ex>"},
+	}
+	got := formatSeriesReviews(patches, tags)
+	// patch 100: A(acked) + C(acked from cover) = 2 acked
+	// patch 101: B(reviewed) + C(acked from cover) = 1 acked, 1 reviewed
+	// series total: 3 acked, 0 fixes, 1 reviewed, 0 tested
+	if got != "3/0/1/0" {
+		t.Errorf("got %q, want 3/0/1/0", got)
 	}
 }
 
@@ -323,86 +340,211 @@ func testSeriesWithAge(days int) (db.SeriesRow, []db.PatchRow) {
 	d := time.Now().Add(
 		-time.Duration(days) * 24 * time.Hour)
 	date := d.Format("2006-01-02T15:04:05")
-	s := db.SeriesRow{ID: 1, Name: "test", Date: date}
+	s := db.SeriesRow{ID: 50, Name: "test", Date: date}
 	p := []db.PatchRow{{
-		ID: 1, State: "new", Date: date,
+		ID: 100, SeriesID: 50, State: "new", Date: date,
 	}}
 	return s, p
 }
 
-func TestColorForSeries_New(t *testing.T) {
+func TestIsTerminalState(t *testing.T) {
+	terminal := []string{
+		"accepted", "superseded", "rejected",
+		"handled-elsewhere", "not-applicable",
+		"deferred", "changes-requested", "rfc",
+	}
+	for _, s := range terminal {
+		if !isTerminalState(s) {
+			t.Errorf("%q should be terminal", s)
+		}
+	}
+	active := []string{"new", "under-review"}
+	for _, s := range active {
+		if isTerminalState(s) {
+			t.Errorf("%q should NOT be terminal", s)
+		}
+	}
+}
+
+func TestColorForSeries_Grey_AllTerminal(t *testing.T) {
 	s, p := testSeriesWithAge(3)
-	got := colorForSeries(s, p)
+	p[0].State = "accepted"
+	got := colorForSeries(s, p, nil, 5)
+	if got != "grey" {
+		t.Errorf("got %q, want grey", got)
+	}
+}
+
+func TestColorForSeries_Grey_OverridesGreen(t *testing.T) {
+	s, p := testSeriesWithAge(3)
+	p[0].State = "accepted"
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "Lorem <lorem@ex>"},
+	}
+	got := colorForSeries(s, p, tags, 1)
+	if got != "grey" {
+		t.Errorf("got %q, want grey (terminal overrides)", got)
+	}
+}
+
+func TestColorForSeries_Grey_RFCState(t *testing.T) {
+	s, p := testSeriesWithAge(3)
+	p[0].State = "rfc"
+	got := colorForSeries(s, p, nil, 0)
+	if got != "grey" {
+		t.Errorf("got %q, want grey", got)
+	}
+}
+
+func TestColorForSeries_Green_AllReviewed(t *testing.T) {
+	s, p := testSeriesWithAge(3)
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "Lorem <lorem@ex>"},
+	}
+	got := colorForSeries(s, p, tags, 1)
+	if got != "green" {
+		t.Errorf("got %q, want green", got)
+	}
+}
+
+func TestColorForSeries_Green_CoverReview(t *testing.T) {
+	s, p := testSeriesWithAge(3)
+	p = append(p, db.PatchRow{
+		ID: 101, SeriesID: 50, State: "new",
+	})
+	tags := []db.TagRow{
+		{CoverID: 99, Source: "comment", Type: "reviewed",
+			Identity: "Dolor <dolor@ex>"},
+	}
+	got := colorForSeries(s, p, tags, 1)
+	if got != "green" {
+		t.Errorf("got %q, want green (cover review)", got)
+	}
+}
+
+func TestColorForSeries_Green_CrossVersion(t *testing.T) {
+	s, p := testSeriesWithAge(3)
+	p = append(p,
+		db.PatchRow{ID: 101, SeriesID: 50, State: "new"},
+		db.PatchRow{ID: 102, SeriesID: 50, State: "new"},
+	)
+	tags := []db.TagRow{
+		// Patches 100,101 have pre-populated acked-by B (original)
+		{PatchID: 100, Source: "original", Type: "acked",
+			Identity: "B <b@ex>"},
+		{PatchID: 101, Source: "original", Type: "acked",
+			Identity: "B <b@ex>"},
+		// B commented on patch 102 with acked-by (comment)
+		{PatchID: 102, Source: "comment", Type: "acked",
+			Identity: "B <b@ex>"},
+	}
+	got := colorForSeries(s, p, tags, 1)
+	if got != "green" {
+		t.Errorf("got %q, want green (cross-version)", got)
+	}
+}
+
+func TestColorForSeries_NotGreen_PrePopulatedOnly(t *testing.T) {
+	s, p := testSeriesWithAge(3)
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "original", Type: "acked",
+			Identity: "B <b@ex>"},
+	}
+	got := colorForSeries(s, p, tags, 0)
+	if got != "lightred" {
+		t.Errorf("got %q, want lightred (no comments)", got)
+	}
+}
+
+func TestColorForSeries_Yellow_OldWithComments(t *testing.T) {
+	s, p := testSeriesWithAge(21)
+	got := colorForSeries(s, p, nil, 3)
 	if got != "yellow" {
 		t.Errorf("got %q, want yellow", got)
 	}
 }
 
-func TestColorForSeries_UnderReview(t *testing.T) {
-	s, p := testSeriesWithAge(10)
-	got := colorForSeries(s, p)
+func TestColorForSeries_White_YoungWithComments(t *testing.T) {
+	s, p := testSeriesWithAge(7)
+	got := colorForSeries(s, p, nil, 2)
 	if got != "white" {
 		t.Errorf("got %q, want white", got)
 	}
 }
 
-func TestColorForSeries_Aging(t *testing.T) {
-	s, p := testSeriesWithAge(20)
-	got := colorForSeries(s, p)
-	if got != "lightred" {
-		t.Errorf("got %q, want lightred", got)
-	}
-}
-
-func TestColorForSeries_Old(t *testing.T) {
-	s, p := testSeriesWithAge(35)
-	got := colorForSeries(s, p)
-	if got != "darkred" {
-		t.Errorf("got %q, want darkred", got)
-	}
-}
-
-func TestColorForSeries_Stale(t *testing.T) {
+func TestColorForSeries_Black_VeryOldNoComments(t *testing.T) {
 	s, p := testSeriesWithAge(90)
-	got := colorForSeries(s, p)
+	got := colorForSeries(s, p, nil, 0)
 	if got != "black" {
 		t.Errorf("got %q, want black", got)
 	}
 }
 
-func TestColorForSeries_HasReviews(t *testing.T) {
-	s, p := testSeriesWithAge(10)
-	p[0].ReviewedBy = 1
-	got := colorForSeries(s, p)
-	if got != "green" {
-		t.Errorf("got %q, want green", got)
+func TestColorForSeries_Yellow_VeryOldWithComments(t *testing.T) {
+	s, p := testSeriesWithAge(90)
+	got := colorForSeries(s, p, nil, 5)
+	if got != "yellow" {
+		t.Errorf("got %q, want yellow (old but has comments)", got)
 	}
 }
 
-func TestColorForSeries_HasAcked(t *testing.T) {
-	s, p := testSeriesWithAge(10)
-	p[0].AckedBy = 1
-	got := colorForSeries(s, p)
-	if got != "green" {
-		t.Errorf("got %q, want green", got)
+func TestColorForSeries_LightRed_YoungNoComments(t *testing.T) {
+	s, p := testSeriesWithAge(7)
+	got := colorForSeries(s, p, nil, 0)
+	if got != "lightred" {
+		t.Errorf("got %q, want lightred", got)
 	}
 }
 
-func TestColorForSeries_HasFixes(t *testing.T) {
-	s, p := testSeriesWithAge(10)
-	p[0].Fixes = 1
-	got := colorForSeries(s, p)
-	if got != "green" {
-		t.Errorf("got %q, want green", got)
+func TestColorForSeries_DarkRed_OldNoComments(t *testing.T) {
+	s, p := testSeriesWithAge(30)
+	got := colorForSeries(s, p, nil, 0)
+	if got != "darkred" {
+		t.Errorf("got %q, want darkred", got)
 	}
 }
 
-func TestColorForSeries_Delegated(t *testing.T) {
-	s, p := testSeriesWithAge(10)
-	p[0].Delegate = "someone"
-	got := colorForSeries(s, p)
-	if got != "grey" {
-		t.Errorf("got %q, want grey", got)
+func TestComputePatchAFRT(t *testing.T) {
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "original", Type: "acked",
+			Identity: "A <a@ex>"},
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "B <b@ex>"},
+		{PatchID: 100, Source: "comment", Type: "reviewed",
+			Identity: "C <c@ex>"},
+		// Cover tag should be included
+		{CoverID: 99, Source: "comment", Type: "acked",
+			Identity: "D <d@ex>"},
+		// Different patch — should be excluded
+		{PatchID: 200, Source: "comment", Type: "acked",
+			Identity: "E <e@ex>"},
+	}
+	a, f, r, te := computePatchAFRT(100, tags)
+	if a != 3 {
+		t.Errorf("acked=%d, want 3 (A+B+D)", a)
+	}
+	if r != 1 {
+		t.Errorf("reviewed=%d, want 1", r)
+	}
+	if f != 0 || te != 0 {
+		t.Errorf("fixes=%d tested=%d, want 0,0", f, te)
+	}
+}
+
+func TestComputePatchAFRT_Dedup(t *testing.T) {
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "original", Type: "acked",
+			Identity: "A <a@ex>"},
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "A <a@ex>"},
+		{CoverID: 99, Source: "comment", Type: "acked",
+			Identity: "A <a@ex>"},
+	}
+	a, _, _, _ := computePatchAFRT(100, tags)
+	if a != 1 {
+		t.Errorf("acked=%d, want 1 (deduplicated)", a)
 	}
 }
 
@@ -419,7 +561,6 @@ func TestSeriesToRow(t *testing.T) {
 			ID: 100, Name: "[PATCH 1/2] Lorem",
 			Date: date, State: "new",
 			Submitter:  "Lorem Ipsum",
-			AckedBy:    1,
 			ChecksPass: 2,
 		},
 		{
@@ -428,8 +569,12 @@ func TestSeriesToRow(t *testing.T) {
 			Submitter: "Lorem Ipsum",
 		},
 	}
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "Lorem <lorem@ex>"},
+	}
 
-	row := seriesToRow(s, patches, "", nil)
+	row := seriesToRow(s, patches, "", nil, tags, 1)
 
 	if row.Data[0] != "50" {
 		t.Errorf("ID = %q", row.Data[0])
@@ -452,10 +597,6 @@ func TestSeriesToRow(t *testing.T) {
 	if row.Data[8] != "" {
 		t.Errorf("Dlg = %q, want empty", row.Data[8])
 	}
-	if row.Style.Background != "green" {
-		t.Errorf("Background = %q, want green (has acked)",
-			row.Style.Background)
-	}
 	if len(row.SubRows) != 2 {
 		t.Fatalf("SubRows = %d", len(row.SubRows))
 	}
@@ -471,7 +612,7 @@ func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
 		{ID: 100, Name: "[PATCH] Lorem ipsum", Date: d,
 			State: "new", Submitter: "Lorem"},
 	}
-	row := seriesToRow(s, patches, "", nil)
+	row := seriesToRow(s, patches, "", nil, nil, 0)
 	if row.Data[2] != "[PATCH] Lorem ipsum" {
 		t.Errorf("Name = %q, want first patch name", row.Data[2])
 	}
