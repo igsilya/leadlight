@@ -100,9 +100,7 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down", "j":
-		m.mu.Lock()
 		items := m.getVisibleItems()
-		m.mu.Unlock()
 		if m.selectedRow < len(items)-1 {
 			m.selectedRow++
 			m.adjustScrollDown(len(items))
@@ -111,9 +109,7 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "pgdown", "ctrl+d":
-		m.mu.Lock()
 		items := m.getVisibleItems()
-		m.mu.Unlock()
 		halfPage := m.maxVisibleRows() / 2
 		if halfPage < 1 {
 			halfPage = 1
@@ -146,16 +142,13 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.resetHighlight()
 
 	case "end":
-		m.mu.Lock()
 		items := m.getVisibleItems()
-		m.mu.Unlock()
 		m.selectedRow = len(items) - 1
 		m.ensureSelectedVisible()
 		m.updateSelectedID()
 		return m, m.resetHighlight()
 
 	case " ":
-		m.mu.Lock()
 		items := m.getVisibleItems()
 		if m.selectedRow < len(items) {
 			item := items[m.selectedRow]
@@ -166,21 +159,17 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.ensureSelectedVisible()
 			}
 		}
-		m.mu.Unlock()
 		m.updateSelectedID()
 
 	case "enter":
-		m.mu.Lock()
 		items := m.getVisibleItems()
 		if m.selectedRow < len(items) {
 			item := items[m.selectedRow]
-			m.mu.Unlock()
 			if item.isSubRow {
 				return m, m.openPatchView(item)
 			}
 			return m, m.openSeriesView(item)
 		}
-		m.mu.Unlock()
 
 	case "s":
 		log.Println("TUI: key 's' pressed")
@@ -335,9 +324,7 @@ func (m *Model) openStateSelector() {
 	m.selectorIDs = nil
 	m.selectorCursor = 0
 
-	m.mu.Lock()
 	items := m.getVisibleItems()
-	m.mu.Unlock()
 	if m.selectedRow < len(items) {
 		current := ""
 		if m.StatusColIdx < len(items[m.selectedRow].data) {
@@ -395,9 +382,7 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 	log.Printf("TUI: applying selection idx=%d mode=%d value=%q",
 		filteredIdx, m.selectorMode, filtered[filteredIdx])
 
-	m.mu.Lock()
 	items := m.getVisibleItems()
-	m.mu.Unlock()
 	if m.selectedRow >= len(items) {
 		m.selectorMode = selectorNone
 		return nil

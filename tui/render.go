@@ -30,10 +30,7 @@ func (m *Model) renderMainView() string {
 
 	m.renderHeader(&out, widths)
 
-	m.mu.Lock()
 	items := m.getVisibleItems()
-	m.mu.Unlock()
-
 	m.renderRows(&out, items, widths)
 	m.padToBottom(&out)
 	m.renderStatusBar(&out)

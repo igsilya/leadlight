@@ -4,7 +4,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -120,7 +119,6 @@ type Model struct {
 	height          int
 	scrollOffset    int
 	lastRowsVisible int
-	mu              sync.Mutex
 	Status          *status.Registry
 	spinnerFrame    int
 	spinnerRunning  bool
@@ -240,12 +238,10 @@ func (m *Model) reloadData() {
 		rows = append(rows, row)
 	}
 
-	m.mu.Lock()
 	m.RowData = rows
 	m.restoreSelection()
 	m.ensureSelectedVisible()
 	m.invalidateRowCache()
-	m.mu.Unlock()
 }
 
 func (m *Model) restoreSelection() {
