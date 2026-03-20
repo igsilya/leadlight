@@ -968,6 +968,142 @@ func TestGetAllPatchesBatch_EmptyStates(t *testing.T) {
 	}
 }
 
+func TestGetPatchesNeedingComments_Order(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "old-active",
+		Date: "2026-03-01", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "new-terminal",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 52, Name: "new-active",
+		Date: "2026-03-15", State: "new", Submitter: "Lorem",
+	})
+
+	ids := d.GetPatchesNeedingComments([]string{"new"})
+	if len(ids) != 3 {
+		t.Fatalf("len = %d, want 3", len(ids))
+	}
+	// Active newest first, then terminal
+	if ids[0] != 300 {
+		t.Errorf("[0] = %d, want 300 (newest active)", ids[0])
+	}
+	if ids[1] != 100 {
+		t.Errorf("[1] = %d, want 100 (older active)", ids[1])
+	}
+	if ids[2] != 200 {
+		t.Errorf("[2] = %d, want 200 (terminal)", ids[2])
+	}
+}
+
+func TestGetCoversNeedingComments_Order(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-01", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-10", 1)
+	d.SaveSeriesSummary(52, "s3", "2026-03-15", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-01", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 52, Name: "p3",
+		Date: "2026-03-15", State: "new", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{
+		ID: 90, SeriesID: 50, Name: "c1", Date: "2026-03-01",
+	})
+	d.SaveCover(CoverRow{
+		ID: 91, SeriesID: 51, Name: "c2", Date: "2026-03-10",
+	})
+	d.SaveCover(CoverRow{
+		ID: 92, SeriesID: 52, Name: "c3", Date: "2026-03-15",
+	})
+
+	ids := d.GetCoversNeedingComments([]string{"new"})
+	if len(ids) != 3 {
+		t.Fatalf("len = %d, want 3", len(ids))
+	}
+	// Active series covers first (newest), then terminal
+	if ids[0] != 92 {
+		t.Errorf("[0] = %d, want 92 (newest active)", ids[0])
+	}
+	if ids[1] != 90 {
+		t.Errorf("[1] = %d, want 90 (older active)", ids[1])
+	}
+	if ids[2] != 91 {
+		t.Errorf("[2] = %d, want 91 (terminal)", ids[2])
+	}
+}
+
+func TestGetPatchesNeedingDetail_Order(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "old-active",
+		Date: "2026-03-01", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "terminal",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 52, Name: "new-active",
+		Date: "2026-03-15", State: "under-review",
+		Submitter: "Lorem",
+	})
+
+	ids := d.GetPatchesNeedingDetail([]string{"new", "under-review"})
+	if len(ids) != 3 {
+		t.Fatalf("len = %d, want 3", len(ids))
+	}
+	if ids[0] != 300 {
+		t.Errorf("[0] = %d, want 300 (newest active)", ids[0])
+	}
+	if ids[1] != 100 {
+		t.Errorf("[1] = %d, want 100 (older active)", ids[1])
+	}
+	if ids[2] != 200 {
+		t.Errorf("[2] = %d, want 200 (terminal)", ids[2])
+	}
+}
+
+func TestGetCoversNeedingDetail_Order(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-01", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-01", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{
+		ID: 90, SeriesID: 50, Name: "c1", Date: "2026-03-01",
+	})
+	d.SaveCover(CoverRow{
+		ID: 91, SeriesID: 51, Name: "c2", Date: "2026-03-10",
+	})
+
+	ids := d.GetCoversNeedingDetail([]string{"new"})
+	if len(ids) != 2 {
+		t.Fatalf("len = %d, want 2", len(ids))
+	}
+	if ids[0] != 90 {
+		t.Errorf("[0] = %d, want 90 (active series)", ids[0])
+	}
+	if ids[1] != 91 {
+		t.Errorf("[1] = %d, want 91 (terminal series)", ids[1])
+	}
+}
+
 func TestBatchMethods_Empty(t *testing.T) {
 	d := openTestDB(t)
 	p := d.GetAllPatchesBatch(true, nil)
@@ -996,7 +1132,7 @@ func TestGetPatchesNeedingDetail(t *testing.T) {
 	})
 	d.UpdatePatchDetail(100, "body", "diff", "{}", "[]")
 
-	ids := d.GetPatchesNeedingDetail()
+	ids := d.GetPatchesNeedingDetail(nil)
 	if len(ids) != 1 || ids[0] != 101 {
 		t.Errorf("got %v, want [101]", ids)
 	}
@@ -1014,7 +1150,7 @@ func TestGetCoversNeedingDetail(t *testing.T) {
 	})
 	d.UpdateCoverDetail(99, "body", "{}")
 
-	ids := d.GetCoversNeedingDetail()
+	ids := d.GetCoversNeedingDetail(nil)
 	if len(ids) != 1 || ids[0] != 100 {
 		t.Errorf("got %v, want [100]", ids)
 	}
@@ -1290,15 +1426,14 @@ func TestGetPatchesNeedingComments_Priority(t *testing.T) {
 	if len(ids) != 3 {
 		t.Fatalf("got %d, want 3", len(ids))
 	}
-	if ids[0] != 101 {
-		t.Errorf("[0] = %d, want 101 (new)", ids[0])
+	if ids[0] != 102 {
+		t.Errorf("[0] = %d, want 102 (newest active)", ids[0])
 	}
-	if ids[1] != 102 {
-		t.Errorf("[1] = %d, want 102 (under-review)",
-			ids[1])
+	if ids[1] != 101 {
+		t.Errorf("[1] = %d, want 101 (older active)", ids[1])
 	}
 	if ids[2] != 100 {
-		t.Errorf("[2] = %d, want 100 (accepted, last)",
+		t.Errorf("[2] = %d, want 100 (terminal, last)",
 			ids[2])
 	}
 }
@@ -1420,19 +1555,19 @@ func TestGetCoversNeedingComments(t *testing.T) {
 		Name: "Cover B", Date: "2026-03-11",
 	})
 
-	ids := d.GetCoversNeedingComments()
+	ids := d.GetCoversNeedingComments(nil)
 	if len(ids) != 2 {
 		t.Fatalf("len = %d, want 2", len(ids))
 	}
 
 	d.MarkCoverCommentsFetched(99)
-	ids = d.GetCoversNeedingComments()
+	ids = d.GetCoversNeedingComments(nil)
 	if len(ids) != 1 || ids[0] != 100 {
 		t.Errorf("after mark: ids = %v", ids)
 	}
 
 	d.MarkCoverCommentsFetched(100)
-	ids = d.GetCoversNeedingComments()
+	ids = d.GetCoversNeedingComments(nil)
 	if len(ids) != 0 {
 		t.Errorf("after mark all: ids = %v", ids)
 	}
@@ -1447,13 +1582,13 @@ func TestResetCoverCommentsFetched(t *testing.T) {
 	})
 
 	d.MarkCoverCommentsFetched(99)
-	ids := d.GetCoversNeedingComments()
+	ids := d.GetCoversNeedingComments(nil)
 	if len(ids) != 0 {
 		t.Fatalf("after mark: len = %d", len(ids))
 	}
 
 	d.ResetCoverCommentsFetched(99)
-	ids = d.GetCoversNeedingComments()
+	ids = d.GetCoversNeedingComments(nil)
 	if len(ids) != 1 || ids[0] != 99 {
 		t.Errorf("after reset: ids = %v", ids)
 	}

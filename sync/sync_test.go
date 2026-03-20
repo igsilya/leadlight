@@ -758,6 +758,9 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 	s := NewSyncer(client, d, cfg, func() {},
 		status.NewRegistry(nil))
 
+	// With id DESC ordering, patch 101 (higher ID) is fetched first
+	s.fetchNextComments(context.Background())
+	// Then patch 100
 	s.fetchNextComments(context.Background())
 
 	tags := d.GetTagsForSeries(50)
@@ -770,11 +773,6 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 	if !hasAcked {
 		t.Error("patch 100 should have acked tag")
 	}
-
-	// Second call: should progress to patch 101
-	s.fetchNextComments(context.Background())
-
-	// Verify patch 101 was fetched (not 100 again)
 	needs := d.GetPatchesNeedingComments([]string{"new"})
 	if len(needs) != 0 {
 		t.Errorf("still needing comments: %v", needs)
@@ -835,7 +833,7 @@ func TestProcessEvent_CoverCommentCreated(t *testing.T) {
 	})
 	d.MarkCoverCommentsFetched(99)
 
-	ids := d.GetCoversNeedingComments()
+	ids := d.GetCoversNeedingComments(nil)
 	if len(ids) != 0 {
 		t.Fatal("should be fetched before event")
 	}
@@ -852,7 +850,7 @@ func TestProcessEvent_CoverCommentCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ids = d.GetCoversNeedingComments()
+	ids = d.GetCoversNeedingComments(nil)
 	if len(ids) != 1 || ids[0] != 99 {
 		t.Errorf("got %v, want [99] (reset by event)", ids)
 	}
@@ -887,14 +885,14 @@ func TestFetchNextCoverComments(t *testing.T) {
 		Date: "2026-03-10T12:00:00",
 	})
 
-	ids := d.GetCoversNeedingComments()
+	ids := d.GetCoversNeedingComments(nil)
 	if len(ids) != 1 {
 		t.Fatalf("before: len = %d", len(ids))
 	}
 
 	s.fetchNextCoverComments(context.Background())
 
-	ids = d.GetCoversNeedingComments()
+	ids = d.GetCoversNeedingComments(nil)
 	if len(ids) != 0 {
 		t.Errorf("after: ids = %v, want empty", ids)
 	}
@@ -1009,11 +1007,11 @@ func TestFetchNextComments_SkipsFailedPatch(t *testing.T) {
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			called = append(called, r.URL.Path)
-			if r.URL.Path == "/patches/100/comments/" {
+			if r.URL.Path == "/patches/200/comments/" {
 				w.WriteHeader(500)
 				return
 			}
-			if r.URL.Path == "/patches/200/comments/" {
+			if r.URL.Path == "/patches/100/comments/" {
 				json.NewEncoder(w).Encode([]api.Comment{})
 				return
 			}
@@ -1024,16 +1022,17 @@ func TestFetchNextComments_SkipsFailedPatch(t *testing.T) {
 	savePatch(d, 100, "p1", "2026-03-10", "new")
 	savePatch(d, 200, "p2", "2026-03-11", "new")
 
+	// With id DESC, patch 200 is tried first (fails)
 	s.fetchNextComments(context.Background())
-	if len(called) != 1 || called[0] != "/patches/100/comments/" {
+	if len(called) != 1 || called[0] != "/patches/200/comments/" {
 		t.Fatalf("first call: %v", called)
 	}
 
-	// Second call should skip 100 (cooldown) and try 200
+	// Second call should skip 200 (cooldown) and try 100
 	called = nil
 	s.fetchNextComments(context.Background())
-	if len(called) != 1 || called[0] != "/patches/200/comments/" {
-		t.Errorf("second call should skip 100: %v", called)
+	if len(called) != 1 || called[0] != "/patches/100/comments/" {
+		t.Errorf("second call should skip 200: %v", called)
 	}
 }
 
@@ -1099,14 +1098,14 @@ func TestFetchNextDetail_Patch(t *testing.T) {
 	s, d := setupSyncer(t, handler)
 	savePatch(d, 100, "Lorem ipsum", "2026-03-10", "new")
 
-	ids := d.GetPatchesNeedingDetail()
+	ids := d.GetPatchesNeedingDetail(nil)
 	if len(ids) != 1 {
 		t.Fatalf("before: %v", ids)
 	}
 
 	s.fetchNextDetail(context.Background())
 
-	ids = d.GetPatchesNeedingDetail()
+	ids = d.GetPatchesNeedingDetail(nil)
 	if len(ids) != 0 {
 		t.Errorf("after: %v, want empty", ids)
 	}
@@ -1123,7 +1122,7 @@ func TestFetchNextDetail_ErrorNoMark(t *testing.T) {
 
 	s.fetchNextDetail(context.Background())
 
-	ids := d.GetPatchesNeedingDetail()
+	ids := d.GetPatchesNeedingDetail(nil)
 	if len(ids) != 1 || ids[0] != 100 {
 		t.Errorf("should stay unfetched: %v", ids)
 	}
@@ -1201,14 +1200,14 @@ func TestFetchNextDetail_Cover(t *testing.T) {
 		Name: "Lorem cover", Date: "2026-03-10",
 	})
 
-	ids := d.GetCoversNeedingDetail()
+	ids := d.GetCoversNeedingDetail(nil)
 	if len(ids) != 1 {
 		t.Fatalf("before: %v", ids)
 	}
 
 	s.fetchNextDetail(context.Background())
 
-	ids = d.GetCoversNeedingDetail()
+	ids = d.GetCoversNeedingDetail(nil)
 	if len(ids) != 0 {
 		t.Errorf("after: %v, want empty", ids)
 	}
@@ -1776,7 +1775,7 @@ func TestCheckMailArchive_CoverComments(t *testing.T) {
 		status.NewRegistry(nil))
 	s.checkMailArchive(context.Background())
 
-	ids := d.GetCoversNeedingComments()
+	ids := d.GetCoversNeedingComments(nil)
 	got := map[int]bool{}
 	for _, id := range ids {
 		got[id] = true

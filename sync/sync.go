@@ -640,7 +640,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 }
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
-	ids := s.db.GetCoversNeedingComments()
+	ids := s.db.GetCoversNeedingComments(s.cfg.States)
 	if len(ids) > 0 {
 		s.status.Set(status.BgCoverComments,
 			fmt.Sprintf("Fetching cover comments (%d remaining)...",
@@ -784,8 +784,8 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 }
 
 func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
-	patchIDs := s.db.GetPatchesNeedingDetail()
-	coverIDs := s.db.GetCoversNeedingDetail()
+	patchIDs := s.db.GetPatchesNeedingDetail(s.cfg.States)
+	coverIDs := s.db.GetCoversNeedingDetail(s.cfg.States)
 	total := len(patchIDs) + len(coverIDs)
 	if total == 0 {
 		s.status.Clear(status.Detail)

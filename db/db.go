@@ -667,11 +667,27 @@ func (d *DB) GetIncompletePatches() []int {
 	return ids
 }
 
-func (d *DB) GetPatchesNeedingDetail() []int {
-	rows, err := d.conn.Query(`
+func (d *DB) GetPatchesNeedingDetail(
+	priorityStates []string,
+) []int {
+	if len(priorityStates) == 0 {
+		priorityStates = []string{"new", "under-review"}
+	}
+	placeholders := make([]string, len(priorityStates))
+	args := make([]interface{}, len(priorityStates))
+	for i, s := range priorityStates {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := fmt.Sprintf(`
 		SELECT id FROM patches
 		WHERE COALESCE(detail_fetched, 0) = 0
-		ORDER BY id DESC`)
+		ORDER BY
+			CASE WHEN state IN (%s)
+				THEN 0 ELSE 1 END,
+			id DESC`,
+		strings.Join(placeholders, ","))
+	rows, err := d.conn.Query(query, args...)
 	if err != nil {
 		return nil
 	}
@@ -685,11 +701,29 @@ func (d *DB) GetPatchesNeedingDetail() []int {
 	return ids
 }
 
-func (d *DB) GetCoversNeedingDetail() []int {
-	rows, err := d.conn.Query(`
-		SELECT id FROM covers
-		WHERE COALESCE(detail_fetched, 0) = 0
-		ORDER BY id DESC`)
+func (d *DB) GetCoversNeedingDetail(
+	priorityStates []string,
+) []int {
+	if len(priorityStates) == 0 {
+		priorityStates = []string{"new", "under-review"}
+	}
+	placeholders := make([]string, len(priorityStates))
+	args := make([]interface{}, len(priorityStates))
+	for i, s := range priorityStates {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := fmt.Sprintf(`
+		SELECT cv.id FROM covers cv
+		WHERE COALESCE(cv.detail_fetched, 0) = 0
+		ORDER BY
+			(SELECT MIN(CASE WHEN p.state IN (%s)
+				THEN 0 ELSE 1 END)
+			 FROM patches p
+			 WHERE p.series_id = cv.series_id),
+			cv.id DESC`,
+		strings.Join(placeholders, ","))
+	rows, err := d.conn.Query(query, args...)
 	if err != nil {
 		return nil
 	}
@@ -999,7 +1033,7 @@ func (d *DB) GetPatchesNeedingComments(
 		ORDER BY
 			CASE WHEN state IN (%s)
 				THEN 0 ELSE 1 END,
-			id`,
+			id DESC`,
 		strings.Join(placeholders, ","))
 
 	rows, err := d.conn.Query(query, args...)
@@ -1129,11 +1163,29 @@ func (d *DB) GetCommentsForCover(coverID int) []CommentRow {
 	return result
 }
 
-func (d *DB) GetCoversNeedingComments() []int {
-	rows, err := d.conn.Query(`
-		SELECT id FROM covers
-		WHERE comments_fetched = 0
-		ORDER BY id`)
+func (d *DB) GetCoversNeedingComments(
+	priorityStates []string,
+) []int {
+	if len(priorityStates) == 0 {
+		priorityStates = []string{"new", "under-review"}
+	}
+	placeholders := make([]string, len(priorityStates))
+	args := make([]interface{}, len(priorityStates))
+	for i, s := range priorityStates {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := fmt.Sprintf(`
+		SELECT cv.id FROM covers cv
+		WHERE cv.comments_fetched = 0
+		ORDER BY
+			(SELECT MIN(CASE WHEN p.state IN (%s)
+				THEN 0 ELSE 1 END)
+			 FROM patches p
+			 WHERE p.series_id = cv.series_id),
+			cv.id DESC`,
+		strings.Join(placeholders, ","))
+	rows, err := d.conn.Query(query, args...)
 	if err != nil {
 		return nil
 	}
