@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -36,7 +38,14 @@ func Load(dir string) (*Config, error) {
 	}
 
 	if cfg.DBPath == "" {
-		cfg.DBPath = ".leadlight.db"
+		gd := gitCommonDir(dir)
+		if gd != "" {
+			llDir := filepath.Join(gd, "leadlight")
+			os.MkdirAll(llDir, 0755)
+			cfg.DBPath = filepath.Join(llDir, "leadlight.db")
+		} else {
+			cfg.DBPath = ".leadlight.db"
+		}
 	}
 
 	rawStates := getWithFallback(dir, "leadlight.states", "pw.states")
@@ -50,6 +59,20 @@ func Load(dir string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func gitCommonDir(dir string) string {
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	gd := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(dir, gd)
+	}
+	return gd
 }
 
 func gitConfigGet(dir, key string) string {

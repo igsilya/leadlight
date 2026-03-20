@@ -1,7 +1,10 @@
 package config
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -146,8 +149,13 @@ func TestDefaults_DBPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DBPath != ".leadlight.db" {
-		t.Errorf("DBPath = %q, want .leadlight.db", cfg.DBPath)
+	expected := filepath.Join(dir, ".git", "leadlight", "leadlight.db")
+	if cfg.DBPath != expected {
+		t.Errorf("DBPath = %q, want %q", cfg.DBPath, expected)
+	}
+	llDir := filepath.Join(dir, ".git", "leadlight")
+	if _, err := os.Stat(llDir); os.IsNotExist(err) {
+		t.Error(".git/leadlight/ directory not created")
 	}
 }
 
@@ -417,8 +425,10 @@ func TestLoad_MinimalConfig(t *testing.T) {
 	if cfg.Token != "" {
 		t.Errorf("Token = %q, want empty", cfg.Token)
 	}
-	if cfg.DBPath != ".leadlight.db" {
-		t.Errorf("DBPath = %q, want default", cfg.DBPath)
+	if !strings.HasSuffix(cfg.DBPath, filepath.Join(
+		".git", "leadlight", "leadlight.db")) {
+		t.Errorf("DBPath = %q, want .git/leadlight/leadlight.db",
+			cfg.DBPath)
 	}
 	if cfg.BaseURL != "https://pw2.example.com" {
 		t.Errorf("BaseURL = %q", cfg.BaseURL)
