@@ -18,10 +18,6 @@ type ListPagePatch struct {
 	Name       string
 	SeriesID   int
 	SeriesName string
-	AckedBy    int
-	Fixes      int
-	ReviewedBy int
-	TestedBy   int
 	ChecksPass int
 	ChecksWarn int
 	ChecksFail int
@@ -105,11 +101,6 @@ var patchRowIDRe = regexp.MustCompile(`^patch_row:(\d+)$`)
 var seriesIDRe = regexp.MustCompile(`series=(\d+)`)
 
 // Patchwork 2.x: "N Acked-by / N Fixes / N Reviewed-by / N Tested-by"
-// Patchwork 3.x: "N Acked-by / N Reviewed-by / N Tested-by" (no Fixes)
-var tagTitleRe4 = regexp.MustCompile(
-	`(\d+) Acked-by / (\d+) Fixes / (\d+) Reviewed-by / (\d+) Tested-by`)
-var tagTitleRe3 = regexp.MustCompile(
-	`(\d+) Acked-by / (\d+) Reviewed-by / (\d+) Tested-by`)
 
 func parsePatchRows(doc *html.Node) []ListPagePatch {
 	rows := findNodes(doc, func(n *html.Node) bool {
@@ -158,14 +149,6 @@ func parsePatchRow(tr *html.Node) *ListPagePatch {
 		}
 	}
 
-	if n > 2 {
-		if span := findChild(cells[2], "span"); span != nil {
-			title := getAttr(span, "title")
-			p.AckedBy, p.Fixes, p.ReviewedBy, p.TestedBy =
-				parseTagTitle(title)
-		}
-	}
-
 	if n > 3 {
 		p.ChecksPass, p.ChecksWarn, p.ChecksFail =
 			parseCheckSpans(cells[3])
@@ -192,23 +175,6 @@ func parsePatchRow(tr *html.Node) *ListPagePatch {
 	}
 
 	return p
-}
-
-func parseTagTitle(title string) (a, f, r, te int) {
-	if m := tagTitleRe4.FindStringSubmatch(title); m != nil {
-		a, _ = strconv.Atoi(m[1])
-		f, _ = strconv.Atoi(m[2])
-		r, _ = strconv.Atoi(m[3])
-		te, _ = strconv.Atoi(m[4])
-		return
-	}
-	if m := tagTitleRe3.FindStringSubmatch(title); m != nil {
-		a, _ = strconv.Atoi(m[1])
-		r, _ = strconv.Atoi(m[2])
-		te, _ = strconv.Atoi(m[3])
-		return
-	}
-	return 0, 0, 0, 0
 }
 
 func parseCheckSpans(td *html.Node) (pass, warn, fail int) {

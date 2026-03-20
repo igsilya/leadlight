@@ -48,52 +48,6 @@ func TestBuildListURL_SingleState(t *testing.T) {
 	}
 }
 
-func TestParseTagTitle(t *testing.T) {
-	a, f, r, te := parseTagTitle(
-		"2 Acked-by / 1 Fixes / 0 Reviewed-by / 3 Tested-by")
-	if a != 2 || f != 1 || r != 0 || te != 3 {
-		t.Errorf("got %d,%d,%d,%d want 2,1,0,3",
-			a, f, r, te)
-	}
-}
-
-func TestParseTagTitle_AllZero(t *testing.T) {
-	a, f, r, te := parseTagTitle(
-		"0 Acked-by / 0 Fixes / 0 Reviewed-by / 0 Tested-by")
-	if a != 0 || f != 0 || r != 0 || te != 0 {
-		t.Errorf("got %d,%d,%d,%d", a, f, r, te)
-	}
-}
-
-func TestParseTagTitle_ThreeField(t *testing.T) {
-	a, f, r, te := parseTagTitle(
-		"3 Acked-by / 1 Reviewed-by / 2 Tested-by")
-	if a != 3 || f != 0 || r != 1 || te != 2 {
-		t.Errorf("got %d,%d,%d,%d want 3,0,1,2",
-			a, f, r, te)
-	}
-}
-
-func TestParseTagTitle_ThreeFieldAllZero(t *testing.T) {
-	a, f, r, te := parseTagTitle(
-		"0 Acked-by / 0 Reviewed-by / 0 Tested-by")
-	if a != 0 || f != 0 || r != 0 || te != 0 {
-		t.Errorf("got %d,%d,%d,%d", a, f, r, te)
-	}
-}
-
-func TestParseTagTitle_Invalid(t *testing.T) {
-	a, f, r, te := parseTagTitle("")
-	if a != 0 || f != 0 || r != 0 || te != 0 {
-		t.Errorf("got %d,%d,%d,%d for empty", a, f, r, te)
-	}
-
-	a, f, r, te = parseTagTitle("garbage")
-	if a != 0 || f != 0 || r != 0 || te != 0 {
-		t.Errorf("got %d,%d,%d,%d for garbage", a, f, r, te)
-	}
-}
-
 const testPatchRowHTML = `<html><body><table><tbody>
 <tr id="patch_row:12345">
  <td>
@@ -186,27 +140,6 @@ func TestParsePatchRows(t *testing.T) {
 	}
 	if p.Delegate != "" {
 		t.Errorf("Delegate = %q, want empty", p.Delegate)
-	}
-}
-
-func TestParsePatchRows_WithTags(t *testing.T) {
-	page, err := parseListPage([]byte(testPatchRowHTML))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	p := page.Patches[1]
-	if p.AckedBy != 1 {
-		t.Errorf("AckedBy = %d", p.AckedBy)
-	}
-	if p.ReviewedBy != 2 {
-		t.Errorf("ReviewedBy = %d", p.ReviewedBy)
-	}
-	if p.Fixes != 0 {
-		t.Errorf("Fixes = %d", p.Fixes)
-	}
-	if p.TestedBy != 0 {
-		t.Errorf("TestedBy = %d", p.TestedBy)
 	}
 }
 
@@ -310,9 +243,6 @@ func TestParsePatchRows_ExtraColumns(t *testing.T) {
 	p := page.Patches[0]
 	if p.State != "New" {
 		t.Errorf("State = %q", p.State)
-	}
-	if p.AckedBy != 1 {
-		t.Errorf("AckedBy = %d", p.AckedBy)
 	}
 }
 
