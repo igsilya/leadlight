@@ -224,14 +224,15 @@ func (m *Model) reloadData() {
 	if m.delegateNames == nil {
 		m.delegateNames = m.db.GetDelegateDisplayNames()
 	}
+	allPatches := m.db.GetAllPatchesBatch(m.showAll, m.states)
+	allTags := m.db.GetTagsBatch(m.showAll, m.states)
+	allComments := m.db.GetCommentCountsBatch(m.showAll, m.states)
+
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
-		patches := m.db.GetPatchesForSeries(s.ID)
-		tags := m.db.GetTagsForSeries(s.ID)
-		comments := m.db.GetCommentCountForSeries(s.ID)
 		row := seriesToRow(
-			s, patches, m.listPrefix, m.delegateNames,
-			tags, comments)
+			s, allPatches[s.ID], m.listPrefix, m.delegateNames,
+			allTags[s.ID], allComments[s.ID])
 		sid := strconv.Itoa(s.ID)
 		if expanded[sid] {
 			row.Expanded = true

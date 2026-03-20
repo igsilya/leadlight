@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 CREATE INDEX IF NOT EXISTS idx_tags_patch ON tags(patch_id);
 CREATE INDEX IF NOT EXISTS idx_tags_cover ON tags(cover_id);
+CREATE INDEX IF NOT EXISTS idx_patches_series ON patches(series_id);
+CREATE INDEX IF NOT EXISTS idx_comments_patch ON comments(patch_id);
+CREATE INDEX IF NOT EXISTS idx_comments_cover ON comments(cover_id);
+CREATE INDEX IF NOT EXISTS idx_covers_series ON covers(series_id);
 `
 
 const recountChecks = `

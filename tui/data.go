@@ -178,14 +178,15 @@ func LoadFromDB(
 	listPrefix := detectListPrefix(names)
 	delegateNames := d.GetDelegateDisplayNames()
 
+	allPatches := d.GetAllPatchesBatch(false, states)
+	allTags := d.GetTagsBatch(false, states)
+	allComments := d.GetCommentCountsBatch(false, states)
+
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
-		patches := d.GetPatchesForSeries(s.ID)
-		tags := d.GetTagsForSeries(s.ID)
-		comments := d.GetCommentCountForSeries(s.ID)
 		rows = append(rows, seriesToRow(
-			s, patches, listPrefix, delegateNames,
-			tags, comments))
+			s, allPatches[s.ID], listPrefix, delegateNames,
+			allTags[s.ID], allComments[s.ID]))
 	}
 	return rows, nil
 }

@@ -774,6 +774,128 @@ func (d *DB) GetCommentCountForSeries(seriesID int) int {
 	return count
 }
 
+// seriesIDSubquery returns a SQL subquery that selects series IDs
+// matching the current view filter.  When showAll is true, all
+// series that have at least one patch are included.  When false,
+// only series that have at least one patch in the given states
+// are included.  The subquery is used by the batch methods below
+// to avoid passing large ID lists as parameters — the number of
+// query parameters is always constant (just the state values).
+func (d *DB) seriesIDSubquery(
+	showAll bool, states []string,
+) (string, []interface{}) {
+	if showAll {
+		return `SELECT DISTINCT s.id FROM series s
+			JOIN patches p ON p.series_id = s.id`, nil
+	}
+	parts := make([]string, len(states))
+	args := make([]interface{}, len(states))
+	for i, s := range states {
+		parts[i] = "?"
+		args[i] = s
+	}
+	return fmt.Sprintf(`SELECT DISTINCT s.id FROM series s
+		JOIN patches p ON p.series_id = s.id
+		WHERE p.state IN (%s)`,
+		strings.Join(parts, ",")), args
+}
+
+// GetAllPatchesBatch fetches all patches for all matching series
+// in a single query, returning them grouped by series_id.  Note
+// that ALL patches for a matching series are returned, even if
+// only some of the patches match the state filter — the filter
+// determines which series are included, not which patches.
+func (d *DB) GetAllPatchesBatch(
+	showAll bool, states []string,
+) map[int][]PatchRow {
+	sub, args := d.seriesIDSubquery(showAll, states)
+	query := patchSelectSQL +
+		` WHERE series_id IN (` + sub + `) ORDER BY series_id, id`
+	rows, err := d.conn.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int][]PatchRow{}
+	for rows.Next() {
+		var r PatchRow
+		scanPatchRow(rows, &r)
+		result[r.SeriesID] = append(result[r.SeriesID], r)
+	}
+	return result
+}
+
+// GetTagsBatch fetches all tags for all matching series in a
+// single query.  Tags can be on patches (patch_id > 0) or on
+// covers (cover_id > 0).  The LEFT JOINs with patches and
+// covers resolve the series_id for each tag.  The subquery
+// args are passed twice — once for the patches join filter and
+// once for the covers join filter.
+func (d *DB) GetTagsBatch(
+	showAll bool, states []string,
+) map[int][]TagRow {
+	sub, subArgs := d.seriesIDSubquery(showAll, states)
+	query := `SELECT t.patch_id, t.cover_id, t.comment_id,
+		t.source, t.type, t.identity,
+		COALESCE(p.series_id, c.series_id) as series_id
+		FROM tags t
+		LEFT JOIN patches p ON t.patch_id = p.id
+			AND t.patch_id > 0
+		LEFT JOIN covers c ON t.cover_id = c.id
+			AND t.cover_id > 0
+		WHERE p.series_id IN (` + sub + `)
+		   OR c.series_id IN (` + sub + `)`
+	args := append(subArgs, subArgs...)
+	rows, err := d.conn.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int][]TagRow{}
+	for rows.Next() {
+		var r TagRow
+		var seriesID int
+		rows.Scan(&r.PatchID, &r.CoverID, &r.CommentID,
+			&r.Source, &r.Type, &r.Identity, &seriesID)
+		result[seriesID] = append(result[seriesID], r)
+	}
+	return result
+}
+
+// GetCommentCountsBatch counts comments for all matching series
+// in a single query.  Comments can be on patches or covers, so
+// we use UNION ALL to combine both sources, then GROUP BY
+// series_id.  Series with no comments are not in the result
+// map — the caller gets zero from the Go map's default value.
+// The subquery args are passed twice (patches + covers).
+func (d *DB) GetCommentCountsBatch(
+	showAll bool, states []string,
+) map[int]int {
+	sub, subArgs := d.seriesIDSubquery(showAll, states)
+	query := `SELECT sub.series_id, COUNT(*) FROM (
+		SELECT p.series_id FROM comments c
+		JOIN patches p ON c.patch_id = p.id
+		WHERE p.series_id IN (` + sub + `)
+		UNION ALL
+		SELECT cv.series_id FROM comments c
+		JOIN covers cv ON c.cover_id = cv.id
+		WHERE cv.series_id IN (` + sub + `)
+	) sub GROUP BY sub.series_id`
+	args := append(subArgs, subArgs...)
+	rows, err := d.conn.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int]int{}
+	for rows.Next() {
+		var seriesID, count int
+		rows.Scan(&seriesID, &count)
+		result[seriesID] = count
+	}
+	return result
+}
+
 func (d *DB) GetPatchIDsWithComments() []int {
 	return d.getIDList(
 		"SELECT DISTINCT patch_id FROM comments WHERE patch_id > 0")

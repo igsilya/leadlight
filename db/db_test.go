@@ -626,6 +626,364 @@ func TestGetCommentCountForSeries(t *testing.T) {
 	}
 }
 
+func TestGetAllPatchesBatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-11", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "p2",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p3",
+		Date: "2026-03-11", State: "accepted", Submitter: "Dolor",
+	})
+
+	m := d.GetAllPatchesBatch(false, []string{"new"})
+	if len(m[50]) != 2 {
+		t.Errorf("series 50: %d patches, want 2", len(m[50]))
+	}
+	if len(m[51]) != 0 {
+		t.Errorf("series 51: %d, want 0 (filtered)", len(m[51]))
+	}
+
+	m = d.GetAllPatchesBatch(true, nil)
+	if len(m[50]) != 2 || len(m[51]) != 1 {
+		t.Errorf("show all: s50=%d s51=%d", len(m[50]), len(m[51]))
+	}
+}
+
+func TestGetTagsBatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-11", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-11", State: "new", Submitter: "Dolor",
+	})
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10",
+	})
+	d.SaveTags(100, 0, 0, "original", map[string]map[string]bool{
+		"acked": {"A <a@ex>": true},
+	})
+	d.SaveTags(0, 99, 500, "comment", map[string]map[string]bool{
+		"reviewed": {"B <b@ex>": true},
+	})
+	d.SaveTags(200, 0, 0, "original", map[string]map[string]bool{
+		"tested": {"C <c@ex>": true},
+	})
+
+	m := d.GetTagsBatch(false, []string{"new"})
+	if len(m[50]) != 2 {
+		t.Errorf("series 50: %d tags, want 2", len(m[50]))
+	}
+	if len(m[51]) != 1 {
+		t.Errorf("series 51: %d tags, want 1", len(m[51]))
+	}
+}
+
+func TestGetCommentCountsBatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-11", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-11", State: "new", Submitter: "Dolor",
+	})
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10",
+	})
+	d.InsertComment(CommentRow{
+		ID: 500, PatchID: 100, Submitter: "Lorem",
+		Date: "2026-03-11", Subject: "Re: p1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 501, CoverID: 99, Submitter: "Dolor",
+		Date: "2026-03-11", Subject: "Re: c1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 600, PatchID: 200, Submitter: "Sit",
+		Date: "2026-03-12", Subject: "Re: p2", Content: "ok",
+	})
+
+	m := d.GetCommentCountsBatch(false, []string{"new"})
+	if m[50] != 2 {
+		t.Errorf("series 50: %d comments, want 2", m[50])
+	}
+	if m[51] != 1 {
+		t.Errorf("series 51: %d comments, want 1", m[51])
+	}
+}
+
+func TestGetAllPatchesBatch_MultipleStates(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-11", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-11", State: "under-review",
+		Submitter: "Dolor",
+	})
+
+	m := d.GetAllPatchesBatch(false, []string{"new", "under-review"})
+	if len(m[50]) != 1 || len(m[51]) != 1 {
+		t.Errorf("s50=%d s51=%d, want 1,1", len(m[50]), len(m[51]))
+	}
+}
+
+func TestGetAllPatchesBatch_MixedStates(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "p2",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+
+	m := d.GetAllPatchesBatch(false, []string{"new"})
+	if len(m[50]) != 2 {
+		t.Errorf("should return ALL patches (both states): got %d",
+			len(m[50]))
+	}
+}
+
+func TestGetAllPatchesBatch_Ordering(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 103, SeriesID: 50, Name: "p3",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 102, SeriesID: 50, Name: "p2",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	m := d.GetAllPatchesBatch(true, nil)
+	patches := m[50]
+	if len(patches) != 3 {
+		t.Fatalf("got %d patches", len(patches))
+	}
+	if patches[0].ID != 101 || patches[1].ID != 102 ||
+		patches[2].ID != 103 {
+		t.Errorf("wrong order: %d, %d, %d",
+			patches[0].ID, patches[1].ID, patches[2].ID)
+	}
+}
+
+func TestGetTagsBatch_CoverOnly(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10",
+	})
+	d.SaveTags(0, 99, 500, "comment", map[string]map[string]bool{
+		"acked": {"Lorem <lorem@ex>": true},
+	})
+
+	m := d.GetTagsBatch(false, []string{"new"})
+	if len(m[50]) != 1 {
+		t.Errorf("cover-only tags: got %d, want 1", len(m[50]))
+	}
+	if m[50][0].CoverID != 99 {
+		t.Errorf("cover_id = %d, want 99", m[50][0].CoverID)
+	}
+}
+
+func TestGetTagsBatch_OrphanTags(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-11", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-11", State: "accepted", Submitter: "Dolor",
+	})
+	d.SaveTags(100, 0, 0, "original", map[string]map[string]bool{
+		"acked": {"A <a@ex>": true},
+	})
+	d.SaveTags(200, 0, 0, "original", map[string]map[string]bool{
+		"acked": {"B <b@ex>": true},
+	})
+
+	m := d.GetTagsBatch(false, []string{"new"})
+	if len(m[50]) != 1 {
+		t.Errorf("active series tags: got %d, want 1", len(m[50]))
+	}
+	if len(m[51]) != 0 {
+		t.Errorf("filtered series should have no tags: got %d",
+			len(m[51]))
+	}
+}
+
+func TestGetTagsBatch_MultipleSeries(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-11", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-11", State: "new", Submitter: "Dolor",
+	})
+	d.SaveTags(100, 0, 0, "comment", map[string]map[string]bool{
+		"acked": {"Same <same@ex>": true},
+	})
+	d.SaveTags(200, 0, 0, "comment", map[string]map[string]bool{
+		"acked": {"Same <same@ex>": true},
+	})
+
+	m := d.GetTagsBatch(true, nil)
+	if len(m[50]) != 1 || len(m[51]) != 1 {
+		t.Errorf("same identity, different series: s50=%d s51=%d",
+			len(m[50]), len(m[51]))
+	}
+}
+
+func TestGetCommentCountsBatch_CoverOnly(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10",
+	})
+	d.InsertComment(CommentRow{
+		ID: 500, CoverID: 99, Submitter: "Dolor",
+		Date: "2026-03-11", Subject: "Re: c1", Content: "ok",
+	})
+
+	m := d.GetCommentCountsBatch(false, []string{"new"})
+	if m[50] != 1 {
+		t.Errorf("cover-only comments: got %d, want 1", m[50])
+	}
+}
+
+func TestGetCommentCountsBatch_NoComments(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	m := d.GetCommentCountsBatch(false, []string{"new"})
+	if m[50] != 0 {
+		t.Errorf("no comments: got %d, want 0", m[50])
+	}
+}
+
+func TestBatchConsistency(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "active", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "terminal", "2026-03-11", 1)
+	d.SaveSeriesSummary(52, "mixed", "2026-03-12", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 51, Name: "p2",
+		Date: "2026-03-11", State: "accepted", Submitter: "Dolor",
+	})
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 52, Name: "p3",
+		Date: "2026-03-12", State: "new", Submitter: "Sit",
+	})
+	d.SavePatch(PatchRow{
+		ID: 301, SeriesID: 52, Name: "p4",
+		Date: "2026-03-12", State: "accepted", Submitter: "Sit",
+	})
+
+	states := []string{"new"}
+	patches := d.GetAllPatchesBatch(false, states)
+	tags := d.GetTagsBatch(false, states)
+	comments := d.GetCommentCountsBatch(false, states)
+
+	// Series 50 (active) and 52 (mixed) should be present
+	// Series 51 (terminal) should not
+	if _, ok := patches[50]; !ok {
+		t.Error("active series 50 missing from patches")
+	}
+	if _, ok := patches[51]; ok {
+		t.Error("terminal series 51 should not be in patches")
+	}
+	if _, ok := patches[52]; !ok {
+		t.Error("mixed series 52 missing from patches")
+	}
+
+	// Tags and comments should cover the same series set
+	// (even if empty for some)
+	_ = tags
+	_ = comments
+}
+
+func TestGetAllPatchesBatch_EmptyStates(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	m := d.GetAllPatchesBatch(false, []string{})
+	if len(m) != 0 {
+		t.Errorf("empty states should return nothing: got %d",
+			len(m))
+	}
+}
+
+func TestBatchMethods_Empty(t *testing.T) {
+	d := openTestDB(t)
+	p := d.GetAllPatchesBatch(true, nil)
+	if len(p) != 0 {
+		t.Errorf("patches: %d, want 0", len(p))
+	}
+	tags := d.GetTagsBatch(true, nil)
+	if len(tags) != 0 {
+		t.Errorf("tags: %d, want 0", len(tags))
+	}
+	counts := d.GetCommentCountsBatch(true, nil)
+	if len(counts) != 0 {
+		t.Errorf("counts: %d, want 0", len(counts))
+	}
+}
+
 func TestGetPatchesNeedingDetail(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{
