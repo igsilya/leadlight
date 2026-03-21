@@ -19,7 +19,7 @@ var PatchworkColumns = []ColumnDef{
 	{Title: "Submitter", FixedWidth: 20},
 	{Title: "Age", FixedWidth: 5},
 	{Title: "C", FixedWidth: 3},
-	{Title: "A/F/R/T", FixedWidth: 8},
+	{Title: "A F R T", FixedWidth: 8},
 	{Title: "Checks", FixedWidth: 8},
 	{Title: "Dlg", FixedWidth: 8},
 }
@@ -340,7 +340,7 @@ func formatCount(n int) string {
 
 func formatPatchReviews(patchID int, tags []db.TagRow) string {
 	a, f, r, t := computePatchAFRT(patchID, tags)
-	return formatCount(a) + "/" + formatCount(f) + "/" + formatCount(r) + "/" + formatCount(t)
+	return formatCount(a) + " " + formatCount(f) + " " + formatCount(r) + " " + formatCount(t)
 }
 
 func formatSeriesReviews(patches []db.PatchRow, tags []db.TagRow) string {
@@ -352,7 +352,7 @@ func formatSeriesReviews(patches []db.PatchRow, tags []db.TagRow) string {
 		r += pr
 		t += pt
 	}
-	return formatCount(a) + "/" + formatCount(f) + "/" + formatCount(r) + "/" + formatCount(t)
+	return formatCount(a) + " " + formatCount(f) + " " + formatCount(r) + " " + formatCount(t)
 }
 
 func isTerminalState(state string) bool {
@@ -364,7 +364,7 @@ func isTerminalState(state string) bool {
 }
 
 func formatChecks(p db.PatchRow) string {
-	return formatCount(p.ChecksPass) + "/" + formatCount(p.ChecksFail) + "/" + formatCount(p.ChecksPending)
+	return formatCount(p.ChecksPass) + " " + formatCount(p.ChecksFail) + " " + formatCount(p.ChecksPending)
 }
 
 func formatSeriesChecks(patches []db.PatchRow) string {
@@ -374,7 +374,7 @@ func formatSeriesChecks(patches []db.PatchRow) string {
 		fail += p.ChecksFail
 		pending += p.ChecksPending
 	}
-	return formatCount(pass) + "/" + formatCount(fail) + "/" + formatCount(pending)
+	return formatCount(pass) + " " + formatCount(fail) + " " + formatCount(pending)
 }
 
 func parseDate(dateStr string) time.Time {

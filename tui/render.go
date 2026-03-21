@@ -419,7 +419,7 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 		}
 		return checksZeroStyle.Render(renderCell("-", width))
 	}
-	parts := strings.SplitN(text, "/", 3)
+	parts := strings.SplitN(text, " ", 3)
 	if len(parts) != 3 {
 		if cached != nil {
 			return cached.row.Render(renderCell(text, width))
@@ -430,9 +430,9 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 	for i, part := range parts {
 		if i > 0 {
 			if cached != nil {
-				b.WriteString(cached.checkZero.Render("/"))
+				b.WriteString(cached.checkZero.Render(" "))
 			} else {
-				b.WriteString(checksZeroStyle.Render("/"))
+				b.WriteString(checksZeroStyle.Render(" "))
 			}
 		}
 		if part == "0" || part == "-" {
@@ -475,7 +475,7 @@ func buildCheckColors(text string) []string {
 	if text == "" || text == "-" {
 		return nil
 	}
-	parts := strings.SplitN(text, "/", 3)
+	parts := strings.SplitN(text, " ", 3)
 	if len(parts) != 3 {
 		return nil
 	}
@@ -506,7 +506,7 @@ func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 	var b strings.Builder
 	for _, c := range text {
 		ch := string(c)
-		if c == '0' || c == '/' || c == '-' {
+		if c == '0' || c == ' ' || c == '-' {
 			if cached != nil {
 				b.WriteString(cached.checkZero.Render(ch))
 			} else {
@@ -538,7 +538,7 @@ func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 func buildBoldDimColors(text string) []string {
 	result := make([]string, len(text))
 	for i, c := range text {
-		if c == '0' || c == '/' || c == '-' {
+		if c == '0' || c == ' ' || c == '-' {
 			result[i] = checkZeroColor
 		}
 	}

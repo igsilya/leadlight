@@ -64,15 +64,15 @@ func TestFormatReviewsFromTags(t *testing.T) {
 			Identity: "C <c@ex>"},
 	}
 	got := formatPatchReviews(100, tags)
-	if got != "2/-/1/-" {
-		t.Errorf("got %q, want 2/-/1/-", got)
+	if got != "2 - 1 -" {
+		t.Errorf("got %q, want 2 - 1 -", got)
 	}
 }
 
 func TestFormatReviews_NoTags(t *testing.T) {
 	got := formatPatchReviews(100, nil)
-	if got != "-/-/-/-" {
-		t.Errorf("got %q, want -/-/-/-", got)
+	if got != "- - - -" {
+		t.Errorf("got %q, want - - - -", got)
 	}
 }
 
@@ -93,8 +93,8 @@ func TestFormatSeriesReviews_FromTags(t *testing.T) {
 	// patch 100: A(acked) + C(acked from cover) = 2 acked
 	// patch 101: B(reviewed) + C(acked from cover) = 1 acked, 1 reviewed
 	// series total: 3 acked, 0 fixes, 1 reviewed, 0 tested
-	if got != "3/-/1/-" {
-		t.Errorf("got %q, want 3/-/1/-", got)
+	if got != "3 - 1 -" {
+		t.Errorf("got %q, want 3 - 1 -", got)
 	}
 }
 
@@ -102,15 +102,15 @@ func TestFormatChecks(t *testing.T) {
 	got := formatChecks(db.PatchRow{
 		ChecksPass: 3, ChecksFail: 1, ChecksPending: 2,
 	})
-	if got != "3/1/2" {
-		t.Errorf("got %q, want 3/1/2", got)
+	if got != "3 1 2" {
+		t.Errorf("got %q, want 3 1 2", got)
 	}
 }
 
 func TestFormatChecks_AllZero(t *testing.T) {
 	got := formatChecks(db.PatchRow{})
-	if got != "-/-/-" {
-		t.Errorf("got %q, want -/-/-", got)
+	if got != "- - -" {
+		t.Errorf("got %q, want - - -", got)
 	}
 }
 
@@ -120,8 +120,8 @@ func TestFormatSeriesChecks(t *testing.T) {
 		{ChecksPass: 1, ChecksFail: 1, ChecksPending: 0},
 	}
 	got := formatSeriesChecks(patches)
-	if got != "3/1/1" {
-		t.Errorf("got %q, want 3/1/1", got)
+	if got != "3 1 1" {
+		t.Errorf("got %q, want 3 1 1", got)
 	}
 }
 
