@@ -20,7 +20,7 @@ var PatchworkColumns = []ColumnDef{
 	{Title: "Age", FixedWidth: 5, Visible: true},
 	{Title: "C", FixedWidth: 3, Visible: true},
 	{Title: "Comments", FixedWidth: 15, Visible: false},
-	{Title: "A F R T", FixedWidth: 8, Visible: true},
+	{Title: "A F R T", FixedWidth: 9, Visible: true},
 	{Title: "Checks", FixedWidth: 8, Visible: true},
 	{Title: "Dlg", FixedWidth: 8, Visible: true},
 }
