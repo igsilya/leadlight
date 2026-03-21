@@ -364,10 +364,6 @@ func isTerminalState(state string) bool {
 }
 
 func formatChecks(p db.PatchRow) string {
-	if p.ChecksPass == 0 && p.ChecksFail == 0 &&
-		p.ChecksPending == 0 {
-		return "-"
-	}
 	return formatCount(p.ChecksPass) + "/" + formatCount(p.ChecksFail) + "/" + formatCount(p.ChecksPending)
 }
 
@@ -377,9 +373,6 @@ func formatSeriesChecks(patches []db.PatchRow) string {
 		pass += p.ChecksPass
 		fail += p.ChecksFail
 		pending += p.ChecksPending
-	}
-	if pass == 0 && fail == 0 && pending == 0 {
-		return "-"
 	}
 	return formatCount(pass) + "/" + formatCount(fail) + "/" + formatCount(pending)
 }

@@ -109,8 +109,8 @@ func TestFormatChecks(t *testing.T) {
 
 func TestFormatChecks_AllZero(t *testing.T) {
 	got := formatChecks(db.PatchRow{})
-	if got != "-" {
-		t.Errorf("got %q, want -", got)
+	if got != "-/-/-" {
+		t.Errorf("got %q, want -/-/-", got)
 	}
 }
 
