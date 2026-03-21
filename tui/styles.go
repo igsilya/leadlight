@@ -56,6 +56,7 @@ var (
 	checksFailStyle        lipgloss.Style
 	checksPendingStyle     lipgloss.Style
 	checksZeroStyle        lipgloss.Style
+	afrtNonZeroStyle       lipgloss.Style
 	checkPassColor         string
 	checkFailColor         string
 	checkPendColor         string
@@ -82,6 +83,7 @@ var (
 
 type cachedBgStyle struct {
 	row       lipgloss.Style
+	rowBold   lipgloss.Style
 	rowFaint  lipgloss.Style
 	checkPass lipgloss.Style
 	checkFail lipgloss.Style
@@ -126,6 +128,7 @@ func buildStyles(t *theme) {
 	checksFailStyle = bold(t.ChecksFailFg)
 	checksPendingStyle = bold(t.ChecksPendingFg)
 	checksZeroStyle = fg(t.ChecksZeroFg)
+	afrtNonZeroStyle = lipgloss.NewStyle().Bold(true)
 	checkPassColor = t.ChecksPassFg
 	checkFailColor = t.ChecksFailFg
 	checkPendColor = t.ChecksPendingFg
@@ -160,6 +163,7 @@ func buildStyles(t *theme) {
 			bgHex:     bgHex,
 			fgHex:     fgHex,
 			row:       base.Foreground(fgC),
+			rowBold:   base.Foreground(fgC).Bold(true),
 			rowFaint:  base.Foreground(fgC).Faint(true),
 			checkPass: base.Foreground(passFg).Bold(true),
 			checkFail: base.Foreground(failFg).Bold(true),

@@ -77,6 +77,7 @@ func formatDelegate(username string, names map[string]string) string {
 const (
 	ColNone   = -1
 	ColState  = 3
+	ColAFRT   = 6
 	ColChecks = 7
 	ColDlg    = 8
 )

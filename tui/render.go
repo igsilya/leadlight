@@ -150,6 +150,15 @@ func (m *Model) renderRows(
 		checksWidth = widths[m.ChecksColIdx]
 	}
 
+	afrtStart := indicatorWidth
+	for c := 0; c < ColAFRT && c < len(widths); c++ {
+		afrtStart += widths[c]
+	}
+	afrtWidth := 0
+	if ColAFRT >= 0 && ColAFRT < len(widths) {
+		afrtWidth = widths[ColAFRT]
+	}
+
 	if !m.cacheValid {
 		m.cachedRows = make([]string, len(items))
 		m.cacheValid = true
@@ -168,7 +177,8 @@ func (m *Model) renderRows(
 			} else {
 				row = m.renderSelectedRow(
 					items[i], widths, indicator,
-					checksStart, checksWidth)
+					checksStart, checksWidth,
+					afrtStart, afrtWidth)
 			}
 		} else if i < len(m.cachedRows) && m.cachedRows[i] != "" {
 			row = m.cachedRows[i]
@@ -217,6 +227,9 @@ func (m *Model) buildRow(
 		} else if j == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
+		} else if j == ColAFRT {
+			b.WriteString(renderAFRTCellWithBg(
+				text, widths[j], item.style.Background))
 		} else if cached != nil {
 			b.WriteString(cached.row.Render(cell))
 		} else {
@@ -240,6 +253,9 @@ func (m *Model) buildStyledRow(
 		if j == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
+		} else if j == ColAFRT {
+			b.WriteString(renderAFRTCellWithBg(
+				text, widths[j], item.style.Background))
 		} else {
 			cell := renderCell(text, widths[j])
 			b.WriteString(rowStyle.Render(cell))
@@ -251,6 +267,7 @@ func (m *Model) buildStyledRow(
 func (m *Model) renderSelectedRow(
 	item visibleItem, widths []int, indicator string,
 	checksStart, checksWidth int,
+	afrtStart, afrtWidth int,
 ) string {
 	raw := m.buildRawRow(item, widths)
 	fullRaw := indicator + raw
@@ -259,15 +276,20 @@ func (m *Model) renderSelectedRow(
 	if m.ChecksColIdx >= 0 && m.ChecksColIdx < len(item.data) {
 		checksText = item.data[m.ChecksColIdx]
 	}
+	afrtText := ""
+	if ColAFRT >= 0 && ColAFRT < len(item.data) {
+		afrtText = item.data[ColAFRT]
+	}
 	return m.renderGradientRow(
-		fullRaw, bgName, checksStart, checksWidth,
-		checksText, item.isSubRow)
+		fullRaw, bgName, checksStart, checksWidth, checksText,
+		afrtStart, afrtWidth, afrtText, item.isSubRow)
 }
 
 func (m *Model) renderGradientRow(
 	rawRow, bgName string,
-	checksStart, checksWidth int,
-	checksText string, isSubRow bool,
+	checksStart, checksWidth int, checksText string,
+	afrtStart, afrtWidth int, afrtText string,
+	isSubRow bool,
 ) string {
 	runes := []rune(rawRow)
 	total := len(runes)
@@ -289,6 +311,9 @@ func (m *Model) renderGradientRow(
 
 	checkColors := buildCheckColors(checksText)
 	checksEnd := checksStart + checksWidth
+
+	afrtColors := buildAFRTColors(afrtText)
+	afrtEnd := afrtStart + afrtWidth
 
 	cached := bgStyles[bgName]
 	var flatBg, flatFg string
@@ -328,6 +353,18 @@ func (m *Model) renderGradientRow(
 			if ci < len(checkColors) && checkColors[ci] != "" {
 				fg = checkColors[ci]
 				bold = true
+			}
+		}
+
+		if pos >= afrtStart && pos < afrtEnd {
+			ai := pos - afrtStart
+			if ai < len(afrtColors) {
+				if afrtColors[ai] != "" {
+					fg = afrtColors[ai]
+					bold = false
+				} else {
+					bold = true
+				}
 			}
 		}
 
@@ -419,6 +456,69 @@ func buildCheckColors(text string) []string {
 			result = append(result, checkZeroColor)
 		}
 		color := fgColors[i]
+		if part == "0" {
+			color = checkZeroColor
+		}
+		for range part {
+			result = append(result, color)
+		}
+	}
+	return result
+}
+
+func renderAFRTCellWithBg(text string, width int, bgName string) string {
+	cached := bgStyles[bgName]
+	parts := strings.SplitN(text, "/", 4)
+	if len(parts) != 4 {
+		if cached != nil {
+			return cached.row.Render(renderCell(text, width))
+		}
+		return renderCell(text, width)
+	}
+	var b strings.Builder
+	for i, part := range parts {
+		if i > 0 {
+			if cached != nil {
+				b.WriteString(cached.checkZero.Render("/"))
+			} else {
+				b.WriteString(checksZeroStyle.Render("/"))
+			}
+		}
+		if part == "0" {
+			if cached != nil {
+				b.WriteString(cached.checkZero.Render(part))
+			} else {
+				b.WriteString(checksZeroStyle.Render(part))
+			}
+		} else if cached != nil {
+			b.WriteString(cached.rowBold.Render(part))
+		} else {
+			b.WriteString(afrtNonZeroStyle.Render(part))
+		}
+	}
+	rendered := b.String()
+	visualWidth := lipgloss.Width(rendered)
+	if visualWidth < width {
+		if cached != nil {
+			rendered += cached.row.Render(strings.Repeat(" ", width-visualWidth))
+		} else {
+			rendered += strings.Repeat(" ", width-visualWidth)
+		}
+	}
+	return rendered
+}
+
+func buildAFRTColors(text string) []string {
+	parts := strings.SplitN(text, "/", 4)
+	if len(parts) != 4 {
+		return nil
+	}
+	var result []string
+	for i, part := range parts {
+		if i > 0 {
+			result = append(result, checkZeroColor)
+		}
+		color := ""
 		if part == "0" {
 			color = checkZeroColor
 		}
