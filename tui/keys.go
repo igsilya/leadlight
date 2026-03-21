@@ -363,11 +363,12 @@ func (m *Model) openDelegateSelector() {
 		return
 	}
 
-	m.selectorOptions = make([]string, len(maintainers))
-	m.selectorIDs = make([]int, len(maintainers))
+	m.selectorOptions = make([]string, len(maintainers)+1)
+	m.selectorIDs = make([]int, len(maintainers)+1)
+	m.selectorOptions[0] = "(unset)"
 	for i, mt := range maintainers {
-		m.selectorOptions[i] = mt.Username
-		m.selectorIDs[i] = mt.ID
+		m.selectorOptions[i+1] = mt.Username
+		m.selectorIDs[i+1] = mt.ID
 	}
 	m.selectorCursor = 0
 	m.selectorFilter = ""
@@ -414,6 +415,15 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 		}
 	case selectorDelegate:
 		username := filtered[filteredIdx]
+		if username == "(unset)" {
+			empty := ""
+			return func() tea.Msg {
+				for _, pid := range patchIDs {
+					m.RequestPatchUpdate(pid, nil, &empty)
+				}
+				return patchUpdateResultMsg{}
+			}
+		}
 		return func() tea.Msg {
 			for _, pid := range patchIDs {
 				m.RequestPatchUpdate(pid, nil, &username)

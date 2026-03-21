@@ -493,6 +493,44 @@ func TestUpdatePatch(t *testing.T) {
 	}
 }
 
+func TestPatchUpdate_MarshalJSON(t *testing.T) {
+	state := "new"
+	delegate := 42
+
+	tests := []struct {
+		name string
+		u    PatchUpdate
+		want string
+	}{
+		{"state only",
+			PatchUpdate{State: &state},
+			`{"state":"new"}`},
+		{"delegate set",
+			PatchUpdate{Delegate: &delegate},
+			`{"delegate":42}`},
+		{"unset delegate",
+			PatchUpdate{UnsetDelegate: true},
+			`{"delegate":null}`},
+		{"state + delegate",
+			PatchUpdate{State: &state, Delegate: &delegate},
+			`{"delegate":42,"state":"new"}`},
+		{"empty",
+			PatchUpdate{},
+			`{}`},
+	}
+	for _, tt := range tests {
+		data, err := json.Marshal(tt.u)
+		if err != nil {
+			t.Errorf("%s: %v", tt.name, err)
+			continue
+		}
+		if string(data) != tt.want {
+			t.Errorf("%s: got %s, want %s",
+				tt.name, data, tt.want)
+		}
+	}
+}
+
 func TestGetMbox(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {

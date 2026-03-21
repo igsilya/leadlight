@@ -77,8 +77,22 @@ type EventListParams struct {
 }
 
 type PatchUpdate struct {
-	State    *string `json:"state,omitempty"`
-	Delegate *int    `json:"delegate,omitempty"`
+	State         *string
+	Delegate      *int
+	UnsetDelegate bool
+}
+
+func (u PatchUpdate) MarshalJSON() ([]byte, error) {
+	m := map[string]interface{}{}
+	if u.State != nil {
+		m["state"] = *u.State
+	}
+	if u.UnsetDelegate {
+		m["delegate"] = nil
+	} else if u.Delegate != nil {
+		m["delegate"] = *u.Delegate
+	}
+	return json.Marshal(m)
 }
 
 type rateLimitKey struct{}

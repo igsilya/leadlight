@@ -995,23 +995,23 @@ func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) 
 	s.status.Set(status.Update, "Updating...", true)
 	ctx = api.WithNoRateLimit(ctx)
 
-	delegateID := req.DelegateID
+	update := api.PatchUpdate{State: req.State}
 	if req.DelegateUsername != nil {
-		uid, err := s.resolveUserID(ctx, *req.DelegateUsername)
-		if err != nil {
-			log.Printf("SYNC: resolve delegate %q: %v",
-				*req.DelegateUsername, err)
-			s.status.SetTimed(status.Update,
-				"Failed to resolve delegate: "+err.Error(),
-				5*time.Second)
-			return err
+		if *req.DelegateUsername == "" {
+			update.UnsetDelegate = true
+		} else {
+			uid, err := s.resolveUserID(
+				ctx, *req.DelegateUsername)
+			if err != nil {
+				log.Printf("SYNC: resolve delegate %q: %v",
+					*req.DelegateUsername, err)
+				s.status.SetTimed(status.Update,
+					"Failed to resolve delegate: "+
+						err.Error(), 5*time.Second)
+				return err
+			}
+			update.Delegate = &uid
 		}
-		delegateID = &uid
-	}
-
-	update := api.PatchUpdate{
-		State:    req.State,
-		Delegate: delegateID,
 	}
 	_, err := s.client.UpdatePatch(ctx, req.PatchID, update)
 	if err != nil {
