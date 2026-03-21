@@ -761,6 +761,75 @@ func TestGetPatchCommentCountsBatch(t *testing.T) {
 	}
 }
 
+func TestGetCommentSubmittersBatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10",
+	})
+	d.InsertComment(CommentRow{
+		ID: 500, PatchID: 100, Submitter: "Dolor Amet",
+		Date: "2026-03-11", Subject: "Re: p1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 501, CoverID: 99, Submitter: "Sit Ipsum",
+		Date: "2026-03-12", Subject: "Re: c1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 502, PatchID: 100, Submitter: "Dolor Amet",
+		Date: "2026-03-13", Subject: "Re: p1", Content: "ok again",
+	})
+
+	m := d.GetCommentSubmittersBatch(false, []string{"new"})
+	names := m[50]
+	if len(names) != 2 {
+		t.Fatalf("series 50: %d names, want 2", len(names))
+	}
+	if names[0] != "Dolor Amet" {
+		t.Errorf("names[0] = %q, want Dolor Amet", names[0])
+	}
+	if names[1] != "Sit Ipsum" {
+		t.Errorf("names[1] = %q, want Sit Ipsum", names[1])
+	}
+}
+
+func TestGetPatchCommentSubmittersBatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.InsertComment(CommentRow{
+		ID: 500, PatchID: 100, Submitter: "Dolor Amet",
+		Date: "2026-03-11", Subject: "Re: p1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 501, PatchID: 100, Submitter: "Sit Ipsum",
+		Date: "2026-03-12", Subject: "Re: p1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 502, PatchID: 100, Submitter: "Dolor Amet",
+		Date: "2026-03-13", Subject: "Re: p1", Content: "ok again",
+	})
+
+	m := d.GetPatchCommentSubmittersBatch(false, []string{"new"})
+	names := m[100]
+	if len(names) != 2 {
+		t.Fatalf("patch 100: %d names, want 2", len(names))
+	}
+	if names[0] != "Dolor Amet" {
+		t.Errorf("names[0] = %q, want Dolor Amet", names[0])
+	}
+	if names[1] != "Sit Ipsum" {
+		t.Errorf("names[1] = %q, want Sit Ipsum", names[1])
+	}
+}
+
 func TestGetAllPatchesBatch_MultipleStates(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)

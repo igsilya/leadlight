@@ -13,10 +13,10 @@ import (
 
 func testModel() *Model {
 	columns := []ColumnDef{
-		{Title: "ID", FixedWidth: 10},
-		{Title: "Name"},
-		{Title: "Status", FixedWidth: 15},
-		{Title: "Desc", FixedWidth: 15},
+		{Title: "ID", FixedWidth: 10, Visible: true},
+		{Title: "Name", Visible: true},
+		{Title: "Status", FixedWidth: 15, Visible: true},
+		{Title: "Desc", FixedWidth: 15, Visible: true},
 	}
 	rows := []RowData{
 		{
@@ -324,6 +324,98 @@ func TestWindowResize(t *testing.T) {
 	m = result.(*Model)
 	if m.width != 200 || m.height != 50 {
 		t.Errorf("size = %dx%d", m.width, m.height)
+	}
+}
+
+func copyColumns() []ColumnDef {
+	cols := make([]ColumnDef, len(PatchworkColumns))
+	copy(cols, PatchworkColumns)
+	return cols
+}
+
+func TestColumnWidths_CommentsAutoSwitch(t *testing.T) {
+	// Fixed sum excluding C and Comments:
+	// ID(9)+Ver(4)+State(8)+Submitter(20)+Age(5)+AFRT(8)+Checks(8)+Dlg(8) = 70
+	// Indicator = 2, so remaining = width - 72
+	// Comments visible when remaining - 15 >= 90, i.e. remaining >= 105, i.e. width >= 177
+	tests := []struct {
+		name             string
+		width            int
+		wantCVisible     bool
+		wantCommVisible  bool
+		wantNameWidth    int
+		wantCommentWidth int
+	}{
+		{"wide shows Comments", 177, false, true, 90, 15},
+		{"narrow shows C", 176, true, false, 101, 3},
+		{"very wide", 250, false, true, 163, 15},
+		{"small terminal", 100, true, false, 25, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &Model{ColumnDefs: copyColumns(), width: tt.width}
+			widths := m.columnWidths()
+			if m.ColumnDefs[ColC].Visible != tt.wantCVisible {
+				t.Errorf("ColC.Visible = %v, want %v",
+					m.ColumnDefs[ColC].Visible, tt.wantCVisible)
+			}
+			if m.ColumnDefs[ColComments].Visible != tt.wantCommVisible {
+				t.Errorf("ColComments.Visible = %v, want %v",
+					m.ColumnDefs[ColComments].Visible, tt.wantCommVisible)
+			}
+			if widths[2] != tt.wantNameWidth {
+				t.Errorf("Name width = %d, want %d", widths[2], tt.wantNameWidth)
+			}
+			activeCol := ColC
+			if tt.wantCommVisible {
+				activeCol = ColComments
+			}
+			if widths[activeCol] != tt.wantCommentWidth {
+				t.Errorf("comment width = %d, want %d",
+					widths[activeCol], tt.wantCommentWidth)
+			}
+		})
+	}
+}
+
+func TestColumnWidths_NoOscillation(t *testing.T) {
+	for width := 80; width <= 300; width++ {
+		m := &Model{ColumnDefs: copyColumns(), width: width}
+		w1 := m.columnWidths()
+		vis1 := m.ColumnDefs[ColComments].Visible
+		name1 := w1[2]
+		w2 := m.columnWidths()
+		vis2 := m.ColumnDefs[ColComments].Visible
+		name2 := w2[2]
+		if vis1 != vis2 || name1 != name2 {
+			t.Fatalf("width %d: oscillation: vis %v->%v, name %d->%d",
+				width, vis1, vis2, name1, name2)
+		}
+	}
+}
+
+func TestColumnWidths_InvisibleSkipped(t *testing.T) {
+	m := &Model{ColumnDefs: copyColumns(), width: 150}
+	widths := m.columnWidths()
+	if widths[ColComments] != 0 {
+		t.Errorf("hidden Comments width = %d, want 0", widths[ColComments])
+	}
+	if widths[ColC] != 3 {
+		t.Errorf("visible C width = %d, want 3", widths[ColC])
+	}
+}
+
+func TestColumnWidths_CustomColumns(t *testing.T) {
+	cols := []ColumnDef{
+		{Title: "A", FixedWidth: 10, Visible: true},
+		{Title: "B", Visible: true},
+		{Title: "C", FixedWidth: 5, Visible: true},
+	}
+	m := &Model{ColumnDefs: cols, width: 80}
+	widths := m.columnWidths()
+	want := 80 - indicatorWidth - 15
+	if widths[1] != want {
+		t.Errorf("flex width = %d, want %d", widths[1], want)
 	}
 }
 

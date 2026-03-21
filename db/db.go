@@ -993,6 +993,74 @@ func (d *DB) GetPatchCommentCountsBatch(
 	return result
 }
 
+// GetCommentSubmittersBatch returns unique submitter names per series,
+// ordered by first appearance. Includes both patch and cover comments.
+func (d *DB) GetCommentSubmittersBatch(
+	showAll bool, states []string,
+) map[int][]string {
+	sub, subArgs := d.seriesIDSubquery(showAll, states)
+	query := `SELECT sub.series_id, sub.submitter FROM (
+		SELECT p.series_id, c.submitter, c.date FROM comments c
+		JOIN patches p ON c.patch_id = p.id WHERE p.series_id IN (` + sub + `)
+		UNION ALL
+		SELECT cv.series_id, c.submitter, c.date FROM comments c
+		JOIN covers cv ON c.cover_id = cv.id WHERE cv.series_id IN (` + sub + `)
+	) sub ORDER BY sub.series_id, sub.date`
+	args := append(subArgs, subArgs...)
+	rows, err := d.conn.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int][]string{}
+	seen := map[int]map[string]bool{}
+	for rows.Next() {
+		var seriesID int
+		var submitter string
+		rows.Scan(&seriesID, &submitter)
+		if seen[seriesID] == nil {
+			seen[seriesID] = map[string]bool{}
+		}
+		if !seen[seriesID][submitter] {
+			seen[seriesID][submitter] = true
+			result[seriesID] = append(result[seriesID], submitter)
+		}
+	}
+	return result
+}
+
+// GetPatchCommentSubmittersBatch returns unique submitter names per patch,
+// ordered by first appearance. Only patch comments (not cover).
+func (d *DB) GetPatchCommentSubmittersBatch(
+	showAll bool, states []string,
+) map[int][]string {
+	sub, subArgs := d.seriesIDSubquery(showAll, states)
+	query := `SELECT c.patch_id, c.submitter FROM comments c
+		JOIN patches p ON c.patch_id = p.id
+		WHERE p.series_id IN (` + sub + `)
+		ORDER BY c.patch_id, c.date`
+	rows, err := d.conn.Query(query, subArgs...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int][]string{}
+	seen := map[int]map[string]bool{}
+	for rows.Next() {
+		var patchID int
+		var submitter string
+		rows.Scan(&patchID, &submitter)
+		if seen[patchID] == nil {
+			seen[patchID] = map[string]bool{}
+		}
+		if !seen[patchID][submitter] {
+			seen[patchID][submitter] = true
+			result[patchID] = append(result[patchID], submitter)
+		}
+	}
+	return result
+}
+
 func (d *DB) GetPatchIDsWithComments() []int {
 	return d.getIDList(
 		"SELECT DISTINCT patch_id FROM comments WHERE patch_id > 0")

@@ -574,7 +574,7 @@ func TestSeriesToRow(t *testing.T) {
 			Identity: "Lorem <lorem@ex>"},
 	}
 
-	row := seriesToRow(s, patches, "", nil, tags, 1, nil)
+	row := seriesToRow(s, patches, "", nil, tags, 1, nil, nil, nil)
 
 	if row.Data[0] != "50" {
 		t.Errorf("ID = %q", row.Data[0])
@@ -594,11 +594,11 @@ func TestSeriesToRow(t *testing.T) {
 	if row.Data[5] != "2d" {
 		t.Errorf("Age = %q", row.Data[5])
 	}
-	if row.Data[6] != "1" {
-		t.Errorf("C = %q, want 1", row.Data[6])
+	if row.Data[ColC] != "1" {
+		t.Errorf("C = %q, want 1", row.Data[ColC])
 	}
-	if row.Data[9] != "" {
-		t.Errorf("Dlg = %q, want empty", row.Data[9])
+	if row.Data[ColDlg] != "" {
+		t.Errorf("Dlg = %q, want empty", row.Data[ColDlg])
 	}
 	if len(row.SubRows) != 2 {
 		t.Fatalf("SubRows = %d", len(row.SubRows))
@@ -615,7 +615,7 @@ func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
 		{ID: 100, Name: "[PATCH] Lorem ipsum", Date: d,
 			State: "new", Submitter: "Lorem"},
 	}
-	row := seriesToRow(s, patches, "", nil, nil, 0, nil)
+	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil)
 	if row.Data[2] != "[PATCH] Lorem ipsum" {
 		t.Errorf("Name = %q, want first patch name", row.Data[2])
 	}

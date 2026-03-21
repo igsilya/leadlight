@@ -12,16 +12,17 @@ import (
 )
 
 var PatchworkColumns = []ColumnDef{
-	{Title: "ID", FixedWidth: 9},
-	{Title: "Ver", FixedWidth: 4},
-	{Title: "Name"},
-	{Title: "State", FixedWidth: 8},
-	{Title: "Submitter", FixedWidth: 20},
-	{Title: "Age", FixedWidth: 5},
-	{Title: "C", FixedWidth: 3},
-	{Title: "A F R T", FixedWidth: 8},
-	{Title: "Checks", FixedWidth: 8},
-	{Title: "Dlg", FixedWidth: 8},
+	{Title: "ID", FixedWidth: 9, Visible: true},
+	{Title: "Ver", FixedWidth: 4, Visible: true},
+	{Title: "Name", Visible: true},
+	{Title: "State", FixedWidth: 8, Visible: true},
+	{Title: "Submitter", FixedWidth: 20, Visible: true},
+	{Title: "Age", FixedWidth: 5, Visible: true},
+	{Title: "C", FixedWidth: 3, Visible: true},
+	{Title: "Comments", FixedWidth: 15, Visible: false},
+	{Title: "A F R T", FixedWidth: 8, Visible: true},
+	{Title: "Checks", FixedWidth: 8, Visible: true},
+	{Title: "Dlg", FixedWidth: 8, Visible: true},
 }
 
 var stateDisplay = map[string]string{
@@ -78,10 +79,11 @@ func formatDelegate(username string, names map[string]string) string {
 const (
 	ColNone     = -1
 	ColState    = 3
-	ColComments = 6
-	ColAFRT     = 7
-	ColChecks   = 8
-	ColDlg      = 9
+	ColC        = 6
+	ColComments = 7
+	ColAFRT     = 8
+	ColChecks   = 9
+	ColDlg      = 10
 )
 
 var AllPatchStates = []string{
@@ -193,12 +195,15 @@ func LoadFromDB(
 	allTags := d.GetTagsBatch(false, states)
 	allComments := d.GetCommentCountsBatch(false, states)
 	allPatchComments := d.GetPatchCommentCountsBatch(false, states)
+	allCommentNames := d.GetCommentSubmittersBatch(false, states)
+	allPatchCommentNames := d.GetPatchCommentSubmittersBatch(false, states)
 
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		rows = append(rows, seriesToRow(
 			s, allPatches[s.ID], listPrefix, delegateNames,
-			allTags[s.ID], allComments[s.ID], allPatchComments))
+			allTags[s.ID], allComments[s.ID], allPatchComments,
+			allCommentNames[s.ID], allPatchCommentNames))
 	}
 	return rows, nil
 }
@@ -208,6 +213,7 @@ func seriesToRow(
 	listPrefix string, delegateNames map[string]string,
 	tags []db.TagRow, commentCount int,
 	patchComments map[int]int,
+	commentNames []string, patchCommentNames map[int][]string,
 ) RowData {
 	name := s.Name
 	if name == "" && len(patches) > 0 {
@@ -232,6 +238,7 @@ func seriesToRow(
 			s.Submitter,
 			formatAge(s.Date),
 			formatCount(commentCount),
+			formatCommentCell(commentCount, commentNames, s.Submitter),
 			formatSeriesReviews(patches, tags),
 			formatSeriesChecks(patches),
 			formatDelegate(aggregateDelegate(patches), delegateNames),
@@ -245,7 +252,7 @@ func seriesToRow(
 	for i, p := range patches {
 		row.SubRows[i] = patchToSubRow(
 			p, listPrefix, delegateNames, tags,
-			patchComments[p.ID])
+			patchComments[p.ID], patchCommentNames[p.ID])
 	}
 	return row
 }
@@ -253,7 +260,7 @@ func seriesToRow(
 func patchToSubRow(
 	p db.PatchRow, listPrefix string,
 	dlgNames map[string]string, tags []db.TagRow,
-	commentCount int,
+	commentCount int, commentNames []string,
 ) []string {
 	cleaned, ver := parsePatchName(p.Name, listPrefix)
 	return []string{
@@ -264,6 +271,7 @@ func patchToSubRow(
 		p.Submitter,
 		formatAge(p.Date),
 		formatCount(commentCount),
+		formatCommentCell(commentCount, commentNames, p.Submitter),
 		formatPatchReviews(p.ID, tags),
 		formatChecks(p),
 		formatDelegate(p.Delegate, dlgNames),
@@ -329,6 +337,36 @@ func computePatchAFRT(patchID int, tags []db.TagRow) (a, f, r, t int) {
 		}
 	}
 	return
+}
+
+func firstName(s string) string {
+	if i := strings.IndexByte(s, ' '); i > 0 {
+		return s[:i]
+	}
+	return s
+}
+
+func formatCommentCell(count int, submitters []string, author string) string {
+	c := formatCount(count)
+	if len(submitters) == 0 {
+		return c
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, s := range submitters {
+		if s == author {
+			continue
+		}
+		name := firstName(s)
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return c
+	}
+	return c + " " + strings.Join(names, ", ")
 }
 
 func formatCount(n int) string {

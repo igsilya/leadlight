@@ -18,7 +18,8 @@ import (
 
 type ColumnDef struct {
 	Title      string
-	FixedWidth int // 0 = flex column (gets remainder)
+	FixedWidth int  // 0 = flex column (gets remainder)
+	Visible    bool // false = skip during rendering
 }
 
 type RowStyle struct {
@@ -235,12 +236,15 @@ func (m *Model) reloadData() {
 	allTags := m.db.GetTagsBatch(m.showAll, m.states)
 	allComments := m.db.GetCommentCountsBatch(m.showAll, m.states)
 	allPatchComments := m.db.GetPatchCommentCountsBatch(m.showAll, m.states)
+	allCommentNames := m.db.GetCommentSubmittersBatch(m.showAll, m.states)
+	allPatchCommentNames := m.db.GetPatchCommentSubmittersBatch(m.showAll, m.states)
 
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		row := seriesToRow(
 			s, allPatches[s.ID], m.listPrefix, m.delegateNames,
-			allTags[s.ID], allComments[s.ID], allPatchComments)
+			allTags[s.ID], allComments[s.ID], allPatchComments,
+			allCommentNames[s.ID], allPatchCommentNames)
 		sid := strconv.Itoa(s.ID)
 		if expanded[sid] {
 			row.Expanded = true
@@ -565,7 +569,14 @@ func (m *Model) columnWidths() []int {
 	widths := make([]int, len(m.ColumnDefs))
 	used := 0
 	flex := -1
+	hasDynamic := ColC < len(m.ColumnDefs) && ColComments < len(m.ColumnDefs)
 	for i, col := range m.ColumnDefs {
+		if hasDynamic && (i == ColC || i == ColComments) {
+			continue
+		}
+		if !col.Visible {
+			continue
+		}
 		if col.FixedWidth > 0 {
 			widths[i] = col.FixedWidth
 			used += col.FixedWidth
@@ -573,11 +584,31 @@ func (m *Model) columnWidths() []int {
 			flex = i
 		}
 	}
-	if flex >= 0 {
-		widths[flex] = available - used
-		if widths[flex] < 1 {
-			widths[flex] = 1
+	if flex < 0 {
+		return widths
+	}
+	remaining := available - used
+	if hasDynamic {
+		commentsW := m.ColumnDefs[ColComments].FixedWidth
+		cW := m.ColumnDefs[ColC].FixedWidth
+		if remaining-commentsW >= 90 {
+			m.ColumnDefs[ColC].Visible = false
+			m.ColumnDefs[ColComments].Visible = true
+			widths[ColComments] = commentsW
+			widths[ColC] = 0
+			widths[flex] = remaining - commentsW
+		} else {
+			m.ColumnDefs[ColC].Visible = true
+			m.ColumnDefs[ColComments].Visible = false
+			widths[ColC] = cW
+			widths[ColComments] = 0
+			widths[flex] = remaining - cW
 		}
+	} else {
+		widths[flex] = remaining
+	}
+	if widths[flex] < 1 {
+		widths[flex] = 1
 	}
 	return widths
 }

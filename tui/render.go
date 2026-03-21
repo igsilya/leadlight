@@ -108,6 +108,9 @@ func (m *Model) renderPatchView() string {
 func (m *Model) renderHeader(out *strings.Builder, widths []int) {
 	out.WriteString(strings.Repeat(" ", indicatorWidth))
 	for i, col := range m.ColumnDefs {
+		if widths[i] == 0 {
+			continue
+		}
 		cell := renderCell(col.Title, widths[i])
 		out.WriteString(headerStyle.Render(cell))
 	}
@@ -150,13 +153,18 @@ func (m *Model) renderRows(
 		checksWidth = widths[m.ChecksColIdx]
 	}
 
+	// Use whichever comment column is visible (ColC or ColComments)
+	cCol := ColC
+	if ColComments < len(widths) && widths[ColComments] > 0 {
+		cCol = ColComments
+	}
 	commentStart := indicatorWidth
-	for c := 0; c < ColComments && c < len(widths); c++ {
+	for c := 0; c < cCol && c < len(widths); c++ {
 		commentStart += widths[c]
 	}
 	commentWidth := 0
-	if ColComments < len(widths) {
-		commentWidth = widths[ColComments]
+	if cCol < len(widths) {
+		commentWidth = widths[cCol]
 	}
 
 	afrtStart := indicatorWidth
@@ -212,6 +220,9 @@ func (m *Model) buildRawRow(
 ) string {
 	var b strings.Builder
 	for j, cellData := range item.data {
+		if widths[j] == 0 {
+			continue
+		}
 		text := cellData
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
@@ -227,6 +238,9 @@ func (m *Model) buildRow(
 	cached := bgStyles[item.style.Background]
 	var b strings.Builder
 	for j, cellData := range item.data {
+		if widths[j] == 0 {
+			continue
+		}
 		text := cellData
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
@@ -237,8 +251,11 @@ func (m *Model) buildRow(
 		} else if j == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColComments || j == ColAFRT {
+		} else if j == ColC || j == ColAFRT {
 			b.WriteString(renderBoldDimCellWithBg(
+				text, widths[j], item.style.Background))
+		} else if j == ColComments {
+			b.WriteString(renderCommentCellExpanded(
 				text, widths[j], item.style.Background))
 		} else if cached != nil {
 			b.WriteString(cached.row.Render(cell))
@@ -256,6 +273,9 @@ func (m *Model) buildStyledRow(
 	var b strings.Builder
 	b.WriteString(rowStyle.Render(prefix))
 	for j, cellData := range item.data {
+		if widths[j] == 0 {
+			continue
+		}
 		text := cellData
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
@@ -263,8 +283,11 @@ func (m *Model) buildStyledRow(
 		if j == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColComments || j == ColAFRT {
+		} else if j == ColC || j == ColAFRT {
 			b.WriteString(renderBoldDimCellWithBg(
+				text, widths[j], item.style.Background))
+		} else if j == ColComments {
+			b.WriteString(renderCommentCellExpanded(
 				text, widths[j], item.style.Background))
 		} else {
 			cell := renderCell(text, widths[j])
@@ -291,9 +314,16 @@ func (m *Model) renderSelectedRow(
 	if ColAFRT >= 0 && ColAFRT < len(item.data) {
 		afrtText = item.data[ColAFRT]
 	}
+	// Use whichever comment column is visible
 	commentText := ""
-	if ColComments < len(item.data) {
-		commentText = item.data[ColComments]
+	if commentWidth > 0 {
+		cCol := ColC
+		if ColComments < len(widths) && widths[ColComments] > 0 {
+			cCol = ColComments
+		}
+		if cCol < len(item.data) {
+			commentText = item.data[cCol]
+		}
 	}
 	return m.renderGradientRow(
 		fullRaw, bgName, checksStart, checksWidth, checksText,
@@ -388,7 +418,9 @@ func (m *Model) renderGradientRow(
 			}
 		}
 
-		if pos >= commentStart && pos < commentEnd {
+		// Only apply bold/dim overlay for narrow comment column (ColC).
+		// Wide Comments column uses gradient/flat styling naturally.
+		if commentWidth <= 3 && pos >= commentStart && pos < commentEnd {
 			ci := pos - commentStart
 			if ci < len(commentColors) {
 				if commentColors[ci] != "" {
@@ -498,25 +530,34 @@ func buildCheckColors(text string) []string {
 	return result
 }
 
-// renderBoldDimCellWithBg renders a cell with per-character styling:
-// non-zero values are bold in the row's fg color, zeros/dashes/slashes
-// are dim. Used for both the C (comment count) and A/F/R/T columns.
+// renderBoldDimCellWithBg renders a space-separated cell with per-part
+// styling: parts that are "-" or "0" are dim, all others are bold in
+// the row's fg color. Spaces between parts are dim. Used for ColC and
+// ColAFRT. Handles multi-digit numbers correctly ("10" is bold, not
+// per-character).
 func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 	cached := bgStyles[bgName]
+	parts := strings.Split(text, " ")
 	var b strings.Builder
-	for _, c := range text {
-		ch := string(c)
-		if c == '0' || c == ' ' || c == '-' {
+	for i, part := range parts {
+		if i > 0 {
 			if cached != nil {
-				b.WriteString(cached.checkZero.Render(ch))
+				b.WriteString(cached.checkZero.Render(" "))
 			} else {
-				b.WriteString(checksZeroStyle.Render(ch))
+				b.WriteString(checksZeroStyle.Render(" "))
+			}
+		}
+		if part == "-" || part == "0" {
+			if cached != nil {
+				b.WriteString(cached.checkZero.Render(part))
+			} else {
+				b.WriteString(checksZeroStyle.Render(part))
 			}
 		} else {
 			if cached != nil {
-				b.WriteString(cached.rowBold.Render(ch))
+				b.WriteString(cached.rowBold.Render(part))
 			} else {
-				b.WriteString(afrtNonZeroStyle.Render(ch))
+				b.WriteString(afrtNonZeroStyle.Render(part))
 			}
 		}
 	}
@@ -532,24 +573,62 @@ func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 	return rendered
 }
 
+// renderCommentCellExpanded renders the wide Comments column:
+// count prefix as a whole token (bold/dim), names in normal row style.
+func renderCommentCellExpanded(text string, width int, bgName string) string {
+	cached := bgStyles[bgName]
+	spaceIdx := strings.IndexByte(text, ' ')
+	countPart := text
+	namesPart := ""
+	if spaceIdx >= 0 {
+		countPart = text[:spaceIdx]
+		namesPart = text[spaceIdx:]
+	}
+	var b strings.Builder
+	cell := renderCell(countPart, len(countPart))
+	if countPart == "-" {
+		if cached != nil {
+			b.WriteString(cached.checkZero.Render(cell))
+		} else {
+			b.WriteString(checksZeroStyle.Render(cell))
+		}
+	} else {
+		if cached != nil {
+			b.WriteString(cached.rowBold.Render(cell))
+		} else {
+			b.WriteString(afrtNonZeroStyle.Render(cell))
+		}
+	}
+	rest := renderCell(namesPart, width-len(countPart))
+	if cached != nil {
+		b.WriteString(cached.row.Render(rest))
+	} else {
+		b.WriteString(rest)
+	}
+	return b.String()
+}
+
 // buildBoldDimColors returns per-character fg overrides for the gradient
-// row renderer: checkZeroColor for '0', '-' and '/', "" (no override)
-// for non-zero values. Used for both C and A/F/R/T columns.
+// row renderer. Splits on spaces and decides per-part: "-" or "0" parts
+// get checkZeroColor, other parts get "" (no override = bold). Spaces
+// between parts get checkZeroColor. Handles multi-digit numbers
+// correctly. Used for ColC and ColAFRT.
 func buildBoldDimColors(text string) []string {
-	result := make([]string, len(text))
-	for i, c := range text {
-		if c == '0' || c == ' ' || c == '-' {
-			result[i] = checkZeroColor
+	parts := strings.Split(text, " ")
+	result := make([]string, 0, len(text))
+	for i, part := range parts {
+		if i > 0 {
+			result = append(result, checkZeroColor)
+		}
+		color := ""
+		if part == "-" || part == "0" {
+			color = checkZeroColor
+		}
+		for range part {
+			result = append(result, color)
 		}
 	}
 	return result
-}
-
-func firstName(s string) string {
-	if i := strings.IndexByte(s, ' '); i > 0 {
-		return s[:i]
-	}
-	return s
 }
 
 type barEntry struct {
