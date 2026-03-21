@@ -15,7 +15,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "`" {
 		m.logConsole = !m.logConsole
-		m.logFocused = m.logConsole
+		m.logFocused = false
 		m.logOffset = 0
 		m.invalidateRowCache()
 		return m, nil

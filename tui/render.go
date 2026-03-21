@@ -82,15 +82,23 @@ func (m *Model) renderPatchView() string {
 			}
 		}
 		hs := m.mainHelp()
+		tabHint := ""
+		if m.logConsole {
+			tabHint = "  tab"
+		}
 		helpText := hs.Render(fmt.Sprintf(
-			"  ←/→%s  ↑/↓  esc  %d%%", expandHint, pct))
+			"  ←/→%s  ↑/↓  esc%s  %d%%", expandHint, tabHint, pct))
 		barWidth := m.width - lipgloss.Width(helpText)
 		commentBar := m.renderCommentBar(barWidth)
 		status = commentBar + helpText
 	} else {
 		hs := m.mainHelp()
+		tabHint := ""
+		if m.logConsole {
+			tabHint = " | tab log"
+		}
 		status = hs.Render(fmt.Sprintf(
-			"↑/↓ scroll | pgup/pgdn page | esc back  %d%%", pct))
+			"↑/↓ scroll | pgup/pgdn page | esc back%s  %d%%", tabHint, pct))
 	}
 
 	status = m.appendActiveStatus(status)
@@ -546,9 +554,13 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		filterLabel += " /" + m.filterText
 	}
 
+	tabHint := ""
+	if m.logConsole {
+		tabHint = " | tab log"
+	}
 	help := hs.Render(
 		filterLabel + " q quit | ↑/↓ pgup/dn navigate" +
-			" | enter view | space expand | / filter | " + toggleHint)
+			" | enter view | space expand | / filter | " + toggleHint + tabHint)
 
 	out.WriteString(m.appendActiveStatus(help))
 }
