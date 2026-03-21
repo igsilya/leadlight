@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS maintainers (
     username    TEXT NOT NULL,
     first_name  TEXT,
     last_name   TEXT,
-    email       TEXT
+    email       TEXT,
+    user_id     INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS series (
@@ -148,6 +149,7 @@ WHERE id IN (
 var alterStatements = []string{
 	`ALTER TABLE patches ADD COLUMN comments_fetched INTEGER DEFAULT 0`,
 	`ALTER TABLE covers ADD COLUMN comments_fetched INTEGER DEFAULT 0`,
+	`ALTER TABLE maintainers ADD COLUMN user_id INTEGER DEFAULT 0`,
 	`ALTER TABLE comments ADD COLUMN submitter_email TEXT DEFAULT ''`,
 	`ALTER TABLE comments ADD COLUMN headers TEXT DEFAULT ''`,
 	`ALTER TABLE comments ADD COLUMN web_url TEXT DEFAULT ''`,

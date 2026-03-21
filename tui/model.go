@@ -162,7 +162,7 @@ type Model struct {
 	FetchPatchComments func(patchID int)
 	FetchCoverComments func(coverID int)
 	RequestPatchUpdate func(
-		patchID int, state *string, delegateID *int,
+		patchID int, state *string, delegateUsername *string,
 	)
 }
 
@@ -406,11 +406,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case patchUpdateResultMsg:
-		if msg.err != nil {
-			log.Printf("TUI: patch update error: %v", msg.err)
-		} else {
-			log.Println("TUI: patch update success")
-		}
 		return m, nil
 
 	case mboxResultMsg:

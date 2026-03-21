@@ -373,7 +373,7 @@ func (m *Model) openDelegateSelector() {
 }
 
 func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
-	filtered, filteredIDs := m.filteredOptions()
+	filtered, _ := m.filteredOptions()
 	if filteredIdx < 0 || filteredIdx >= len(filtered) {
 		log.Printf("TUI: filtered selection idx %d out of range %d",
 			filteredIdx, len(filtered))
@@ -408,14 +408,10 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 			return patchUpdateResultMsg{}
 		}
 	case selectorDelegate:
-		if filteredIdx >= len(filteredIDs) {
-			return nil
-		}
-		delegateID := filteredIDs[filteredIdx]
+		username := filtered[filteredIdx]
 		return func() tea.Msg {
 			for _, pid := range patchIDs {
-				m.RequestPatchUpdate(
-					pid, nil, &delegateID)
+				m.RequestPatchUpdate(pid, nil, &username)
 			}
 			return patchUpdateResultMsg{}
 		}

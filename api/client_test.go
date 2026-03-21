@@ -507,7 +507,7 @@ func TestGetMbox(t *testing.T) {
 	}
 
 	content, err := c.GetMbox(
-		context.Background(), srv.URL+"/mbox/", false)
+		context.Background(), srv.URL+"/mbox/")
 	if err != nil {
 		t.Fatal(err)
 	}

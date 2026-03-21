@@ -416,16 +416,31 @@ func (d *DB) SaveMaintainers(maintainers []MaintainerRow) error {
 	}
 	defer tx.Rollback()
 
+	// Preserve cached user_id values before replacing
+	cachedIDs := map[string]int{}
+	rows, _ := tx.Query(
+		"SELECT username, user_id FROM maintainers WHERE user_id > 0")
+	if rows != nil {
+		for rows.Next() {
+			var u string
+			var uid int
+			rows.Scan(&u, &uid)
+			cachedIDs[u] = uid
+		}
+		rows.Close()
+	}
+
 	if _, err := tx.Exec("DELETE FROM maintainers"); err != nil {
 		return err
 	}
 	for _, m := range maintainers {
+		uid := cachedIDs[m.Username]
 		if _, err := tx.Exec(`
 			INSERT INTO maintainers
-				(id, username, first_name, last_name, email)
-			VALUES (?,?,?,?,?)`,
+				(id, username, first_name, last_name, email, user_id)
+			VALUES (?,?,?,?,?,?)`,
 			m.ID, m.Username, m.FirstName,
-			m.LastName, m.Email); err != nil {
+			m.LastName, m.Email, uid); err != nil {
 			return err
 		}
 	}
@@ -630,6 +645,30 @@ func (d *DB) GetMaintainers() []MaintainerRow {
 		result = append(result, r)
 	}
 	return result
+}
+
+func (d *DB) GetMaintainerUserID(username string) int {
+	var uid int
+	d.conn.QueryRow(
+		`SELECT COALESCE(user_id, 0) FROM maintainers
+		 WHERE username = ?`, username).Scan(&uid)
+	return uid
+}
+
+func (d *DB) SetMaintainerUserID(username string, userID int) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(
+		"UPDATE maintainers SET user_id = ? WHERE username = ?",
+		userID, username)
+}
+
+func (d *DB) ClearMaintainerUserID(username string) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(
+		"UPDATE maintainers SET user_id = 0 WHERE username = ?",
+		username)
 }
 
 func (d *DB) GetDelegateDisplayNames() map[string]string {

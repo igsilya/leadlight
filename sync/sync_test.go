@@ -270,7 +270,7 @@ func TestFetchMbox_Cached(t *testing.T) {
 	savePatch(d, 100, "test", "2026-03-10", "new")
 	d.UpdatePatchMbox(100, "cached mbox content")
 
-	result := s.fetchMbox(context.Background(), 100, false)
+	result := s.fetchMbox(context.Background(), 100)
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
@@ -319,7 +319,7 @@ func TestFetchMbox_FromLore(t *testing.T) {
 		Submitter: "Lorem",
 	})
 
-	result := s.fetchMbox(context.Background(), 100, false)
+	result := s.fetchMbox(context.Background(), 100)
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
@@ -367,7 +367,7 @@ func TestFetchMbox_FromPatchwork(t *testing.T) {
 		Submitter: "Lorem",
 	})
 
-	result := s.fetchMbox(context.Background(), 100, false)
+	result := s.fetchMbox(context.Background(), 100)
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
@@ -1886,7 +1886,7 @@ func TestFetchMbox_DoesNotCacheBotChallenge(t *testing.T) {
 
 	s := NewSyncer(client, d, cfg, func() {},
 		status.NewRegistry(nil))
-	result := s.fetchMbox(context.Background(), 100, false)
+	result := s.fetchMbox(context.Background(), 100)
 
 	if result.Err == nil {
 		t.Error("expected error for bot challenge response")

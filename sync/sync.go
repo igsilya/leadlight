@@ -27,7 +27,7 @@ type Syncer struct {
 	mboxC       chan MboxRequest
 	updateC     chan PatchUpdateRequest
 	commentC    chan CommentRequest
-	syncNowC    chan struct{}
+	syncNowC    chan context.Context
 	commentSkip map[int]time.Time
 	detailSkip  map[int]time.Time
 	status      *status.Registry
@@ -45,10 +45,11 @@ type MboxResult struct {
 }
 
 type PatchUpdateRequest struct {
-	PatchID    int
-	State      *string
-	DelegateID *int
-	ResultC    chan<- error
+	PatchID          int
+	State            *string
+	DelegateID       *int
+	DelegateUsername *string
+	ResultC          chan<- error
 }
 
 type CommentRequest struct {
@@ -72,7 +73,7 @@ func NewSyncer(
 		mboxC:       make(chan MboxRequest, 4),
 		updateC:     make(chan PatchUpdateRequest, 4),
 		commentC:    make(chan CommentRequest, 4),
-		syncNowC:    make(chan struct{}, 1),
+		syncNowC:    make(chan context.Context, 1),
 		commentSkip: map[int]time.Time{},
 		detailSkip:  map[int]time.Time{},
 	}
@@ -108,7 +109,7 @@ func (s *Syncer) RequestComments(id int, isCover bool) {
 
 func (s *Syncer) RequestSync() {
 	select {
-	case s.syncNowC <- struct{}{}:
+	case s.syncNowC <- api.WithNoRateLimit(context.Background()):
 		s.status.Set(status.Sync, "Syncing...", true)
 	default:
 	}
@@ -150,16 +151,17 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		case req := <-s.mboxC:
+			noRL := api.WithNoRateLimit(ctx)
 			if req.IsCover {
 				log.Printf("SYNC: cover mbox request for %d",
 					req.PatchID)
 				req.ResultC <- s.fetchCoverMbox(
-					ctx, req.PatchID)
+					noRL, req.PatchID)
 			} else {
 				log.Printf("SYNC: patch mbox request for %d",
 					req.PatchID)
 				req.ResultC <- s.fetchMbox(
-					ctx, req.PatchID, false)
+					noRL, req.PatchID)
 			}
 		case req := <-s.updateC:
 			log.Printf("SYNC: update request for patch %d",
@@ -167,10 +169,11 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 			req.ResultC <- s.handlePatchUpdate(ctx, req)
 		case req := <-s.commentC:
 			go func() {
+				noRL := api.WithNoRateLimit(ctx)
 				if req.IsCover {
-					s.fetchCommentsForCover(ctx, req.ID)
+					s.fetchCommentsForCover(noRL, req.ID)
 				} else {
-					s.fetchCommentsForPatch(ctx, req.ID)
+					s.fetchCommentsForPatch(noRL, req.ID)
 				}
 				s.status.Clear(status.Comments)
 				s.notify()
@@ -191,15 +194,15 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer ticker.Stop()
 	lastMaintainerRefresh := time.Now()
 
-	doSync := func() {
+	doSync := func(syncCtx context.Context) {
 		s.status.Set(status.BgSync, "Checking events...", true)
-		s.incrementalSync(ctx)
-		s.fixIncompletePatches(ctx)
+		s.incrementalSync(syncCtx)
+		s.fixIncompletePatches(syncCtx)
 		s.status.Clear(status.BgSync)
 		s.status.Clear(status.Sync)
 		s.notify()
 		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
-			s.fetchMaintainers(ctx)
+			s.fetchMaintainers(syncCtx)
 			lastMaintainerRefresh = time.Now()
 		}
 	}
@@ -209,9 +212,9 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			doSync()
-		case <-s.syncNowC:
-			doSync()
+			doSync(ctx)
+		case syncCtx := <-s.syncNowC:
+			doSync(syncCtx)
 		}
 	}
 }
@@ -970,30 +973,66 @@ func (s *Syncer) updateCoverTagsFromComments(coverID int) {
 	}
 }
 
+func (s *Syncer) resolveUserID(
+	ctx context.Context, username string,
+) (int, error) {
+	if id := s.db.GetMaintainerUserID(username); id > 0 {
+		return id, nil
+	}
+	log.Printf("SYNC: looking up user ID for %q", username)
+	id, err := s.client.LookupUserID(ctx, username)
+	if err != nil {
+		return 0, err
+	}
+	s.db.SetMaintainerUserID(username, id)
+	log.Printf("SYNC: resolved %q to user ID %d", username, id)
+	return id, nil
+}
+
 func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) error {
 	log.Printf("SYNC: handlePatchUpdate patch %d state=%v delegate=%v",
-		req.PatchID, req.State, req.DelegateID)
+		req.PatchID, req.State, req.DelegateUsername)
 	s.status.Set(status.Update, "Updating...", true)
+	ctx = api.WithNoRateLimit(ctx)
+
+	delegateID := req.DelegateID
+	if req.DelegateUsername != nil {
+		uid, err := s.resolveUserID(ctx, *req.DelegateUsername)
+		if err != nil {
+			log.Printf("SYNC: resolve delegate %q: %v",
+				*req.DelegateUsername, err)
+			s.status.SetTimed(status.Update,
+				"Failed to resolve delegate: "+err.Error(),
+				5*time.Second)
+			return err
+		}
+		delegateID = &uid
+	}
+
 	update := api.PatchUpdate{
 		State:    req.State,
-		Delegate: req.DelegateID,
+		Delegate: delegateID,
 	}
 	_, err := s.client.UpdatePatch(ctx, req.PatchID, update)
 	if err != nil {
 		log.Printf("SYNC: patch update %d failed: %v", req.PatchID, err)
+		if req.DelegateUsername != nil &&
+			strings.Contains(err.Error(), "Invalid pk") {
+			s.db.ClearMaintainerUserID(*req.DelegateUsername)
+		}
 		s.status.SetTimed(status.Update,
 			fmt.Sprintf("Update failed: %v", err), 5*time.Second)
 		return err
 	}
 	log.Printf("SYNC: patch update %d success, syncing events", req.PatchID)
-	s.status.SetTimed(status.Update, "Updated", 3*time.Second)
 	s.incrementalSync(ctx)
 	s.notify()
+	s.status.SetTimed(status.Update, "Updated", 3*time.Second)
 	return nil
 }
 
 func (s *Syncer) fetchMbox(
-	ctx context.Context, patchID int, rateLimit bool,
+	ctx context.Context, patchID int,
 ) MboxResult {
 	row, err := s.db.GetPatch(patchID)
 	if err != nil {
@@ -1015,7 +1054,7 @@ func (s *Syncer) fetchMbox(
 			s.cfg.LoreURL, "/") + "/" + msgid + "/raw"
 		log.Printf("SYNC: fetchMbox(%d): trying lore %s",
 			patchID, loreURL)
-		content, err := s.client.GetMbox(ctx, loreURL, rateLimit)
+		content, err := s.client.GetMbox(ctx, loreURL)
 		if err == nil && isValidMbox(content) {
 			log.Printf("SYNC: fetchMbox(%d): lore OK, %d bytes",
 				patchID, len(content))
@@ -1044,7 +1083,7 @@ func (s *Syncer) fetchMbox(
 		}
 		log.Printf("SYNC: fetchMbox(%d): trying patchwork %s",
 			patchID, mboxURL)
-		content, err := s.client.GetMbox(ctx, mboxURL, rateLimit)
+		content, err := s.client.GetMbox(ctx, mboxURL)
 		if err != nil {
 			log.Printf("SYNC: fetchMbox(%d): patchwork failed: %v",
 				patchID, err)
@@ -1096,7 +1135,7 @@ func (s *Syncer) fetchCoverMbox(ctx context.Context, seriesID int) MboxResult {
 		loreURL := strings.TrimRight(s.cfg.LoreURL, "/") + "/" + msgid + "/raw"
 		log.Printf("SYNC: fetchCoverMbox(%d): trying lore %s",
 			cover.ID, loreURL)
-		content, err := s.client.GetMbox(ctx, loreURL, false)
+		content, err := s.client.GetMbox(ctx, loreURL)
 		if err == nil && isValidMbox(content) {
 			s.db.UpdateCoverMbox(cover.ID, content)
 			return MboxResult{Content: content}
@@ -1111,7 +1150,7 @@ func (s *Syncer) fetchCoverMbox(ctx context.Context, seriesID int) MboxResult {
 		}
 		log.Printf("SYNC: fetchCoverMbox(%d): trying patchwork %s",
 			cover.ID, mboxURL)
-		content, err := s.client.GetMbox(ctx, mboxURL, false)
+		content, err := s.client.GetMbox(ctx, mboxURL)
 		if err != nil {
 			return MboxResult{Err: err}
 		}

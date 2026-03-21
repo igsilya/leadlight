@@ -81,6 +81,21 @@ type PatchUpdate struct {
 	Delegate *int    `json:"delegate,omitempty"`
 }
 
+type rateLimitKey struct{}
+
+// WithNoRateLimit returns a context that disables API rate
+// limiting for all downstream requests.  Used for user-initiated
+// operations (mbox fetch, delegate/state changes) where the
+// 5-second delay between requests would degrade the UX.
+func WithNoRateLimit(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rateLimitKey{}, true)
+}
+
+func (c *Client) shouldRateLimit(ctx context.Context) bool {
+	v, _ := ctx.Value(rateLimitKey{}).(bool)
+	return !v
+}
+
 func (c *Client) waitForRateLimit() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -127,14 +142,18 @@ func (c *Client) doRequest(
 	method, rawURL string,
 	body io.Reader,
 ) (*http.Response, error) {
-	c.waitForRateLimit()
+	if c.shouldRateLimit(ctx) {
+		c.waitForRateLimit()
+	}
 	log.Printf("HTTP %s (go) %s", method, rawURL)
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := c.httpClient.Do(req)
-	c.markRequestDone()
+	if c.shouldRateLimit(ctx) {
+		c.markRequestDone()
+	}
 	if err != nil {
 		log.Printf("HTTP %s (go) -> error: %v %s",
 			method, err, rawURL)
@@ -149,9 +168,8 @@ func (c *Client) doExternalRequest(
 	ctx context.Context,
 	method, rawURL string,
 	body io.Reader,
-	rateLimit bool,
 ) (*http.Response, error) {
-	if rateLimit {
+	if c.shouldRateLimit(ctx) {
 		c.waitForRateLimit()
 	}
 	req, err := c.newRequest(ctx, method, rawURL, body)
@@ -161,7 +179,7 @@ func (c *Client) doExternalRequest(
 	via := "curl"
 	log.Printf("HTTP %s (%s) %s", method, via, rawURL)
 	resp, err := execCurl(req)
-	if rateLimit {
+	if c.shouldRateLimit(ctx) {
 		c.markRequestDone()
 	}
 	if err != nil {
@@ -169,7 +187,7 @@ func (c *Client) doExternalRequest(
 		log.Printf("HTTP %s -> curl failed: %v, falling back to Go %s",
 			method, err, rawURL)
 		resp, err = c.httpClient.Do(req)
-		if rateLimit {
+		if c.shouldRateLimit(ctx) {
 			c.markRequestDone()
 		}
 	}
@@ -534,8 +552,28 @@ func (c *Client) UpdatePatch(
 	return &pd, nil
 }
 
-func (c *Client) GetMbox(ctx context.Context, rawURL string, rateLimit bool) (string, error) {
-	resp, err := c.doExternalRequest(ctx, http.MethodGet, rawURL, nil, rateLimit)
+// LookupUserID resolves a username to a Patchwork user ID via
+// the /users/ API.  The project API returns person/maintainer
+// IDs which differ from user IDs used by the delegate API.
+func (c *Client) LookupUserID(
+	ctx context.Context, username string,
+) (int, error) {
+	v := url.Values{}
+	v.Set("q", username)
+	users, err := getAll[User](c, ctx, "/users/", v)
+	if err != nil {
+		return 0, fmt.Errorf("lookup user %q: %w", username, err)
+	}
+	for _, u := range users {
+		if u.Username == username {
+			return u.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("user %q not found", username)
+}
+
+func (c *Client) GetMbox(ctx context.Context, rawURL string) (string, error) {
+	resp, err := c.doExternalRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
