@@ -64,15 +64,15 @@ func TestFormatReviewsFromTags(t *testing.T) {
 			Identity: "C <c@ex>"},
 	}
 	got := formatPatchReviews(100, tags)
-	if got != "2/0/1/0" {
-		t.Errorf("got %q, want 2/0/1/0", got)
+	if got != "2/-/1/-" {
+		t.Errorf("got %q, want 2/-/1/-", got)
 	}
 }
 
 func TestFormatReviews_NoTags(t *testing.T) {
 	got := formatPatchReviews(100, nil)
-	if got != "0/0/0/0" {
-		t.Errorf("got %q, want 0/0/0/0", got)
+	if got != "-/-/-/-" {
+		t.Errorf("got %q, want -/-/-/-", got)
 	}
 }
 
@@ -93,8 +93,8 @@ func TestFormatSeriesReviews_FromTags(t *testing.T) {
 	// patch 100: A(acked) + C(acked from cover) = 2 acked
 	// patch 101: B(reviewed) + C(acked from cover) = 1 acked, 1 reviewed
 	// series total: 3 acked, 0 fixes, 1 reviewed, 0 tested
-	if got != "3/0/1/0" {
-		t.Errorf("got %q, want 3/0/1/0", got)
+	if got != "3/-/1/-" {
+		t.Errorf("got %q, want 3/-/1/-", got)
 	}
 }
 

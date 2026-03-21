@@ -435,7 +435,7 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 				b.WriteString(checksZeroStyle.Render("/"))
 			}
 		}
-		if part == "0" {
+		if part == "0" || part == "-" {
 			if cached != nil {
 				b.WriteString(cached.checkZero.Render(part))
 			} else {
@@ -488,7 +488,7 @@ func buildCheckColors(text string) []string {
 			result = append(result, checkZeroColor)
 		}
 		color := fgColors[i]
-		if part == "0" {
+		if part == "0" || part == "-" {
 			color = checkZeroColor
 		}
 		for range part {
@@ -499,14 +499,14 @@ func buildCheckColors(text string) []string {
 }
 
 // renderBoldDimCellWithBg renders a cell with per-character styling:
-// non-zero digits are bold in the row's fg color, zeros and slashes
+// non-zero values are bold in the row's fg color, zeros/dashes/slashes
 // are dim. Used for both the C (comment count) and A/F/R/T columns.
 func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 	cached := bgStyles[bgName]
 	var b strings.Builder
 	for _, c := range text {
 		ch := string(c)
-		if c == '0' || c == '/' {
+		if c == '0' || c == '/' || c == '-' {
 			if cached != nil {
 				b.WriteString(cached.checkZero.Render(ch))
 			} else {
@@ -533,12 +533,12 @@ func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 }
 
 // buildBoldDimColors returns per-character fg overrides for the gradient
-// row renderer: checkZeroColor for '0' and '/', "" (no override) for
-// non-zero digits. Used for both C and A/F/R/T columns.
+// row renderer: checkZeroColor for '0', '-' and '/', "" (no override)
+// for non-zero values. Used for both C and A/F/R/T columns.
 func buildBoldDimColors(text string) []string {
 	result := make([]string, len(text))
 	for i, c := range text {
-		if c == '0' || c == '/' {
+		if c == '0' || c == '/' || c == '-' {
 			result[i] = checkZeroColor
 		}
 	}

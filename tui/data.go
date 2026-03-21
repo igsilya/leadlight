@@ -231,7 +231,7 @@ func seriesToRow(
 			aggregateState(patches),
 			s.Submitter,
 			formatAge(s.Date),
-			strconv.Itoa(commentCount),
+			formatCount(commentCount),
 			formatSeriesReviews(patches, tags),
 			formatSeriesChecks(patches),
 			formatDelegate(aggregateDelegate(patches), delegateNames),
@@ -263,7 +263,7 @@ func patchToSubRow(
 		displayState(p.State),
 		p.Submitter,
 		formatAge(p.Date),
-		strconv.Itoa(commentCount),
+		formatCount(commentCount),
 		formatPatchReviews(p.ID, tags),
 		formatChecks(p),
 		formatDelegate(p.Delegate, dlgNames),
@@ -331,9 +331,16 @@ func computePatchAFRT(patchID int, tags []db.TagRow) (a, f, r, t int) {
 	return
 }
 
+func formatCount(n int) string {
+	if n == 0 {
+		return "-"
+	}
+	return strconv.Itoa(n)
+}
+
 func formatPatchReviews(patchID int, tags []db.TagRow) string {
 	a, f, r, t := computePatchAFRT(patchID, tags)
-	return fmt.Sprintf("%d/%d/%d/%d", a, f, r, t)
+	return formatCount(a) + "/" + formatCount(f) + "/" + formatCount(r) + "/" + formatCount(t)
 }
 
 func formatSeriesReviews(patches []db.PatchRow, tags []db.TagRow) string {
@@ -345,7 +352,7 @@ func formatSeriesReviews(patches []db.PatchRow, tags []db.TagRow) string {
 		r += pr
 		t += pt
 	}
-	return fmt.Sprintf("%d/%d/%d/%d", a, f, r, t)
+	return formatCount(a) + "/" + formatCount(f) + "/" + formatCount(r) + "/" + formatCount(t)
 }
 
 func isTerminalState(state string) bool {
@@ -361,8 +368,7 @@ func formatChecks(p db.PatchRow) string {
 		p.ChecksPending == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("%d/%d/%d",
-		p.ChecksPass, p.ChecksFail, p.ChecksPending)
+	return formatCount(p.ChecksPass) + "/" + formatCount(p.ChecksFail) + "/" + formatCount(p.ChecksPending)
 }
 
 func formatSeriesChecks(patches []db.PatchRow) string {
@@ -375,7 +381,7 @@ func formatSeriesChecks(patches []db.PatchRow) string {
 	if pass == 0 && fail == 0 && pending == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("%d/%d/%d", pass, fail, pending)
+	return formatCount(pass) + "/" + formatCount(fail) + "/" + formatCount(pending)
 }
 
 func parseDate(dateStr string) time.Time {
