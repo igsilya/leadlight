@@ -345,7 +345,7 @@ func (m *Model) openStateSelector() {
 	items := m.getVisibleItems()
 	if m.selectedRow < len(items) {
 		current := ""
-		if m.stateColIdx < len(items[m.selectedRow].data) {
+		if int(m.stateColIdx) < len(items[m.selectedRow].data) {
 			current = items[m.selectedRow].data[m.stateColIdx]
 		}
 		for i, opt := range m.selectorOptions {

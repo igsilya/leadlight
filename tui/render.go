@@ -145,34 +145,34 @@ func (m *Model) renderRows(
 	blank := strings.Repeat(" ", indicatorWidth)
 
 	checksStart := indicatorWidth
-	for c := 0; c < m.ChecksColIdx && c < len(widths); c++ {
+	for c := 0; c < int(m.ChecksColIdx) && c < len(widths); c++ {
 		checksStart += widths[c]
 	}
 	checksWidth := 0
-	if m.ChecksColIdx >= 0 && m.ChecksColIdx < len(widths) {
+	if m.ChecksColIdx >= 0 && int(m.ChecksColIdx) < len(widths) {
 		checksWidth = widths[m.ChecksColIdx]
 	}
 
 	// Use whichever comment column is visible (ColC or ColComments)
 	cCol := ColC
-	if ColComments < len(widths) && widths[ColComments] > 0 {
+	if int(ColComments) < len(widths) && widths[ColComments] > 0 {
 		cCol = ColComments
 	}
 	commentStart := indicatorWidth
-	for c := 0; c < cCol && c < len(widths); c++ {
+	for c := 0; c < int(cCol) && c < len(widths); c++ {
 		commentStart += widths[c]
 	}
 	commentWidth := 0
-	if cCol < len(widths) {
+	if int(cCol) < len(widths) {
 		commentWidth = widths[cCol]
 	}
 
 	afrtStart := indicatorWidth
-	for c := 0; c < ColAFRT && c < len(widths); c++ {
+	for c := 0; c < int(ColAFRT) && c < len(widths); c++ {
 		afrtStart += widths[c]
 	}
 	afrtWidth := 0
-	if ColAFRT >= 0 && ColAFRT < len(widths) {
+	if int(ColAFRT) < len(widths) {
 		afrtWidth = widths[ColAFRT]
 	}
 
@@ -233,7 +233,7 @@ func (m *Model) buildRawRow(
 }
 
 func (m *Model) buildRow(
-	item visibleItem, widths []int, highlightCol int,
+	item visibleItem, widths []int, highlightCol ColIndex,
 ) string {
 	cached := bgStyles[item.style.Background]
 	var b strings.Builder
@@ -241,20 +241,21 @@ func (m *Model) buildRow(
 		if widths[j] == 0 {
 			continue
 		}
+		col := ColIndex(j)
 		text := cellData
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
 		cell := renderCell(text, widths[j])
-		if j == highlightCol && highlightCol != ColNone {
+		if col == highlightCol && highlightCol != ColNone {
 			b.WriteString(cellHighlightStyle.Render(cell))
-		} else if j == m.ChecksColIdx {
+		} else if col == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColC || j == ColAFRT {
+		} else if col == ColC || col == ColAFRT {
 			b.WriteString(renderBoldDimCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColComments {
+		} else if col == ColComments {
 			b.WriteString(renderCommentCellExpanded(
 				text, widths[j], item.style.Background))
 		} else if cached != nil {
@@ -276,17 +277,18 @@ func (m *Model) buildStyledRow(
 		if widths[j] == 0 {
 			continue
 		}
+		col := ColIndex(j)
 		text := cellData
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
-		if j == m.ChecksColIdx {
+		if col == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColC || j == ColAFRT {
+		} else if col == ColC || col == ColAFRT {
 			b.WriteString(renderBoldDimCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColComments {
+		} else if col == ColComments {
 			b.WriteString(renderCommentCellExpanded(
 				text, widths[j], item.style.Background))
 		} else {
@@ -307,23 +309,20 @@ func (m *Model) renderSelectedRow(
 	fullRaw := indicator + raw
 	bgName := item.style.Background
 	checksText := ""
-	if m.ChecksColIdx >= 0 && m.ChecksColIdx < len(item.data) {
+	if checksWidth > 0 {
 		checksText = item.data[m.ChecksColIdx]
 	}
 	afrtText := ""
-	if ColAFRT >= 0 && ColAFRT < len(item.data) {
+	if afrtWidth > 0 {
 		afrtText = item.data[ColAFRT]
 	}
-	// Use whichever comment column is visible
 	commentText := ""
 	if commentWidth > 0 {
 		cCol := ColC
-		if ColComments < len(widths) && widths[ColComments] > 0 {
+		if int(ColComments) < len(widths) && widths[ColComments] > 0 {
 			cCol = ColComments
 		}
-		if cCol < len(item.data) {
-			commentText = item.data[cCol]
-		}
+		commentText = item.data[cCol]
 	}
 	return m.renderGradientRow(
 		fullRaw, bgName, checksStart, checksWidth, checksText,

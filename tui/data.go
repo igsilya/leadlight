@@ -76,15 +76,24 @@ func formatDelegate(username string, names map[string]string) string {
 	return username
 }
 
+type ColIndex int
+
 const (
-	ColNone     = -1
-	ColState    = 3
-	ColC        = 6
-	ColComments = 7
-	ColAFRT     = 8
-	ColChecks   = 9
-	ColDlg      = 10
+	ColID ColIndex = iota
+	ColVer
+	ColName
+	ColState
+	ColSubmitter
+	ColAge
+	ColC
+	ColComments
+	ColAFRT
+	ColChecks
+	ColDlg
+	ColMax // sentinel: number of columns
 )
+
+const ColNone ColIndex = -1
 
 var AllPatchStates = []string{
 	"new", "under-review", "accepted", "rejected",

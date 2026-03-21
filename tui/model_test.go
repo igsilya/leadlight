@@ -39,7 +39,7 @@ func testModel() *Model {
 			},
 		},
 	}
-	m := NewModelWithData(columns, rows, 2)
+	m := NewModelWithData(columns, rows, ColIndex(2))
 	m.states = []string{"Active", "Inactive", "Pending", "Away"}
 	m.token = "test-token"
 	m.Status = status.NewRegistry(nil)

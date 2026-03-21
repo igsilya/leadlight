@@ -110,9 +110,9 @@ func spinnerTickCmd() tea.Cmd {
 type Model struct {
 	ColumnDefs           []ColumnDef
 	RowData              []RowData
-	stateColIdx          int
-	ChecksColIdx         int
-	selectorHighlightCol int
+	stateColIdx          ColIndex
+	ChecksColIdx         ColIndex
+	selectorHighlightCol ColIndex
 	db                   *db.DB
 	states               []string
 	token                string
@@ -192,7 +192,7 @@ func NewModel(d *db.DB, states []string, token string) *Model {
 func NewModelWithData(
 	columns []ColumnDef,
 	rows []RowData,
-	stateColIdx int,
+	stateColIdx ColIndex,
 ) *Model {
 	return &Model{
 		ColumnDefs:           columns,
@@ -569,9 +569,10 @@ func (m *Model) columnWidths() []int {
 	widths := make([]int, len(m.ColumnDefs))
 	used := 0
 	flex := -1
-	hasDynamic := ColC < len(m.ColumnDefs) && ColComments < len(m.ColumnDefs)
+	hasDynamic := int(ColC) < len(m.ColumnDefs) && int(ColComments) < len(m.ColumnDefs)
 	for i, col := range m.ColumnDefs {
-		if hasDynamic && (i == ColC || i == ColComments) {
+		ci := ColIndex(i)
+		if hasDynamic && (ci == ColC || ci == ColComments) {
 			continue
 		}
 		if !col.Visible {
