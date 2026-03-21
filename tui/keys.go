@@ -13,6 +13,9 @@ import (
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if key == "ctrl+z" {
+		return m, tea.Suspend
+	}
 	if key == "`" {
 		m.logConsole = !m.logConsole
 		m.logFocused = false
