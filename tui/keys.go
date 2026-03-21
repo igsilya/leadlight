@@ -320,8 +320,8 @@ func (m *Model) openStateSelector() {
 		return
 	}
 	log.Printf("TUI: opening state selector with %d options",
-		len(m.states))
-	m.selectorOptions = m.states
+		len(AllPatchStates))
+	m.selectorOptions = AllPatchStates
 	m.selectorIDs = nil
 	m.selectorCursor = 0
 

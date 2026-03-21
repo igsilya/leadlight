@@ -81,6 +81,12 @@ const (
 	ColDlg    = 8
 )
 
+var AllPatchStates = []string{
+	"new", "under-review", "accepted", "rejected",
+	"rfc", "superseded", "changes-requested",
+	"deferred", "not-applicable", "handled-elsewhere",
+}
+
 var (
 	versionRe  = regexp.MustCompile(`(?i)^v\d+$`)
 	positionRe = regexp.MustCompile(`^\d+/\d+$`)

@@ -162,11 +162,11 @@ func TestKeyS_OpenStateSelector(t *testing.T) {
 
 func TestKeyS_CursorMatchesCurrentValue(t *testing.T) {
 	m := testModel()
-	m = pressKey(m, "j") // row 1, status = "Pending"
+	// Row 0 has state "Active" which doesn't match any real
+	// state, so cursor stays at 0
 	m = pressKey(m, "s")
-	// "Pending" is index 2 in the states
-	if m.selectorCursor != 2 {
-		t.Errorf("selectorCursor = %d, want 2",
+	if m.selectorCursor != 0 {
+		t.Errorf("selectorCursor = %d, want 0",
 			m.selectorCursor)
 	}
 }
@@ -187,9 +187,10 @@ func TestSelectorLeftRight(t *testing.T) {
 
 	// Wrap left from 0 → last
 	m = pressSpecialKey(m, tea.KeyLeft)
-	if m.selectorCursor != 3 {
-		t.Errorf("cursor = %d, want 3 (wrapped)",
-			m.selectorCursor)
+	last := len(AllPatchStates) - 1
+	if m.selectorCursor != last {
+		t.Errorf("cursor = %d, want %d (wrapped)",
+			m.selectorCursor, last)
 	}
 
 	// Wrap right from last → 0
@@ -204,24 +205,29 @@ func TestSelectorFilter(t *testing.T) {
 	m := testModel()
 	m = pressKey(m, "s")
 
-	// Type "p" to filter — should match "Pending"
-	m = pressKey(m, "p")
-	if m.selectorFilter != "p" {
+	// Type "rfc" to filter — should match only "rfc"
+	m = pressKey(m, "r")
+	m = pressKey(m, "f")
+	m = pressKey(m, "c")
+	if m.selectorFilter != "rfc" {
 		t.Errorf("filter = %q", m.selectorFilter)
 	}
 	filtered, _ := m.filteredOptions()
-	if len(filtered) != 1 || filtered[0] != "Pending" {
-		t.Errorf("filtered = %v, want [Pending]", filtered)
+	if len(filtered) != 1 || filtered[0] != "rfc" {
+		t.Errorf("filtered = %v, want [rfc]", filtered)
 	}
 
-	// Backspace clears filter
+	// Backspace removes characters
+	m = pressSpecialKey(m, tea.KeyBackspace)
+	m = pressSpecialKey(m, tea.KeyBackspace)
 	m = pressSpecialKey(m, tea.KeyBackspace)
 	if m.selectorFilter != "" {
 		t.Errorf("filter = %q after backspace", m.selectorFilter)
 	}
 	filtered, _ = m.filteredOptions()
-	if len(filtered) != 4 {
-		t.Errorf("filtered = %d, want 4", len(filtered))
+	if len(filtered) != len(AllPatchStates) {
+		t.Errorf("filtered = %d, want %d",
+			len(filtered), len(AllPatchStates))
 	}
 }
 
