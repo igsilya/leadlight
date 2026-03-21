@@ -199,8 +199,9 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		idx := int(key[0] - '1')
-		if idx < n {
+		rel := int(key[0] - '1')
+		idx := m.selectorBarLo + rel
+		if rel < m.selectorBarHi-m.selectorBarLo && idx < n {
 			return m, m.applyFilteredSelection(idx)
 		}
 	case "left":
@@ -272,6 +273,19 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewportOffset = 0
 	case "end", "G":
 		m.viewportScrollToEnd()
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		if len(m.viewComments) > 0 {
+			rel := int(msg.String()[0] - '1')
+			barIdx := m.commentBarLo + rel
+			if rel < m.commentBarHi-m.commentBarLo {
+				commentIdx := barIdx - 1 // entry 0 is "patch" -> viewCommentIdx -1
+				if commentIdx >= -1 && commentIdx < len(m.viewComments) {
+					m.viewCommentIdx = commentIdx
+					m.quotesExpanded = false
+					m.switchToComment()
+				}
+			}
+		}
 	case "right", "l", "f8":
 		m.nextComment()
 	case "left", "h", "f7":

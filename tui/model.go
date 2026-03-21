@@ -132,6 +132,11 @@ type Model struct {
 	selectorOptions []string
 	selectorIDs     []int
 	selectorFilter  string
+	selectorBarLo   int
+	selectorBarHi   int
+
+	commentBarLo int
+	commentBarHi int
 
 	selectedID string
 	showAll    bool

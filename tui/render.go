@@ -428,37 +428,25 @@ func firstName(s string) string {
 	return s
 }
 
-func (m *Model) renderCommentBar(maxWidth int) string {
-	type entry struct {
-		label    string
-		width    int
-		selected bool
+type barEntry struct {
+	label string
+	width int // visual width: 1 (number) + 1 (space) + len(label)
+}
+
+// renderScrollBar renders a scrollable bar of entries centered on selectedIdx.
+// Window is capped at maxVisible entries (9 for number-key support).
+// Returns the rendered string and the [lo, hi) range of visible entries.
+func renderScrollBar(entries []barEntry, selectedIdx, maxWidth, maxVisible int) (string, int, int) {
+	if len(entries) == 0 {
+		return "", 0, 0
 	}
 
-	var entries []entry
-	patchLabel := "patch"
-	entries = append(entries, entry{
-		patchLabel, len(patchLabel) + 2, m.viewCommentIdx == -1,
-	})
-	for i, c := range m.viewComments {
-		name := firstName(c.Submitter)
-		if name == "" {
-			name = "reply"
-		}
-		label := name + " (" + formatAge(c.Date) + ")"
-		entries = append(entries, entry{
-			label, len(label) + 2, i == m.viewCommentIdx,
-		})
-	}
-
-	selectedIdx := m.viewCommentIdx + 1
 	sepWidth := 3
-
 	lo, hi := selectedIdx, selectedIdx+1
 	used := entries[selectedIdx].width
 	for {
 		grew := false
-		if lo > 0 {
+		if lo > 0 && hi-lo < maxVisible {
 			w := entries[lo-1].width + sepWidth
 			if used+w+4 <= maxWidth {
 				lo--
@@ -466,7 +454,7 @@ func (m *Model) renderCommentBar(maxWidth int) string {
 				grew = true
 			}
 		}
-		if hi < len(entries) {
+		if hi < len(entries) && hi-lo < maxVisible {
 			w := entries[hi].width + sepWidth
 			if used+w+4 <= maxWidth {
 				hi++
@@ -488,18 +476,36 @@ func (m *Model) renderCommentBar(maxWidth int) string {
 		if i > lo {
 			b.WriteString(sep)
 		}
+		num := optionNumStyle.Render(fmt.Sprintf("%d", i-lo+1))
 		e := entries[i]
-		if e.selected {
-			b.WriteString(
-				highlightedOptionStyle.Render(" " + e.label + " "))
+		if i == selectedIdx {
+			b.WriteString(num + highlightedOptionStyle.Render(" "+e.label))
 		} else {
-			b.WriteString(normalOptionStyle.Render(e.label))
+			b.WriteString(num + normalOptionStyle.Render(" "+e.label))
 		}
 	}
 	if hi < len(entries) {
 		b.WriteString(helpStyle.Render(" ▶"))
 	}
-	return b.String()
+	return b.String(), lo, hi
+}
+
+func (m *Model) renderCommentBar(maxWidth int) string {
+	entries := make([]barEntry, 0, len(m.viewComments)+1)
+	entries = append(entries, barEntry{"patch", 2 + len("patch")})
+	for _, c := range m.viewComments {
+		name := firstName(c.Submitter)
+		if name == "" {
+			name = "reply"
+		}
+		label := name + " (" + formatAge(c.Date) + ")"
+		entries = append(entries, barEntry{label, 2 + len(label)})
+	}
+	selectedIdx := m.viewCommentIdx + 1
+	rendered, lo, hi := renderScrollBar(entries, selectedIdx, maxWidth, 9)
+	m.commentBarLo = lo
+	m.commentBarHi = hi
+	return rendered
 }
 
 func (m *Model) padToBottom(out *strings.Builder) {
@@ -558,23 +564,18 @@ func (m *Model) renderSelectorBar(out *strings.Builder) {
 	prefix += ": "
 
 	filtered, _ := m.filteredOptions()
-
-	var parts []string
+	entries := make([]barEntry, len(filtered))
 	for i, opt := range filtered {
-		num := optionNumStyle.Render(fmt.Sprintf("%d", i+1))
-		label := " " + opt + " "
-		if i == m.selectorCursor {
-			parts = append(parts,
-				num+highlightedOptionStyle.Render(label))
-		} else {
-			parts = append(parts,
-				num+normalOptionStyle.Render(label))
-		}
+		entries[i] = barEntry{opt, 2 + len(opt)}
 	}
-	sep := helpStyle.Render(" │ ")
-	out.WriteString(
-		helpStyle.Render(prefix) + strings.Join(parts, sep))
+
+	maxWidth := m.width - len(prefix)
+	rendered, lo, hi := renderScrollBar(entries, m.selectorCursor, maxWidth, 9)
+	m.selectorBarLo = lo
+	m.selectorBarHi = hi
+	out.WriteString(helpStyle.Render(prefix) + rendered)
 	out.WriteByte('\n')
+
 	hint := "←/→ select, enter confirm, esc "
 	if m.selectorFilter != "" {
 		hint += "clear filter"
