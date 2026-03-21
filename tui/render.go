@@ -150,6 +150,15 @@ func (m *Model) renderRows(
 		checksWidth = widths[m.ChecksColIdx]
 	}
 
+	commentStart := indicatorWidth
+	for c := 0; c < ColComments && c < len(widths); c++ {
+		commentStart += widths[c]
+	}
+	commentWidth := 0
+	if ColComments < len(widths) {
+		commentWidth = widths[ColComments]
+	}
+
 	afrtStart := indicatorWidth
 	for c := 0; c < ColAFRT && c < len(widths); c++ {
 		afrtStart += widths[c]
@@ -178,7 +187,8 @@ func (m *Model) renderRows(
 				row = m.renderSelectedRow(
 					items[i], widths, indicator,
 					checksStart, checksWidth,
-					afrtStart, afrtWidth)
+					afrtStart, afrtWidth,
+					commentStart, commentWidth)
 			}
 		} else if i < len(m.cachedRows) && m.cachedRows[i] != "" {
 			row = m.cachedRows[i]
@@ -227,8 +237,8 @@ func (m *Model) buildRow(
 		} else if j == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColAFRT {
-			b.WriteString(renderAFRTCellWithBg(
+		} else if j == ColComments || j == ColAFRT {
+			b.WriteString(renderBoldDimCellWithBg(
 				text, widths[j], item.style.Background))
 		} else if cached != nil {
 			b.WriteString(cached.row.Render(cell))
@@ -253,8 +263,8 @@ func (m *Model) buildStyledRow(
 		if j == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
-		} else if j == ColAFRT {
-			b.WriteString(renderAFRTCellWithBg(
+		} else if j == ColComments || j == ColAFRT {
+			b.WriteString(renderBoldDimCellWithBg(
 				text, widths[j], item.style.Background))
 		} else {
 			cell := renderCell(text, widths[j])
@@ -268,6 +278,7 @@ func (m *Model) renderSelectedRow(
 	item visibleItem, widths []int, indicator string,
 	checksStart, checksWidth int,
 	afrtStart, afrtWidth int,
+	commentStart, commentWidth int,
 ) string {
 	raw := m.buildRawRow(item, widths)
 	fullRaw := indicator + raw
@@ -280,15 +291,21 @@ func (m *Model) renderSelectedRow(
 	if ColAFRT >= 0 && ColAFRT < len(item.data) {
 		afrtText = item.data[ColAFRT]
 	}
+	commentText := ""
+	if ColComments < len(item.data) {
+		commentText = item.data[ColComments]
+	}
 	return m.renderGradientRow(
 		fullRaw, bgName, checksStart, checksWidth, checksText,
-		afrtStart, afrtWidth, afrtText, item.isSubRow)
+		afrtStart, afrtWidth, afrtText,
+		commentStart, commentWidth, commentText, item.isSubRow)
 }
 
 func (m *Model) renderGradientRow(
 	rawRow, bgName string,
 	checksStart, checksWidth int, checksText string,
 	afrtStart, afrtWidth int, afrtText string,
+	commentStart, commentWidth int, commentText string,
 	isSubRow bool,
 ) string {
 	runes := []rune(rawRow)
@@ -312,8 +329,11 @@ func (m *Model) renderGradientRow(
 	checkColors := buildCheckColors(checksText)
 	checksEnd := checksStart + checksWidth
 
-	afrtColors := buildAFRTColors(afrtText)
+	afrtColors := buildBoldDimColors(afrtText)
 	afrtEnd := afrtStart + afrtWidth
+
+	commentColors := buildBoldDimColors(commentText)
+	commentEnd := commentStart + commentWidth
 
 	cached := bgStyles[bgName]
 	var flatBg, flatFg string
@@ -361,6 +381,18 @@ func (m *Model) renderGradientRow(
 			if ai < len(afrtColors) {
 				if afrtColors[ai] != "" {
 					fg = afrtColors[ai]
+					bold = false
+				} else {
+					bold = true
+				}
+			}
+		}
+
+		if pos >= commentStart && pos < commentEnd {
+			ci := pos - commentStart
+			if ci < len(commentColors) {
+				if commentColors[ci] != "" {
+					fg = commentColors[ci]
 					bold = false
 				} else {
 					bold = true
@@ -466,34 +498,26 @@ func buildCheckColors(text string) []string {
 	return result
 }
 
-func renderAFRTCellWithBg(text string, width int, bgName string) string {
+// renderBoldDimCellWithBg renders a cell with per-character styling:
+// non-zero digits are bold in the row's fg color, zeros and slashes
+// are dim. Used for both the C (comment count) and A/F/R/T columns.
+func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 	cached := bgStyles[bgName]
-	parts := strings.SplitN(text, "/", 4)
-	if len(parts) != 4 {
-		if cached != nil {
-			return cached.row.Render(renderCell(text, width))
-		}
-		return renderCell(text, width)
-	}
 	var b strings.Builder
-	for i, part := range parts {
-		if i > 0 {
+	for _, c := range text {
+		ch := string(c)
+		if c == '0' || c == '/' {
 			if cached != nil {
-				b.WriteString(cached.checkZero.Render("/"))
+				b.WriteString(cached.checkZero.Render(ch))
 			} else {
-				b.WriteString(checksZeroStyle.Render("/"))
+				b.WriteString(checksZeroStyle.Render(ch))
 			}
-		}
-		if part == "0" {
-			if cached != nil {
-				b.WriteString(cached.checkZero.Render(part))
-			} else {
-				b.WriteString(checksZeroStyle.Render(part))
-			}
-		} else if cached != nil {
-			b.WriteString(cached.rowBold.Render(part))
 		} else {
-			b.WriteString(afrtNonZeroStyle.Render(part))
+			if cached != nil {
+				b.WriteString(cached.rowBold.Render(ch))
+			} else {
+				b.WriteString(afrtNonZeroStyle.Render(ch))
+			}
 		}
 	}
 	rendered := b.String()
@@ -508,22 +532,14 @@ func renderAFRTCellWithBg(text string, width int, bgName string) string {
 	return rendered
 }
 
-func buildAFRTColors(text string) []string {
-	parts := strings.SplitN(text, "/", 4)
-	if len(parts) != 4 {
-		return nil
-	}
-	var result []string
-	for i, part := range parts {
-		if i > 0 {
-			result = append(result, checkZeroColor)
-		}
-		color := ""
-		if part == "0" {
-			color = checkZeroColor
-		}
-		for range part {
-			result = append(result, color)
+// buildBoldDimColors returns per-character fg overrides for the gradient
+// row renderer: checkZeroColor for '0' and '/', "" (no override) for
+// non-zero digits. Used for both C and A/F/R/T columns.
+func buildBoldDimColors(text string) []string {
+	result := make([]string, len(text))
+	for i, c := range text {
+		if c == '0' || c == '/' {
+			result[i] = checkZeroColor
 		}
 	}
 	return result

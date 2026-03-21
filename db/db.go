@@ -969,6 +969,30 @@ func (d *DB) GetCommentCountsBatch(
 	return result
 }
 
+// GetPatchCommentCountsBatch counts comments per patch for all
+// patches in matching series. Returns map[patchID]count.
+func (d *DB) GetPatchCommentCountsBatch(
+	showAll bool, states []string,
+) map[int]int {
+	sub, subArgs := d.seriesIDSubquery(showAll, states)
+	query := `SELECT c.patch_id, COUNT(*) FROM comments c
+		JOIN patches p ON c.patch_id = p.id
+		WHERE p.series_id IN (` + sub + `)
+		GROUP BY c.patch_id`
+	rows, err := d.conn.Query(query, subArgs...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int]int{}
+	for rows.Next() {
+		var patchID, count int
+		rows.Scan(&patchID, &count)
+		result[patchID] = count
+	}
+	return result
+}
+
 func (d *DB) GetPatchIDsWithComments() []int {
 	return d.getIDList(
 		"SELECT DISTINCT patch_id FROM comments WHERE patch_id > 0")

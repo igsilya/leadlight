@@ -234,12 +234,13 @@ func (m *Model) reloadData() {
 	allPatches := m.db.GetAllPatchesBatch(m.showAll, m.states)
 	allTags := m.db.GetTagsBatch(m.showAll, m.states)
 	allComments := m.db.GetCommentCountsBatch(m.showAll, m.states)
+	allPatchComments := m.db.GetPatchCommentCountsBatch(m.showAll, m.states)
 
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		row := seriesToRow(
 			s, allPatches[s.ID], m.listPrefix, m.delegateNames,
-			allTags[s.ID], allComments[s.ID])
+			allTags[s.ID], allComments[s.ID], allPatchComments)
 		sid := strconv.Itoa(s.ID)
 		if expanded[sid] {
 			row.Expanded = true

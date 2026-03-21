@@ -728,6 +728,39 @@ func TestGetCommentCountsBatch(t *testing.T) {
 	}
 }
 
+func TestGetPatchCommentCountsBatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "p2",
+		Date: "2026-03-10", State: "new", Submitter: "Ipsum",
+	})
+	d.InsertComment(CommentRow{
+		ID: 500, PatchID: 100, Submitter: "Dolor",
+		Date: "2026-03-11", Subject: "Re: p1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 501, PatchID: 100, Submitter: "Sit",
+		Date: "2026-03-12", Subject: "Re: p1", Content: "ok",
+	})
+	d.InsertComment(CommentRow{
+		ID: 502, PatchID: 101, Submitter: "Amet",
+		Date: "2026-03-12", Subject: "Re: p2", Content: "ok",
+	})
+
+	m := d.GetPatchCommentCountsBatch(false, []string{"new"})
+	if m[100] != 2 {
+		t.Errorf("patch 100: %d comments, want 2", m[100])
+	}
+	if m[101] != 1 {
+		t.Errorf("patch 101: %d comments, want 1", m[101])
+	}
+}
+
 func TestGetAllPatchesBatch_MultipleStates(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)

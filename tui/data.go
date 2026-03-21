@@ -18,6 +18,7 @@ var PatchworkColumns = []ColumnDef{
 	{Title: "State", FixedWidth: 8},
 	{Title: "Submitter", FixedWidth: 20},
 	{Title: "Age", FixedWidth: 5},
+	{Title: "C", FixedWidth: 3},
 	{Title: "A/F/R/T", FixedWidth: 8},
 	{Title: "Checks", FixedWidth: 8},
 	{Title: "Dlg", FixedWidth: 8},
@@ -75,11 +76,12 @@ func formatDelegate(username string, names map[string]string) string {
 }
 
 const (
-	ColNone   = -1
-	ColState  = 3
-	ColAFRT   = 6
-	ColChecks = 7
-	ColDlg    = 8
+	ColNone     = -1
+	ColState    = 3
+	ColComments = 6
+	ColAFRT     = 7
+	ColChecks   = 8
+	ColDlg      = 9
 )
 
 var AllPatchStates = []string{
@@ -190,12 +192,13 @@ func LoadFromDB(
 	allPatches := d.GetAllPatchesBatch(false, states)
 	allTags := d.GetTagsBatch(false, states)
 	allComments := d.GetCommentCountsBatch(false, states)
+	allPatchComments := d.GetPatchCommentCountsBatch(false, states)
 
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
 		rows = append(rows, seriesToRow(
 			s, allPatches[s.ID], listPrefix, delegateNames,
-			allTags[s.ID], allComments[s.ID]))
+			allTags[s.ID], allComments[s.ID], allPatchComments))
 	}
 	return rows, nil
 }
@@ -204,6 +207,7 @@ func seriesToRow(
 	s db.SeriesRow, patches []db.PatchRow,
 	listPrefix string, delegateNames map[string]string,
 	tags []db.TagRow, commentCount int,
+	patchComments map[int]int,
 ) RowData {
 	name := s.Name
 	if name == "" && len(patches) > 0 {
@@ -227,6 +231,7 @@ func seriesToRow(
 			aggregateState(patches),
 			s.Submitter,
 			formatAge(s.Date),
+			strconv.Itoa(commentCount),
 			formatSeriesReviews(patches, tags),
 			formatSeriesChecks(patches),
 			formatDelegate(aggregateDelegate(patches), delegateNames),
@@ -239,7 +244,8 @@ func seriesToRow(
 	row.SubRows = make([][]string, len(patches))
 	for i, p := range patches {
 		row.SubRows[i] = patchToSubRow(
-			p, listPrefix, delegateNames, tags)
+			p, listPrefix, delegateNames, tags,
+			patchComments[p.ID])
 	}
 	return row
 }
@@ -247,6 +253,7 @@ func seriesToRow(
 func patchToSubRow(
 	p db.PatchRow, listPrefix string,
 	dlgNames map[string]string, tags []db.TagRow,
+	commentCount int,
 ) []string {
 	cleaned, ver := parsePatchName(p.Name, listPrefix)
 	return []string{
@@ -256,6 +263,7 @@ func patchToSubRow(
 		displayState(p.State),
 		p.Submitter,
 		formatAge(p.Date),
+		strconv.Itoa(commentCount),
 		formatPatchReviews(p.ID, tags),
 		formatChecks(p),
 		formatDelegate(p.Delegate, dlgNames),
