@@ -47,8 +47,8 @@ type MboxResult struct {
 type PatchUpdateRequest struct {
 	PatchID          int
 	State            *string
-	DelegateID       *int
 	DelegateUsername *string
+	UnsetDelegate    bool
 	ResultC          chan<- error
 }
 
@@ -990,28 +990,30 @@ func (s *Syncer) resolveUserID(
 }
 
 func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) error {
+	dlgStr := ptrStr(req.DelegateUsername)
+	if req.UnsetDelegate {
+		dlgStr = "(unset)"
+	}
 	log.Printf("SYNC: handlePatchUpdate patch %d state=%s delegate=%s",
-		req.PatchID, ptrStr(req.State), ptrStr(req.DelegateUsername))
+		req.PatchID, ptrStr(req.State), dlgStr)
 	s.status.Set(status.Update, "Updating...", true)
 	ctx = api.WithNoRateLimit(ctx)
 
 	update := api.PatchUpdate{State: req.State}
-	if req.DelegateUsername != nil {
-		if *req.DelegateUsername == "" {
-			update.UnsetDelegate = true
-		} else {
-			uid, err := s.resolveUserID(
-				ctx, *req.DelegateUsername)
-			if err != nil {
-				log.Printf("SYNC: resolve delegate %q: %v",
-					*req.DelegateUsername, err)
-				s.status.SetTimed(status.Update,
-					"Failed to resolve delegate: "+
-						err.Error(), 5*time.Second)
-				return err
-			}
-			update.Delegate = &uid
+	if req.UnsetDelegate {
+		update.UnsetDelegate = true
+	} else if req.DelegateUsername != nil {
+		uid, err := s.resolveUserID(
+			ctx, *req.DelegateUsername)
+		if err != nil {
+			log.Printf("SYNC: resolve delegate %q: %v",
+				*req.DelegateUsername, err)
+			s.status.SetTimed(status.Update,
+				"Failed to resolve delegate: "+
+					err.Error(), 5*time.Second)
+			return err
 		}
+		update.Delegate = &uid
 	}
 	_, err := s.client.UpdatePatch(ctx, req.PatchID, update)
 	if err != nil {

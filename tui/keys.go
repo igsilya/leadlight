@@ -409,24 +409,25 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 		state := filtered[filteredIdx]
 		return func() tea.Msg {
 			for _, pid := range patchIDs {
-				m.RequestPatchUpdate(pid, &state, nil)
+				m.RequestPatchUpdate(
+					pid, &state, nil, false)
 			}
 			return patchUpdateResultMsg{}
 		}
 	case selectorDelegate:
 		username := filtered[filteredIdx]
 		if username == "(unset)" {
-			empty := ""
 			return func() tea.Msg {
 				for _, pid := range patchIDs {
-					m.RequestPatchUpdate(pid, nil, &empty)
+					m.RequestPatchUpdate(pid, nil, nil, true)
 				}
 				return patchUpdateResultMsg{}
 			}
 		}
 		return func() tea.Msg {
 			for _, pid := range patchIDs {
-				m.RequestPatchUpdate(pid, nil, &username)
+				m.RequestPatchUpdate(
+					pid, nil, &username, false)
 			}
 			return patchUpdateResultMsg{}
 		}

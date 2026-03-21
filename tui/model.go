@@ -163,7 +163,8 @@ type Model struct {
 	FetchPatchComments func(patchID int)
 	FetchCoverComments func(coverID int)
 	RequestPatchUpdate func(
-		patchID int, state *string, delegateUsername *string,
+		patchID int, state *string,
+		delegateUsername *string, unsetDelegate bool,
 	)
 }
 

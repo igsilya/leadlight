@@ -140,13 +140,16 @@ func main() {
 	}
 
 	m.RequestPatchUpdate = func(
-		patchID int, state *string, delegateUsername *string,
+		patchID int, state *string,
+		delegateUsername *string, unsetDelegate bool,
 	) {
 		stateStr, dlgStr := "<none>", "<none>"
 		if state != nil {
 			stateStr = *state
 		}
-		if delegateUsername != nil {
+		if unsetDelegate {
+			dlgStr = "(unset)"
+		} else if delegateUsername != nil {
 			dlgStr = *delegateUsername
 		}
 		log.Printf("MAIN: RequestPatchUpdate patchID=%d "+
@@ -156,6 +159,7 @@ func main() {
 				PatchID:          patchID,
 				State:            state,
 				DelegateUsername: delegateUsername,
+				UnsetDelegate:    unsetDelegate,
 			})
 		log.Printf("MAIN: RequestPatchUpdate done, err=%v", err)
 	}
