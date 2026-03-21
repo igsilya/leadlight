@@ -142,8 +142,15 @@ func main() {
 	m.RequestPatchUpdate = func(
 		patchID int, state *string, delegateUsername *string,
 	) {
+		stateStr, dlgStr := "<none>", "<none>"
+		if state != nil {
+			stateStr = *state
+		}
+		if delegateUsername != nil {
+			dlgStr = *delegateUsername
+		}
 		log.Printf("MAIN: RequestPatchUpdate patchID=%d "+
-			"state=%v delegate=%v", patchID, state, delegateUsername)
+			"state=%s delegate=%s", patchID, stateStr, dlgStr)
 		err := syncer.RequestPatchUpdate(
 			appSync.PatchUpdateRequest{
 				PatchID:          patchID,

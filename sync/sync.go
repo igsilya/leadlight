@@ -990,8 +990,8 @@ func (s *Syncer) resolveUserID(
 }
 
 func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) error {
-	log.Printf("SYNC: handlePatchUpdate patch %d state=%v delegate=%v",
-		req.PatchID, req.State, req.DelegateUsername)
+	log.Printf("SYNC: handlePatchUpdate patch %d state=%s delegate=%s",
+		req.PatchID, ptrStr(req.State), ptrStr(req.DelegateUsername))
 	s.status.Set(status.Update, "Updating...", true)
 	ctx = api.WithNoRateLimit(ctx)
 
@@ -1218,7 +1218,7 @@ func patchToRow(p api.Patch) db.PatchRow {
 
 func ptrStr(p *string) string {
 	if p == nil {
-		return ""
+		return "<none>"
 	}
 	return *p
 }
