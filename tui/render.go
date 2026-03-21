@@ -87,7 +87,7 @@ func (m *Model) renderPatchView() string {
 			tabHint = "  tab"
 		}
 		helpText := hs.Render(fmt.Sprintf(
-			"  ←/→%s  ↑/↓  esc%s  %d%%", expandHint, tabHint, pct))
+			" ←/→%s | ↑/↓ pgup/dn | esc%s  %d%%", expandHint, tabHint, pct))
 		barWidth := m.width - lipgloss.Width(helpText)
 		commentBar := m.renderCommentBar(barWidth)
 		status = commentBar + helpText
@@ -98,7 +98,7 @@ func (m *Model) renderPatchView() string {
 			tabHint = " | tab log"
 		}
 		status = hs.Render(fmt.Sprintf(
-			"↑/↓ scroll | pgup/pgdn page | esc back%s  %d%%", tabHint, pct))
+			"↑/↓ pgup/dn | esc back%s  %d%%", tabHint, pct))
 	}
 
 	status = m.appendActiveStatus(status)
@@ -639,7 +639,7 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 	if m.filterMode {
 		label := hs.Render("Filter: ")
 		text := normalOptionStyle.Render(m.filterText + "_")
-		hint := hs.Render("  ↑/↓ navigate | esc clear")
+		hint := hs.Render("  ↑/↓ pgup/dn | esc clear")
 		out.WriteString(label + text + hint)
 		return
 	}
@@ -659,7 +659,7 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		tabHint = " | tab log"
 	}
 	help := hs.Render(
-		filterLabel + " q quit | ↑/↓ pgup/dn navigate" +
+		filterLabel + " q quit | ↑/↓ pgup/dn" +
 			" | enter view | space expand | / filter | " + toggleHint + tabHint)
 
 	out.WriteString(m.appendActiveStatus(help))
@@ -688,7 +688,7 @@ func (m *Model) renderSelectorBar(out *strings.Builder) {
 	out.WriteString(helpStyle.Render(prefix) + rendered)
 	out.WriteByte('\n')
 
-	hint := "←/→ select, enter confirm, esc "
+	hint := "←/→ select | enter confirm | esc "
 	if m.selectorFilter != "" {
 		hint += "clear filter"
 	} else {
@@ -763,7 +763,7 @@ func (m *Model) renderLogConsole(height int) string {
 	}
 
 	out.WriteString(m.logHelp().Render(
-		"tab switch  ` close  ↑/↓ scroll  w write"))
+		"tab switch | ` close | ↑/↓ pgup/dn | w write"))
 	return out.String()
 }
 
