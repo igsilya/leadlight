@@ -53,8 +53,13 @@ func main() {
 	m.LogBuf = logBuf
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
+	// onChange may fire from within bubbletea's Update handler (e.g.
+	// Status.SetTimed in key handlers). bubbletea's msgs channel is
+	// unbuffered, so a synchronous Send from inside Update deadlocks.
+	// The goroutine makes Send non-blocking for both callers: syncer
+	// goroutines and the TUI's own Update.
 	statusReg := status.NewRegistry(func() {
-		p.Send(tui.StatusUpdateMsg{})
+		go p.Send(tui.StatusUpdateMsg{})
 	})
 	m.Status = statusReg
 
