@@ -107,21 +107,22 @@ func spinnerTickCmd() tea.Cmd {
 }
 
 type Model struct {
-	ColumnDefs      []ColumnDef
-	RowData         []RowData
-	StatusColIdx    int
-	ChecksColIdx    int
-	db              *db.DB
-	states          []string
-	token           string
-	selectedRow     int
-	width           int
-	height          int
-	scrollOffset    int
-	lastRowsVisible int
-	Status          *status.Registry
-	spinnerFrame    int
-	spinnerRunning  bool
+	ColumnDefs           []ColumnDef
+	RowData              []RowData
+	stateColIdx          int
+	ChecksColIdx         int
+	selectorHighlightCol int
+	db                   *db.DB
+	states               []string
+	token                string
+	selectedRow          int
+	width                int
+	height               int
+	scrollOffset         int
+	lastRowsVisible      int
+	Status               *status.Registry
+	spinnerFrame         int
+	spinnerRunning       bool
 
 	highlightProgress  float64
 	highlightAnimating bool
@@ -168,13 +169,14 @@ type Model struct {
 
 func NewModel(d *db.DB, states []string, token string) *Model {
 	m := &Model{
-		ColumnDefs:         PatchworkColumns,
-		StatusColIdx:       ColState,
-		ChecksColIdx:       ColChecks,
-		db:                 d,
-		states:             states,
-		token:              token,
-		highlightAnimating: true,
+		ColumnDefs:           PatchworkColumns,
+		stateColIdx:          ColState,
+		ChecksColIdx:         ColChecks,
+		selectorHighlightCol: ColNone,
+		db:                   d,
+		states:               states,
+		token:                token,
+		highlightAnimating:   true,
 	}
 	m.reloadData()
 	return m
@@ -183,14 +185,15 @@ func NewModel(d *db.DB, states []string, token string) *Model {
 func NewModelWithData(
 	columns []ColumnDef,
 	rows []RowData,
-	statusColIdx int,
+	stateColIdx int,
 ) *Model {
 	return &Model{
-		ColumnDefs:         columns,
-		RowData:            rows,
-		StatusColIdx:       statusColIdx,
-		ChecksColIdx:       -1,
-		highlightAnimating: true,
+		ColumnDefs:           columns,
+		RowData:              rows,
+		stateColIdx:          stateColIdx,
+		ChecksColIdx:         ColNone,
+		selectorHighlightCol: ColNone,
+		highlightAnimating:   true,
 	}
 }
 

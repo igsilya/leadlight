@@ -156,7 +156,7 @@ func (m *Model) renderRows(
 		if i == m.selectedRow {
 			if m.selectorMode != selectorNone {
 				row = indicator + m.buildRow(
-					items[i], widths, m.StatusColIdx)
+					items[i], widths, m.selectorHighlightCol)
 			} else {
 				row = m.renderSelectedRow(
 					items[i], widths, indicator,
@@ -196,20 +196,23 @@ func (m *Model) buildRawRow(
 func (m *Model) buildRow(
 	item visibleItem, widths []int, highlightCol int,
 ) string {
+	cached := bgStyles[item.style.Background]
 	var b strings.Builder
 	for j, cellData := range item.data {
 		text := cellData
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
-		if j == highlightCol {
-			cell := renderCell(text, widths[j])
+		cell := renderCell(text, widths[j])
+		if j == highlightCol && highlightCol != ColNone {
 			b.WriteString(cellHighlightStyle.Render(cell))
 		} else if j == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
+		} else if cached != nil {
+			b.WriteString(cached.row.Render(cell))
 		} else {
-			b.WriteString(renderCell(text, widths[j]))
+			b.WriteString(cell)
 		}
 	}
 	return b.String()

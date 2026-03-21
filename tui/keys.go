@@ -228,6 +228,7 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectorCursor = 0
 		} else {
 			m.selectorMode = selectorNone
+			m.selectorHighlightCol = ColNone
 		}
 	case "backspace":
 		if len(m.selectorFilter) > 0 {
@@ -327,8 +328,8 @@ func (m *Model) openStateSelector() {
 	items := m.getVisibleItems()
 	if m.selectedRow < len(items) {
 		current := ""
-		if m.StatusColIdx < len(items[m.selectedRow].data) {
-			current = items[m.selectedRow].data[m.StatusColIdx]
+		if m.stateColIdx < len(items[m.selectedRow].data) {
+			current = items[m.selectedRow].data[m.stateColIdx]
 		}
 		for i, opt := range m.selectorOptions {
 			if displayState(opt) == current {
@@ -338,6 +339,7 @@ func (m *Model) openStateSelector() {
 		}
 	}
 	m.selectorFilter = ""
+	m.selectorHighlightCol = m.stateColIdx
 	m.selectorMode = selectorState
 }
 
@@ -369,6 +371,7 @@ func (m *Model) openDelegateSelector() {
 	}
 	m.selectorCursor = 0
 	m.selectorFilter = ""
+	m.selectorHighlightCol = ColDlg
 	m.selectorMode = selectorDelegate
 }
 
@@ -385,6 +388,7 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 	items := m.getVisibleItems()
 	if m.selectedRow >= len(items) {
 		m.selectorMode = selectorNone
+		m.selectorHighlightCol = ColNone
 		return nil
 	}
 
@@ -392,6 +396,7 @@ func (m *Model) applyFilteredSelection(filteredIdx int) tea.Cmd {
 	patchIDs := m.getPatchIDs(item)
 	mode := m.selectorMode
 	m.selectorMode = selectorNone
+	m.selectorHighlightCol = ColNone
 	m.selectorFilter = ""
 
 	if m.RequestPatchUpdate == nil || len(patchIDs) == 0 {
