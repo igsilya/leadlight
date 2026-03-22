@@ -258,10 +258,14 @@ func seriesToRow(
 	}
 
 	row.SubRows = make([][]string, len(patches))
+	row.SubRowStyles = make([]RowStyle, len(patches))
 	for i, p := range patches {
 		row.SubRows[i] = patchToSubRow(
 			p, listPrefix, delegateNames, tags,
 			patchComments[p.ID], patchCommentNames[p.ID])
+		row.SubRowStyles[i] = RowStyle{
+			Background: "sub:" + colorForPatch(p, tags, patchComments[p.ID]),
+		}
 	}
 	return row
 }
@@ -467,14 +471,18 @@ func colorForSeries(
 	}
 }
 
+func isReviewTag(tagType string) bool {
+	return tagType == "acked" || tagType == "reviewed"
+}
+
 func isAllReviewed(patches []db.PatchRow, tags []db.TagRow) bool {
 	if len(patches) == 0 {
 		return false
 	}
-	// R = all comment tags across the series
+	// R = acked/reviewed comment tags across the series
 	commentTags := map[string]bool{}
 	for _, tag := range tags {
-		if tag.Source == "comment" {
+		if tag.Source == "comment" && isReviewTag(tag.Type) {
 			commentTags[tag.Type+"\x00"+tag.Identity] = true
 		}
 	}
@@ -496,12 +504,55 @@ func patchOverlapsComments(
 		if tag.PatchID != patchID && tag.CoverID == 0 {
 			continue
 		}
+		if !isReviewTag(tag.Type) {
+			continue
+		}
 		key := tag.Type + "\x00" + tag.Identity
 		if commentTags[key] {
 			return true
 		}
 	}
 	return false
+}
+
+func isPatchReviewed(patchID int, tags []db.TagRow) bool {
+	commentTags := map[string]bool{}
+	for _, tag := range tags {
+		if tag.Source == "comment" && isReviewTag(tag.Type) {
+			commentTags[tag.Type+"\x00"+tag.Identity] = true
+		}
+	}
+	if len(commentTags) == 0 {
+		return false
+	}
+	return patchOverlapsComments(patchID, tags, commentTags)
+}
+
+func colorForPatch(
+	p db.PatchRow, tags []db.TagRow, commentCount int,
+) string {
+	if isTerminalState(p.State) {
+		return "closed"
+	}
+	if isPatchReviewed(p.ID, tags) {
+		return "reviewed"
+	}
+	age := time.Since(parseDate(p.Date))
+	hasComments := commentCount > 0
+	old := age > 14*24*time.Hour
+	veryOld := age > 60*24*time.Hour
+	switch {
+	case old && hasComments:
+		return "aging"
+	case !old && hasComments:
+		return "active"
+	case veryOld:
+		return "stale"
+	case !old:
+		return "pending"
+	default:
+		return "overdue"
+	}
 }
 
 func convertComments(rows []db.CommentRow) []CommentInfo {

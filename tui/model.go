@@ -47,10 +47,11 @@ func (rs RowStyle) lipgloss() lipgloss.Style {
 }
 
 type RowData struct {
-	Data     []string
-	Style    RowStyle
-	SubRows  [][]string
-	Expanded bool
+	Data         []string
+	Style        RowStyle
+	SubRows      [][]string
+	SubRowStyles []RowStyle
+	Expanded     bool
 }
 
 type visibleItem struct {
@@ -521,7 +522,6 @@ func (m *Model) getVisibleItems() []visibleItem {
 
 		showSubs := rd.Expanded || (filter != "" && len(matchingSubs) > 0)
 		if showSubs {
-			subStyle := RowStyle{Background: "sub:" + rd.Style.Background}
 			for si, sub := range rd.SubRows {
 				if filter != "" && !seriesMatch {
 					match := false
@@ -534,6 +534,10 @@ func (m *Model) getVisibleItems() []visibleItem {
 					if !match {
 						continue
 					}
+				}
+				subStyle := RowStyle{}
+				if si < len(rd.SubRowStyles) {
+					subStyle = rd.SubRowStyles[si]
 				}
 				items = append(items, visibleItem{
 					data:      sub,

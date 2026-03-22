@@ -506,6 +506,122 @@ func TestColorForSeries_DarkRed_OldNoComments(t *testing.T) {
 	}
 }
 
+func testPatchWithAge(days int) db.PatchRow {
+	d := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	return db.PatchRow{
+		ID: 100, SeriesID: 50, State: "new",
+		Submitter: "Lorem Ipsum",
+		Date:      d.Format("2006-01-02T15:04:05"),
+	}
+}
+
+func TestColorForPatch_Pending(t *testing.T) {
+	got := colorForPatch(testPatchWithAge(3), nil, 0)
+	if got != "pending" {
+		t.Errorf("got %q, want pending", got)
+	}
+}
+
+func TestColorForPatch_Active(t *testing.T) {
+	got := colorForPatch(testPatchWithAge(3), nil, 2)
+	if got != "active" {
+		t.Errorf("got %q, want active", got)
+	}
+}
+
+func TestColorForPatch_Reviewed(t *testing.T) {
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "Lorem <lorem@ex>"},
+	}
+	got := colorForPatch(testPatchWithAge(3), tags, 1)
+	if got != "reviewed" {
+		t.Errorf("got %q, want reviewed", got)
+	}
+}
+
+func TestColorForPatch_TestedOnlyNotReviewed(t *testing.T) {
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "tested",
+			Identity: "Lorem <lorem@ex>"},
+	}
+	got := colorForPatch(testPatchWithAge(3), tags, 1)
+	if got != "active" {
+		t.Errorf("got %q, want active (tested-by alone is not reviewed)", got)
+	}
+}
+
+func TestColorForPatch_Closed(t *testing.T) {
+	p := testPatchWithAge(3)
+	p.State = "accepted"
+	got := colorForPatch(p, nil, 0)
+	if got != "closed" {
+		t.Errorf("got %q, want closed", got)
+	}
+}
+
+func TestColorForPatch_Overdue(t *testing.T) {
+	got := colorForPatch(testPatchWithAge(30), nil, 0)
+	if got != "overdue" {
+		t.Errorf("got %q, want overdue", got)
+	}
+}
+
+func TestIsAllReviewed_TestedOnlyNotGreen(t *testing.T) {
+	_, p := testSeriesWithAge(3)
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "tested",
+			Identity: "Lorem <lorem@ex>"},
+	}
+	if isAllReviewed(p, tags) {
+		t.Error("tested-by alone should not count as reviewed")
+	}
+}
+
+func TestIsAllReviewed_AckedIsGreen(t *testing.T) {
+	_, p := testSeriesWithAge(3)
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "Lorem <lorem@ex>"},
+	}
+	if !isAllReviewed(p, tags) {
+		t.Error("acked-by should count as reviewed")
+	}
+}
+
+func TestSubRowStyles_PerPatch(t *testing.T) {
+	date := time.Now().Add(
+		-3 * 24 * time.Hour).Format("2006-01-02T15:04:05")
+	s := db.SeriesRow{
+		ID: 50, Name: "Lorem series", Submitter: "Lorem Ipsum",
+		Date: date, TotalPatches: 2, Version: 1,
+	}
+	patches := []db.PatchRow{
+		{ID: 100, SeriesID: 50, Name: "patch 1", State: "new",
+			Submitter: "Lorem Ipsum", Date: date},
+		{ID: 101, SeriesID: 50, Name: "patch 2", State: "new",
+			Submitter: "Lorem Ipsum", Date: date},
+	}
+	tags := []db.TagRow{
+		{PatchID: 100, Source: "comment", Type: "acked",
+			Identity: "Dolor <dolor@ex>"},
+	}
+	patchComments := map[int]int{100: 1}
+	row := seriesToRow(s, patches, "", nil, tags, 1,
+		patchComments, nil, nil)
+	if len(row.SubRowStyles) != 2 {
+		t.Fatalf("SubRowStyles len = %d, want 2", len(row.SubRowStyles))
+	}
+	if row.SubRowStyles[0].Background != "sub:reviewed" {
+		t.Errorf("patch 100 style = %q, want sub:reviewed",
+			row.SubRowStyles[0].Background)
+	}
+	if row.SubRowStyles[1].Background != "sub:pending" {
+		t.Errorf("patch 101 style = %q, want sub:pending",
+			row.SubRowStyles[1].Background)
+	}
+}
+
 func TestComputePatchAFRT(t *testing.T) {
 	tags := []db.TagRow{
 		{PatchID: 100, Source: "original", Type: "acked",
