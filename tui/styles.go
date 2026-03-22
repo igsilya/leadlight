@@ -75,10 +75,12 @@ var (
 type gradientEntry struct{ bg, fg string }
 
 var (
-	gradientPalettes       = map[string][256]gradientEntry{}
-	subRowGradientPalettes = map[string][256]gradientEntry{}
-	termBg                 rgb
-	termBgHex              string
+	gradientPalettes = map[string][256]gradientEntry{}
+	subRowPalette    [256]gradientEntry
+	termBg           rgb
+	termBgHex        string
+	termFg           rgb
+	termFgHex        string
 )
 
 type cachedBgStyle struct {
@@ -145,7 +147,6 @@ func buildStyles(t *theme) {
 
 	bgStyles = map[string]*cachedBgStyle{}
 	gradientPalettes = map[string][256]gradientEntry{}
-	subRowGradientPalettes = map[string][256]gradientEntry{}
 
 	passFg := checksPassStyle.GetForeground()
 	failFg := checksFailStyle.GetForeground()
@@ -171,29 +172,42 @@ func buildStyles(t *theme) {
 			checkZero: base.Foreground(zeroFg),
 		}
 
-		makePalette := func(target rgb) [256]gradientEntry {
+		makePalette := func(targetBg, targetFg rgb) [256]gradientEntry {
 			var p [256]gradientEntry
 			for i := range p {
 				tt := math.Pow(float64(i)/255.0, 0.35)
-				bg := t.GradientStart.lerp(target, tt)
-				fg := t.GradientFgStart.lerp(c.fg, tt)
+				bg := t.GradientStart.lerp(targetBg, tt)
+				fg := t.GradientFgStart.lerp(targetFg, tt)
 				p[i] = gradientEntry{bg.hex(), fg.hex()}
 			}
 			return p
 		}
-		gradientPalettes[name] = makePalette(c.bg)
-		subRowGradientPalettes[name] = makePalette(termBg)
+		gradientPalettes[name] = makePalette(c.bg, c.fg)
 	}
+	subRowPalette = func() [256]gradientEntry {
+		var p [256]gradientEntry
+		for i := range p {
+			tt := math.Pow(float64(i)/255.0, 0.35)
+			bg := t.GradientStart.lerp(termBg, tt)
+			fg := t.GradientFgStart.lerp(termFg, tt)
+			p[i] = gradientEntry{bg.hex(), fg.hex()}
+		}
+		return p
+	}()
 }
 
-func detectTerminalBg() {
-	c := termenv.ConvertToRGB(termenv.BackgroundColor())
-	termBg = rgb{int(c.R * 255), int(c.G * 255), int(c.B * 255)}
+func detectTerminalColors() {
+	bg := termenv.ConvertToRGB(termenv.BackgroundColor())
+	termBg = rgb{int(bg.R * 255), int(bg.G * 255), int(bg.B * 255)}
 	termBgHex = termBg.hex()
+
+	fg := termenv.ConvertToRGB(termenv.ForegroundColor())
+	termFg = rgb{int(fg.R * 255), int(fg.G * 255), int(fg.B * 255)}
+	termFgHex = termFg.hex()
 }
 
 func init() {
-	detectTerminalBg()
+	detectTerminalColors()
 	if lipgloss.HasDarkBackground() {
 		buildStyles(&darkTheme)
 	} else {

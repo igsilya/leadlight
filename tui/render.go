@@ -342,13 +342,13 @@ func (m *Model) renderGradientRow(
 	fill := min(
 		int(m.highlightProgress*float64(total)), total)
 
-	palettes := gradientPalettes
+	var palette [256]gradientEntry
 	if isSubRow {
-		palettes = subRowGradientPalettes
-	}
-	palette, ok := palettes[bgName]
-	if !ok {
-		palette = palettes["stale"]
+		palette = subRowPalette
+	} else if p, ok := gradientPalettes[bgName]; ok {
+		palette = p
+	} else {
+		palette = gradientPalettes["stale"]
 	}
 
 	leftWidth := max(fill*40/100, 1)
@@ -368,10 +368,9 @@ func (m *Model) renderGradientRow(
 	var flatBg, flatFg string
 	if isSubRow {
 		flatBg = termBgHex
+		flatFg = termFgHex
 	} else if cached != nil {
 		flatBg = cached.bgHex
-	}
-	if cached != nil {
 		flatFg = cached.fgHex
 	}
 
