@@ -48,8 +48,8 @@ var darkTheme = theme{
 		"reviewed": {rgb{0x1a, 0x28, 0x20}, rgb{0xa6, 0xe3, 0xa1}},
 		// charcoal bg, silver text
 		"closed": {rgb{0x35, 0x35, 0x35}, rgb{0xcc, 0xcc, 0xcc}},
-		// near-black bg, faded slate text
-		"stale": {rgb{0x12, 0x12, 0x12}, rgb{0x99, 0x99, 0x99}},
+		// dark blue-grey bg, bright cool slate text
+		"stale": {rgb{0x1a, 0x1a, 0x24}, rgb{0xb8, 0xc0, 0xd8}},
 	},
 	GradientStart:   rgb{95, 0, 255},    // electric violet
 	GradientFgStart: rgb{255, 255, 255}, // pure white
