@@ -389,7 +389,7 @@ func (m *Model) openDelegateSelector() {
 	}
 	m.selectorCursor = 0
 	m.selectorFilter = ""
-	m.selectorHighlightCol = ColDlg
+	m.selectorHighlightCol = ColDelegate
 	m.selectorMode = selectorDelegate
 }
 

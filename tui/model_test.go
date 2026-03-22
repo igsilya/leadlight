@@ -335,7 +335,7 @@ func copyColumns() []ColumnDef {
 
 func TestColumnWidths_CommentsAutoSwitch(t *testing.T) {
 	// Fixed sum excluding C and Comments:
-	// ID(9)+Ver(4)+State(8)+Submitter(20)+Age(5)+AFRT(9)+Checks(8)+Dlg(8) = 71
+	// ID(9)+Ver(4)+State(8)+Submitter(20)+Age(5)+AFRT(9)+Checks(8)+Delegate(8) = 71
 	// Indicator = 2, so remaining = width - 73
 	// Comments visible when remaining - 15 >= 90, i.e. remaining >= 105, i.e. width >= 178
 	tests := []struct {

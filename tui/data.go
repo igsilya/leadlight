@@ -22,7 +22,7 @@ var PatchworkColumns = []ColumnDef{
 	{Title: "Comments", FixedWidth: 15, Visible: false},
 	{Title: "A F R T", FixedWidth: 9, Visible: true},
 	{Title: "Checks", FixedWidth: 8, Visible: true},
-	{Title: "Dlg", FixedWidth: 8, Visible: true},
+	{Title: "Delegate", FixedWidth: 8, Visible: true},
 }
 
 var stateDisplay = map[string]string{
@@ -89,7 +89,7 @@ const (
 	ColComments
 	ColAFRT
 	ColChecks
-	ColDlg
+	ColDelegate
 	ColMax // sentinel: number of columns
 )
 

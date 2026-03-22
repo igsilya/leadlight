@@ -713,8 +713,8 @@ func TestSeriesToRow(t *testing.T) {
 	if row.Data[ColC] != "1" {
 		t.Errorf("C = %q, want 1", row.Data[ColC])
 	}
-	if row.Data[ColDlg] != "" {
-		t.Errorf("Dlg = %q, want empty", row.Data[ColDlg])
+	if row.Data[ColDelegate] != "" {
+		t.Errorf("Dlg = %q, want empty", row.Data[ColDelegate])
 	}
 	if len(row.SubRows) != 2 {
 		t.Fatalf("SubRows = %d", len(row.SubRows))
