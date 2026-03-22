@@ -224,9 +224,7 @@ func (m *Model) reloadData() {
 		}
 		m.listPrefix = detectListPrefix(names)
 	}
-	if m.delegateNames == nil {
-		m.delegateNames = m.db.GetDelegateDisplayNames()
-	}
+	m.delegateNames = m.db.GetDelegateDisplayNames()
 	allPatches := m.db.GetAllPatchesBatch(m.showAll, m.states)
 	allTags := m.db.GetTagsBatch(m.showAll, m.states)
 	allComments := m.db.GetCommentCountsBatch(m.showAll, m.states)
