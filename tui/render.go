@@ -358,6 +358,10 @@ func (m *Model) renderGradientRow(
 
 	commentColors := buildBoldDimColors(commentText)
 	commentEnd := commentStart + commentWidth
+	commentCountLen := len(commentText)
+	if si := strings.IndexByte(commentText, ' '); si >= 0 {
+		commentCountLen = si
+	}
 
 	cached := bgStyles[bgName]
 	var flatBg, flatFg string
@@ -399,26 +403,20 @@ func (m *Model) renderGradientRow(
 		if pos >= afrtStart && pos < afrtEnd {
 			ai := pos - afrtStart
 			if ai < len(afrtColors) {
-				if afrtColors[ai] != "" {
-					fg = afrtColors[ai]
-					bold = false
-				} else {
-					bold = true
-				}
+				fg = afrtColors[ai]
+				bold = afrtColors[ai] != checkZeroColor
 			}
 		}
 
-		// Only apply bold/dim overlay for narrow comment column (ColC).
-		// Wide Comments column uses gradient/flat styling naturally.
-		if commentWidth <= 3 && pos >= commentStart && pos < commentEnd {
+		// Apply lavender/dim overlay for the count prefix in both
+		// narrow (ColC) and wide (ColComments) modes. In wide mode
+		// only the count prefix gets the overlay — the names keep
+		// the gradient/flat styling.
+		if pos >= commentStart && pos < commentEnd {
 			ci := pos - commentStart
-			if ci < len(commentColors) {
-				if commentColors[ci] != "" {
-					fg = commentColors[ci]
-					bold = false
-				} else {
-					bold = true
-				}
+			if ci < commentCountLen && ci < len(commentColors) {
+				fg = commentColors[ci]
+				bold = commentColors[ci] != checkZeroColor
 			}
 		}
 
@@ -545,9 +543,9 @@ func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 			}
 		} else {
 			if cached != nil {
-				b.WriteString(cached.rowBold.Render(part))
+				b.WriteString(cached.afrt.Render(part))
 			} else {
-				b.WriteString(afrtNonZeroStyle.Render(part))
+				b.WriteString(afrtStyle.Render(part))
 			}
 		}
 	}
@@ -584,9 +582,9 @@ func renderCommentCellExpanded(text string, width int, bgName string) string {
 		}
 	} else {
 		if cached != nil {
-			b.WriteString(cached.rowBold.Render(cell))
+			b.WriteString(cached.afrt.Render(cell))
 		} else {
-			b.WriteString(afrtNonZeroStyle.Render(cell))
+			b.WriteString(afrtStyle.Render(cell))
 		}
 	}
 	rest := renderCell(namesPart, width-len(countPart))
@@ -610,7 +608,7 @@ func buildBoldDimColors(text string) []string {
 		if i > 0 {
 			result = append(result, checkZeroColor)
 		}
-		color := ""
+		color := afrtColor
 		if part == "-" || part == "0" {
 			color = checkZeroColor
 		}

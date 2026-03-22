@@ -20,6 +20,8 @@ type theme struct {
 	HighlightedOptionFg string
 	OptionNumFg         string
 
+	AfrtFg string // non-zero values in C and A F R T columns
+
 	ChecksPassFg, ChecksFailFg    string
 	ChecksPendingFg, ChecksZeroFg string
 
@@ -70,6 +72,8 @@ var darkTheme = theme{
 	HighlightedOptionBg: "57",  // deep indigo
 	HighlightedOptionFg: "15",  // bright white
 	OptionNumFg:         "250", // light grey
+
+	AfrtFg: "147", // soft lavender
 
 	ChecksPassFg:    "34",  // forest green
 	ChecksFailFg:    "196", // bright red
@@ -125,6 +129,8 @@ var lightTheme = theme{
 	HighlightedOptionBg: "57",  // deep indigo
 	HighlightedOptionFg: "15",  // bright white
 	OptionNumFg:         "240", // mid-grey
+
+	AfrtFg: "98", // medium lavender
 
 	ChecksPassFg:    "28",  // dark green
 	ChecksFailFg:    "124", // dark red
