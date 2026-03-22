@@ -622,7 +622,7 @@ func TestFetchEvents_NotifiesPerPage(t *testing.T) {
 		notifyCount++
 	}, status.NewRegistry(nil))
 
-	s.fetchEventsSince(context.Background(), "2026-03-10")
+	s.fetchEventsSince(context.Background(), "2026-03-10", status.BgSync)
 
 	if notifyCount != 2 {
 		t.Errorf("notify count = %d, want 2 (one per page)",

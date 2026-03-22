@@ -185,9 +185,11 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
+	s.status.Set(status.BgSync, "Checking events...", true)
 	s.incrementalSync(ctx)
 	s.fetchMissingSeries(ctx)
 	s.fixIncompletePatches(ctx)
+	s.status.Clear(status.BgSync)
 	s.notify()
 
 	ticker := time.NewTicker(syncInterval)
@@ -270,12 +272,18 @@ func (s *Syncer) runArchiveLoop(ctx context.Context, wg *gosync.WaitGroup) {
 }
 
 func (s *Syncer) initialSync(ctx context.Context) {
+	s.status.Set(status.Sync, "Fetching patch list...", true)
 	s.fetchListPages(ctx)
 	s.notify()
+	s.status.Set(status.Sync, "Fetching maintainers...", true)
 	s.fetchMaintainers(ctx)
+	s.status.Set(status.Sync, "Fetching patches...", true)
 	s.fetchAllPatches(ctx)
+	s.status.Set(status.Sync, "Fetching series...", true)
 	s.fetchMissingSeries(ctx)
+	s.status.Set(status.Sync, "Fetching events...", true)
 	s.fetchInitialEvents(ctx)
+	s.status.Clear(status.Sync)
 	s.db.SetSyncState("initial_sync_complete", "true")
 }
 
@@ -345,7 +353,13 @@ func (s *Syncer) fetchAllPatches(ctx context.Context) {
 		Project: s.cfg.Project,
 	})
 
+	pageNum := 0
 	for pageURL != "" {
+		pageNum++
+		if pageNum > 1 {
+			s.status.Set(status.Sync,
+				fmt.Sprintf("Fetching patches (page %d)...", pageNum), true)
+		}
 		page, err := s.client.GetPatchesPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("fetch patches: %v", err)
@@ -368,7 +382,7 @@ func (s *Syncer) fetchInitialEvents(ctx context.Context) {
 	if oldest == "" {
 		return
 	}
-	s.fetchEventsSince(ctx, oldest)
+	s.fetchEventsSince(ctx, oldest, status.Sync)
 }
 
 func (s *Syncer) incrementalSync(ctx context.Context) {
@@ -376,17 +390,25 @@ func (s *Syncer) incrementalSync(ctx context.Context) {
 	if since == "" {
 		return
 	}
-	s.fetchEventsSince(ctx, since)
+	s.fetchEventsSince(ctx, since, status.BgSync)
 }
 
-func (s *Syncer) fetchEventsSince(ctx context.Context, since string) {
+func (s *Syncer) fetchEventsSince(
+	ctx context.Context, since string, statusKey status.Key,
+) {
 	pageURL := s.client.BuildEventsURL(api.EventListParams{
 		Since:   since,
 		Project: s.cfg.Project,
 		Order:   "date",
 	})
 
+	pageNum := 0
 	for pageURL != "" {
+		pageNum++
+		if pageNum > 1 {
+			s.status.Set(statusKey,
+				fmt.Sprintf("Fetching events (page %d)...", pageNum), true)
+		}
 		page, err := s.client.GetEventsPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("fetch events: %v", err)
@@ -487,6 +509,7 @@ func (s *Syncer) fetchMissingSeries(ctx context.Context) {
 		if since == "" {
 			return
 		}
+		s.status.Set(status.BgSync, "Fetching series...", true)
 		log.Printf("SYNC: fetching series since %s", since)
 
 		pageURL := s.client.BuildSeriesURL(s.cfg.Project, since)
@@ -551,6 +574,8 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 	}
 
 	if row.SeriesID != 0 && row.Submitter == "" {
+		s.status.Set(status.BgSync,
+			fmt.Sprintf("Fetching series %d...", row.SeriesID), true)
 		series, err := s.client.GetSeries(ctx, row.SeriesID)
 		if err != nil {
 			log.Printf("SYNC: fixIncomplete series %d: %v",
@@ -592,6 +617,8 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 	}
 
 	if row.SeriesID == 0 {
+		s.status.Set(status.BgSync,
+			fmt.Sprintf("Fetching patch %d...", id), true)
 		detail, err := s.client.GetPatch(ctx, id)
 		if err != nil {
 			log.Printf("SYNC: fixIncomplete patch %d: %v",
