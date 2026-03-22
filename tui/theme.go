@@ -34,74 +34,110 @@ type theme struct {
 // https://github.com/catppuccin/catppuccin (MIT license)
 var darkTheme = theme{
 	BgColors: map[string]bgColor{
-		"aging":    {rgb{0x2a, 0x25, 0x20}, rgb{0xf9, 0xe2, 0xaf}},
-		"active":   {rgb{0x2a, 0x2a, 0x30}, rgb{0xcd, 0xd6, 0xf4}},
-		"pending":  {rgb{0x2a, 0x20, 0x30}, rgb{0xf3, 0x8b, 0xa8}},
-		"overdue":  {rgb{0x2d, 0x18, 0x20}, rgb{0xf0, 0x58, 0x58}},
+		// warm ember bg, soft golden cream text
+		"aging": {rgb{0x2a, 0x25, 0x20}, rgb{0xf9, 0xe2, 0xaf}},
+		// twilight blue-grey bg, cool lavender text
+		"active": {rgb{0x2a, 0x2a, 0x30}, rgb{0xcd, 0xd6, 0xf4}},
+		// dusky plum bg, bright rose-pink text
+		"pending": {rgb{0x2a, 0x20, 0x30}, rgb{0xf3, 0x8b, 0xa8}},
+		// deep wine bg, vivid true red text
+		"overdue": {rgb{0x2d, 0x18, 0x20}, rgb{0xf0, 0x58, 0x58}},
+		// dark forest bg, fresh mint-green text
 		"reviewed": {rgb{0x1a, 0x28, 0x20}, rgb{0xa6, 0xe3, 0xa1}},
-		"closed":   {rgb{0x35, 0x35, 0x35}, rgb{0xcc, 0xcc, 0xcc}},
-		"stale":    {rgb{0x12, 0x12, 0x12}, rgb{0x99, 0x99, 0x99}},
+		// charcoal bg, silver text
+		"closed": {rgb{0x35, 0x35, 0x35}, rgb{0xcc, 0xcc, 0xcc}},
+		// near-black bg, faded slate text
+		"stale": {rgb{0x12, 0x12, 0x12}, rgb{0x99, 0x99, 0x99}},
 	},
-	GradientStart:   rgb{95, 0, 255},
-	GradientFgStart: rgb{255, 255, 255},
+	GradientStart:   rgb{95, 0, 255},    // electric violet
+	GradientFgStart: rgb{255, 255, 255}, // pure white
 
-	SubRowBgAnchor: rgb{0x10, 0x10, 0x10},
-	SubRowFgAnchor: rgb{0x40, 0x40, 0x40},
+	SubRowBgAnchor: rgb{0x10, 0x10, 0x10}, // near-black
+	SubRowFgAnchor: rgb{0x40, 0x40, 0x40}, // dark charcoal
 	SubRowBgBlend:  0.4,
 	SubRowFgBlend:  0.25,
 
-	HeaderFg: "15", SeparatorFg: "240",
-	HelpFg: "241", HelpBrightFg: "250", HelpDimFg: "236",
-	StatusFg: "214",
+	HeaderFg:    "15",  // bright white
+	SeparatorFg: "240", // mid-grey
 
-	NormalOptionFg:      "255",
-	HighlightedOptionBg: "57",
-	HighlightedOptionFg: "15",
-	OptionNumFg:         "250",
+	HelpFg:       "241", // grey
+	HelpBrightFg: "250", // light grey
+	HelpDimFg:    "236", // dark grey
 
-	ChecksPassFg: "34", ChecksFailFg: "196",
-	ChecksPendingFg: "214", ChecksZeroFg: "240",
+	StatusFg: "214", // warm amber
 
-	MboxHeaderLabelFg: "15", MboxHeaderValueFg: "252",
-	DiffAddFg: "34", DiffDelFg: "196", DiffHunkFg: "6",
-	QuotedLineFg: "168", WrapIndicatorFg: "242",
+	NormalOptionFg:      "255", // near-white
+	HighlightedOptionBg: "57",  // deep indigo
+	HighlightedOptionFg: "15",  // bright white
+	OptionNumFg:         "250", // light grey
 
-	LogLineFg: "245",
+	ChecksPassFg:    "34",  // forest green
+	ChecksFailFg:    "196", // bright red
+	ChecksPendingFg: "214", // warm amber
+	ChecksZeroFg:    "240", // mid-grey
+
+	MboxHeaderLabelFg: "15",  // bright white
+	MboxHeaderValueFg: "252", // near-white
+	DiffAddFg:         "34",  // forest green
+	DiffDelFg:         "196", // bright red
+	DiffHunkFg:        "6",   // dark cyan
+	QuotedLineFg:      "168", // dusty rose
+	WrapIndicatorFg:   "242", // dim grey
+
+	LogLineFg: "245", // soft grey
 }
 
 var lightTheme = theme{
 	BgColors: map[string]bgColor{
-		"aging":    {rgb{0xff, 0xf8, 0xd0}, rgb{0x55, 0x4d, 0x00}},
-		"active":   {rgb{0xe8, 0xe8, 0xe8}, rgb{0x33, 0x33, 0x33}},
-		"pending":  {rgb{0xff, 0xd8, 0xd8}, rgb{0x88, 0x20, 0x20}},
-		"overdue":  {rgb{0xff, 0xb0, 0xb0}, rgb{0x88, 0x00, 0x00}},
+		// pale butter bg, dark olive text
+		"aging": {rgb{0xff, 0xf8, 0xd0}, rgb{0x55, 0x4d, 0x00}},
+		// soft cloud bg, dark charcoal text
+		"active": {rgb{0xe8, 0xe8, 0xe8}, rgb{0x33, 0x33, 0x33}},
+		// blush pink bg, deep crimson text
+		"pending": {rgb{0xff, 0xd8, 0xd8}, rgb{0x88, 0x20, 0x20}},
+		// warm salmon bg, dark blood red text
+		"overdue": {rgb{0xff, 0xb0, 0xb0}, rgb{0x88, 0x00, 0x00}},
+		// spring meadow bg, deep forest text
 		"reviewed": {rgb{0xd0, 0xf0, 0xd0}, rgb{0x15, 0x55, 0x20}},
-		"closed":   {rgb{0xd8, 0xd8, 0xd8}, rgb{0x44, 0x44, 0x44}},
-		"stale":    {rgb{0xc0, 0xc0, 0xc0}, rgb{0x55, 0x55, 0x55}},
+		// light silver bg, slate text
+		"closed": {rgb{0xd8, 0xd8, 0xd8}, rgb{0x44, 0x44, 0x44}},
+		// pale grey bg, mid-grey text
+		"stale": {rgb{0xc0, 0xc0, 0xc0}, rgb{0x55, 0x55, 0x55}},
 	},
-	GradientStart:   rgb{140, 120, 255},
-	GradientFgStart: rgb{0, 0, 0},
+	GradientStart:   rgb{140, 120, 255}, // soft periwinkle
+	GradientFgStart: rgb{0, 0, 0},       // pure black
 
-	SubRowBgAnchor: rgb{0xf0, 0xf0, 0xf0},
-	SubRowFgAnchor: rgb{0x90, 0x90, 0x90},
+	SubRowBgAnchor: rgb{0xf0, 0xf0, 0xf0}, // near-white
+	SubRowFgAnchor: rgb{0x90, 0x90, 0x90}, // cool grey
 	SubRowBgBlend:  0.4,
 	SubRowFgBlend:  0.25,
 
-	HeaderFg: "0", SeparatorFg: "245",
-	HelpFg: "244", HelpBrightFg: "236", HelpDimFg: "250",
-	StatusFg: "166",
+	HeaderFg:    "0",   // black
+	SeparatorFg: "245", // mid-grey
 
-	NormalOptionFg:      "233",
-	HighlightedOptionBg: "57",
-	HighlightedOptionFg: "15",
-	OptionNumFg:         "240",
+	HelpFg:       "244", // grey
+	HelpBrightFg: "236", // dark grey
+	HelpDimFg:    "250", // light grey
 
-	ChecksPassFg: "28", ChecksFailFg: "124",
-	ChecksPendingFg: "166", ChecksZeroFg: "245",
+	StatusFg: "166", // burnt orange
 
-	MboxHeaderLabelFg: "0", MboxHeaderValueFg: "238",
-	DiffAddFg: "28", DiffDelFg: "124", DiffHunkFg: "30",
-	QuotedLineFg: "125", WrapIndicatorFg: "245",
+	NormalOptionFg:      "233", // near-black
+	HighlightedOptionBg: "57",  // deep indigo
+	HighlightedOptionFg: "15",  // bright white
+	OptionNumFg:         "240", // mid-grey
 
-	LogLineFg: "242",
+	ChecksPassFg:    "28",  // dark green
+	ChecksFailFg:    "124", // dark red
+	ChecksPendingFg: "166", // burnt orange
+	ChecksZeroFg:    "245", // mid-grey
+
+	MboxHeaderLabelFg: "0",   // black
+	MboxHeaderValueFg: "238", // dark grey
+	DiffAddFg:         "28",  // dark green
+	DiffDelFg:         "124", // dark red
+	DiffHunkFg:        "30",  // dark teal
+	QuotedLineFg:      "125", // muted plum
+	WrapIndicatorFg:   "245", // mid-grey
+
+	LogLineFg: "242", // cool grey
 }
