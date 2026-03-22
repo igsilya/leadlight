@@ -370,7 +370,7 @@ func TestColorForSeries_Grey_AllTerminal(t *testing.T) {
 	s, p := testSeriesWithAge(3)
 	p[0].State = "accepted"
 	got := colorForSeries(s, p, nil, 5)
-	if got != "grey" {
+	if got != "closed" {
 		t.Errorf("got %q, want grey", got)
 	}
 }
@@ -383,7 +383,7 @@ func TestColorForSeries_Grey_OverridesGreen(t *testing.T) {
 			Identity: "Lorem <lorem@ex>"},
 	}
 	got := colorForSeries(s, p, tags, 1)
-	if got != "grey" {
+	if got != "closed" {
 		t.Errorf("got %q, want grey (terminal overrides)", got)
 	}
 }
@@ -392,7 +392,7 @@ func TestColorForSeries_Grey_RFCState(t *testing.T) {
 	s, p := testSeriesWithAge(3)
 	p[0].State = "rfc"
 	got := colorForSeries(s, p, nil, 0)
-	if got != "grey" {
+	if got != "closed" {
 		t.Errorf("got %q, want grey", got)
 	}
 }
@@ -404,7 +404,7 @@ func TestColorForSeries_Green_AllReviewed(t *testing.T) {
 			Identity: "Lorem <lorem@ex>"},
 	}
 	got := colorForSeries(s, p, tags, 1)
-	if got != "green" {
+	if got != "reviewed" {
 		t.Errorf("got %q, want green", got)
 	}
 }
@@ -419,7 +419,7 @@ func TestColorForSeries_Green_CoverReview(t *testing.T) {
 			Identity: "Dolor <dolor@ex>"},
 	}
 	got := colorForSeries(s, p, tags, 1)
-	if got != "green" {
+	if got != "reviewed" {
 		t.Errorf("got %q, want green (cover review)", got)
 	}
 }
@@ -441,7 +441,7 @@ func TestColorForSeries_Green_CrossVersion(t *testing.T) {
 			Identity: "B <b@ex>"},
 	}
 	got := colorForSeries(s, p, tags, 1)
-	if got != "green" {
+	if got != "reviewed" {
 		t.Errorf("got %q, want green (cross-version)", got)
 	}
 }
@@ -453,7 +453,7 @@ func TestColorForSeries_NotGreen_PrePopulatedOnly(t *testing.T) {
 			Identity: "B <b@ex>"},
 	}
 	got := colorForSeries(s, p, tags, 0)
-	if got != "lightred" {
+	if got != "pending" {
 		t.Errorf("got %q, want lightred (no comments)", got)
 	}
 }
@@ -461,7 +461,7 @@ func TestColorForSeries_NotGreen_PrePopulatedOnly(t *testing.T) {
 func TestColorForSeries_Yellow_OldWithComments(t *testing.T) {
 	s, p := testSeriesWithAge(21)
 	got := colorForSeries(s, p, nil, 3)
-	if got != "yellow" {
+	if got != "aging" {
 		t.Errorf("got %q, want yellow", got)
 	}
 }
@@ -469,7 +469,7 @@ func TestColorForSeries_Yellow_OldWithComments(t *testing.T) {
 func TestColorForSeries_White_YoungWithComments(t *testing.T) {
 	s, p := testSeriesWithAge(7)
 	got := colorForSeries(s, p, nil, 2)
-	if got != "white" {
+	if got != "active" {
 		t.Errorf("got %q, want white", got)
 	}
 }
@@ -477,7 +477,7 @@ func TestColorForSeries_White_YoungWithComments(t *testing.T) {
 func TestColorForSeries_Black_VeryOldNoComments(t *testing.T) {
 	s, p := testSeriesWithAge(90)
 	got := colorForSeries(s, p, nil, 0)
-	if got != "black" {
+	if got != "stale" {
 		t.Errorf("got %q, want black", got)
 	}
 }
@@ -485,7 +485,7 @@ func TestColorForSeries_Black_VeryOldNoComments(t *testing.T) {
 func TestColorForSeries_Yellow_VeryOldWithComments(t *testing.T) {
 	s, p := testSeriesWithAge(90)
 	got := colorForSeries(s, p, nil, 5)
-	if got != "yellow" {
+	if got != "aging" {
 		t.Errorf("got %q, want yellow (old but has comments)", got)
 	}
 }
@@ -493,7 +493,7 @@ func TestColorForSeries_Yellow_VeryOldWithComments(t *testing.T) {
 func TestColorForSeries_LightRed_YoungNoComments(t *testing.T) {
 	s, p := testSeriesWithAge(7)
 	got := colorForSeries(s, p, nil, 0)
-	if got != "lightred" {
+	if got != "pending" {
 		t.Errorf("got %q, want lightred", got)
 	}
 }
@@ -501,7 +501,7 @@ func TestColorForSeries_LightRed_YoungNoComments(t *testing.T) {
 func TestColorForSeries_DarkRed_OldNoComments(t *testing.T) {
 	s, p := testSeriesWithAge(30)
 	got := colorForSeries(s, p, nil, 0)
-	if got != "darkred" {
+	if got != "overdue" {
 		t.Errorf("got %q, want darkred", got)
 	}
 }

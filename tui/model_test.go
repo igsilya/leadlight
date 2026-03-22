@@ -21,7 +21,7 @@ func testModel() *Model {
 	rows := []RowData{
 		{
 			Data:  []string{"1", "Lorem", "Active", "Ipsum"},
-			Style: RowStyle{Background: "green"},
+			Style: RowStyle{Background: "reviewed"},
 			SubRows: [][]string{
 				{"1.1", "Sub A", "", "Detail A"},
 				{"1.2", "Sub B", "", "Detail B"},
@@ -29,11 +29,11 @@ func testModel() *Model {
 		},
 		{
 			Data:  []string{"2", "Dolor", "Pending", "Amet"},
-			Style: RowStyle{Background: "yellow"},
+			Style: RowStyle{Background: "aging"},
 		},
 		{
 			Data:  []string{"3", "Sit", "Away", "Consect"},
-			Style: RowStyle{Background: "grey"},
+			Style: RowStyle{Background: "closed"},
 			SubRows: [][]string{
 				{"3.1", "Sub C", "", "Detail C"},
 			},

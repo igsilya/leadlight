@@ -441,11 +441,11 @@ func colorForSeries(
 		}
 	}
 	if allTerminal {
-		return "grey"
+		return "closed"
 	}
 
 	if isAllReviewed(patches, tags) {
-		return "green"
+		return "reviewed"
 	}
 
 	age := time.Since(parseDate(s.Date))
@@ -455,15 +455,15 @@ func colorForSeries(
 
 	switch {
 	case old && hasComments:
-		return "yellow"
+		return "aging"
 	case !old && hasComments:
-		return "white"
+		return "active"
 	case veryOld:
-		return "black"
+		return "stale"
 	case !old:
-		return "lightred"
+		return "pending"
 	default:
-		return "darkred"
+		return "overdue"
 	}
 }
 

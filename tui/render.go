@@ -348,7 +348,7 @@ func (m *Model) renderGradientRow(
 	}
 	palette, ok := palettes[bgName]
 	if !ok {
-		palette = palettes["black"]
+		palette = palettes["stale"]
 	}
 
 	leftWidth := max(fill*40/100, 1)
