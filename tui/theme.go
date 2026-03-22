@@ -6,6 +6,11 @@ type theme struct {
 	GradientStart   rgb
 	GradientFgStart rgb
 
+	SubRowBgAnchor rgb
+	SubRowFgAnchor rgb
+	SubRowBgBlend  float64
+	SubRowFgBlend  float64
+
 	HeaderFg, SeparatorFg           string
 	HelpFg, HelpBrightFg, HelpDimFg string
 	StatusFg                        string
@@ -40,6 +45,11 @@ var darkTheme = theme{
 	GradientStart:   rgb{95, 0, 255},
 	GradientFgStart: rgb{255, 255, 255},
 
+	SubRowBgAnchor: rgb{0x10, 0x10, 0x10},
+	SubRowFgAnchor: rgb{0x40, 0x40, 0x40},
+	SubRowBgBlend:  0.4,
+	SubRowFgBlend:  0.25,
+
 	HeaderFg: "15", SeparatorFg: "240",
 	HelpFg: "241", HelpBrightFg: "250", HelpDimFg: "236",
 	StatusFg: "214",
@@ -71,6 +81,11 @@ var lightTheme = theme{
 	},
 	GradientStart:   rgb{140, 120, 255},
 	GradientFgStart: rgb{0, 0, 0},
+
+	SubRowBgAnchor: rgb{0xf0, 0xf0, 0xf0},
+	SubRowFgAnchor: rgb{0x90, 0x90, 0x90},
+	SubRowBgBlend:  0.4,
+	SubRowFgBlend:  0.25,
 
 	HeaderFg: "0", SeparatorFg: "245",
 	HelpFg: "244", HelpBrightFg: "236", HelpDimFg: "250",

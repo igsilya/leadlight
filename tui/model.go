@@ -29,11 +29,8 @@ type RowStyle struct {
 	Italic     bool
 }
 
-func (rs RowStyle) lipgloss(faint bool) lipgloss.Style {
+func (rs RowStyle) lipgloss() lipgloss.Style {
 	if cached, ok := bgStyles[rs.Background]; ok {
-		if faint {
-			return cached.rowFaint
-		}
 		return cached.row
 	}
 	s := lipgloss.NewStyle()
@@ -45,9 +42,6 @@ func (rs RowStyle) lipgloss(faint bool) lipgloss.Style {
 	}
 	if rs.Italic {
 		s = s.Italic(true)
-	}
-	if faint {
-		s = s.Faint(true)
 	}
 	return s
 }
@@ -527,7 +521,7 @@ func (m *Model) getVisibleItems() []visibleItem {
 
 		showSubs := rd.Expanded || (filter != "" && len(matchingSubs) > 0)
 		if showSubs {
-			subStyle := RowStyle{}
+			subStyle := RowStyle{Background: "sub:" + rd.Style.Background}
 			for si, sub := range rd.SubRows {
 				if filter != "" && !seriesMatch {
 					match := false

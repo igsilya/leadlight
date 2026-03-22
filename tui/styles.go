@@ -76,17 +76,13 @@ type gradientEntry struct{ bg, fg string }
 
 var (
 	gradientPalettes = map[string][256]gradientEntry{}
-	subRowPalette    [256]gradientEntry
 	termBg           rgb
 	termBgHex        string
-	termFg           rgb
-	termFgHex        string
 )
 
 type cachedBgStyle struct {
 	row       lipgloss.Style
 	rowBold   lipgloss.Style
-	rowFaint  lipgloss.Style
 	checkPass lipgloss.Style
 	checkFail lipgloss.Style
 	checkPend lipgloss.Style
@@ -156,21 +152,23 @@ func buildStyles(t *theme) {
 	for name, c := range t.BgColors {
 		bgHex := c.bg.hex()
 		fgHex := c.fg.hex()
-		bgC := lipgloss.Color(bgHex)
-		fgC := lipgloss.Color(fgHex)
-		base := lipgloss.NewStyle().Background(bgC)
 
-		bgStyles[name] = &cachedBgStyle{
-			bgHex:     bgHex,
-			fgHex:     fgHex,
-			row:       base.Foreground(fgC),
-			rowBold:   base.Foreground(fgC).Bold(true),
-			rowFaint:  base.Foreground(fgC).Faint(true),
-			checkPass: base.Foreground(passFg).Bold(true),
-			checkFail: base.Foreground(failFg).Bold(true),
-			checkPend: base.Foreground(pendFg).Bold(true),
-			checkZero: base.Foreground(zeroFg),
+		makeCachedStyle := func(bHex, fHex string) *cachedBgStyle {
+			bC := lipgloss.Color(bHex)
+			fC := lipgloss.Color(fHex)
+			b := lipgloss.NewStyle().Background(bC)
+			return &cachedBgStyle{
+				bgHex:     bHex,
+				fgHex:     fHex,
+				row:       b.Foreground(fC),
+				rowBold:   b.Foreground(fC).Bold(true),
+				checkPass: b.Foreground(passFg).Bold(true),
+				checkFail: b.Foreground(failFg).Bold(true),
+				checkPend: b.Foreground(pendFg).Bold(true),
+				checkZero: b.Foreground(zeroFg),
+			}
 		}
+		bgStyles[name] = makeCachedStyle(bgHex, fgHex)
 
 		makePalette := func(targetBg, targetFg rgb) [256]gradientEntry {
 			var p [256]gradientEntry
@@ -183,31 +181,22 @@ func buildStyles(t *theme) {
 			return p
 		}
 		gradientPalettes[name] = makePalette(c.bg, c.fg)
+
+		subBg := c.bg.lerp(t.SubRowBgAnchor, t.SubRowBgBlend)
+		subFg := c.fg.lerp(t.SubRowFgAnchor, t.SubRowFgBlend)
+		bgStyles["sub:"+name] = makeCachedStyle(subBg.hex(), subFg.hex())
+		gradientPalettes["sub:"+name] = makePalette(subBg, subFg)
 	}
-	subRowPalette = func() [256]gradientEntry {
-		var p [256]gradientEntry
-		for i := range p {
-			tt := math.Pow(float64(i)/255.0, 0.35)
-			bg := t.GradientStart.lerp(termBg, tt)
-			fg := t.GradientFgStart.lerp(termFg, tt)
-			p[i] = gradientEntry{bg.hex(), fg.hex()}
-		}
-		return p
-	}()
 }
 
-func detectTerminalColors() {
-	bg := termenv.ConvertToRGB(termenv.BackgroundColor())
-	termBg = rgb{int(bg.R * 255), int(bg.G * 255), int(bg.B * 255)}
+func detectTerminalBg() {
+	c := termenv.ConvertToRGB(termenv.BackgroundColor())
+	termBg = rgb{int(c.R * 255), int(c.G * 255), int(c.B * 255)}
 	termBgHex = termBg.hex()
-
-	fg := termenv.ConvertToRGB(termenv.ForegroundColor())
-	termFg = rgb{int(fg.R * 255), int(fg.G * 255), int(fg.B * 255)}
-	termFgHex = termFg.hex()
 }
 
 func init() {
-	detectTerminalColors()
+	detectTerminalBg()
 	if lipgloss.HasDarkBackground() {
 		buildStyles(&darkTheme)
 	} else {

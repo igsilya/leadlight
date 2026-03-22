@@ -270,7 +270,7 @@ func (m *Model) buildRow(
 func (m *Model) buildStyledRow(
 	item visibleItem, widths []int, prefix string,
 ) string {
-	rowStyle := item.style.lipgloss(item.isSubRow)
+	rowStyle := item.style.lipgloss()
 	var b strings.Builder
 	b.WriteString(rowStyle.Render(prefix))
 	for j, cellData := range item.data {
@@ -327,7 +327,7 @@ func (m *Model) renderSelectedRow(
 	return m.renderGradientRow(
 		fullRaw, bgName, checksStart, checksWidth, checksText,
 		afrtStart, afrtWidth, afrtText,
-		commentStart, commentWidth, commentText, item.isSubRow)
+		commentStart, commentWidth, commentText)
 }
 
 func (m *Model) renderGradientRow(
@@ -335,19 +335,14 @@ func (m *Model) renderGradientRow(
 	checksStart, checksWidth int, checksText string,
 	afrtStart, afrtWidth int, afrtText string,
 	commentStart, commentWidth int, commentText string,
-	isSubRow bool,
 ) string {
 	runes := []rune(rawRow)
 	total := len(runes)
 	fill := min(
 		int(m.highlightProgress*float64(total)), total)
 
-	var palette [256]gradientEntry
-	if isSubRow {
-		palette = subRowPalette
-	} else if p, ok := gradientPalettes[bgName]; ok {
-		palette = p
-	} else {
+	palette, ok := gradientPalettes[bgName]
+	if !ok {
 		palette = gradientPalettes["stale"]
 	}
 
@@ -366,10 +361,7 @@ func (m *Model) renderGradientRow(
 
 	cached := bgStyles[bgName]
 	var flatBg, flatFg string
-	if isSubRow {
-		flatBg = termBgHex
-		flatFg = termFgHex
-	} else if cached != nil {
+	if cached != nil {
 		flatBg = cached.bgHex
 		flatFg = cached.fgHex
 	}
