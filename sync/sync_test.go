@@ -2511,3 +2511,230 @@ func TestFetchCoverMbox_NotFound(t *testing.T) {
 		t.Error("expected error for non-existent cover")
 	}
 }
+
+func TestFetchNextChecks(t *testing.T) {
+	checksJSON := `[
+		{"id": 1, "state": "success", "context": "ci/build",
+		 "target_url": "https://ci.example.com/1",
+		 "description": "All tests passed", "date": "2026-03-10"},
+		{"id": 2, "state": "warning", "context": "ci/lint",
+		 "target_url": "https://ci.example.com/2",
+		 "description": "Minor issues", "date": "2026-03-10"}
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(checksJSON))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	result := s.fetchNextChecks(context.Background())
+	if result != fetchActive {
+		t.Errorf("result = %d, want fetchActive", result)
+	}
+
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2", len(checks))
+	}
+	if checks[0].Context != "ci/build" || checks[0].State != "success" {
+		t.Errorf("check 0: %s/%s", checks[0].Context, checks[0].State)
+	}
+	if checks[0].Description != "All tests passed" {
+		t.Errorf("check 0 desc = %q", checks[0].Description)
+	}
+	if checks[1].Context != "ci/lint" || checks[1].State != "warning" {
+		t.Errorf("check 1: %s/%s", checks[1].Context, checks[1].State)
+	}
+
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 1 || row.ChecksWarn != 1 {
+		t.Errorf("counters: pass=%d warn=%d, want 1/1",
+			row.ChecksPass, row.ChecksWarn)
+	}
+
+	// Should be marked as fetched — no more work
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 0 {
+		t.Errorf("still %d patches needing checks after fetch",
+			len(refs))
+	}
+}
+
+func TestFetchNextChecks_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(500)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	result := s.fetchNextChecks(context.Background())
+	if result != fetchNone {
+		t.Errorf("result = %d, want fetchNone on error", result)
+	}
+
+	// Should be in skip set
+	if _, ok := s.checkSkip[100]; !ok {
+		t.Error("patch 100 should be in checkSkip after error")
+	}
+
+	// Should NOT be marked as fetched
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 1 {
+		t.Errorf("got %d patches needing checks, want 1 (not marked)",
+			len(refs))
+	}
+}
+
+func TestProcessEvent_CheckCreated_NoDescription_ResetsFlag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.MarkChecksFetched(100)
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	// Event without description
+	s.processEvent(api.Event{
+		Category: "check-created",
+		Payload: &api.CheckCreatedPayload{
+			Patch: api.PatchSummary{ID: 100},
+			Check: api.CheckSummary{
+				ID: 500, State: "success",
+				Context: "ci/build",
+			},
+		},
+	}, 50)
+
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 1 {
+		t.Errorf("got %d refs, want 1 (should be reset)", len(refs))
+	}
+}
+
+func TestProcessEvent_CheckCreated_WithDescription_KeepsFlag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.MarkChecksFetched(100)
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	// Event with description
+	desc := "All tests passed"
+	s.processEvent(api.Event{
+		Category: "check-created",
+		Payload: &api.CheckCreatedPayload{
+			Patch: api.PatchSummary{ID: 100},
+			Check: api.CheckSummary{
+				ID: 500, State: "success",
+				Context:     "ci/build",
+				Description: &desc,
+			},
+		},
+	}, 50)
+
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 0 {
+		t.Errorf("got %d refs, want 0 (has description, flag kept)",
+			len(refs))
+	}
+}
+
+func TestFetchNextChecks_Terminal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte("[]"))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	result := s.fetchNextChecks(context.Background())
+	if result != fetchTerminal {
+		t.Errorf("result = %d, want fetchTerminal", result)
+	}
+}

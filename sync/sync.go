@@ -32,6 +32,7 @@ type Syncer struct {
 	syncNowC    chan context.Context
 	commentSkip map[int]time.Time // last failure time per item; retried after cooldown
 	detailSkip  map[int]time.Time
+	checkSkip   map[int]time.Time
 	status      *status.Registry
 }
 
@@ -78,6 +79,7 @@ func NewSyncer(
 		syncNowC:    make(chan context.Context, 1),
 		commentSkip: map[int]time.Time{},
 		detailSkip:  map[int]time.Time{},
+		checkSkip:   map[int]time.Time{},
 	}
 }
 
@@ -150,12 +152,13 @@ func (s *Syncer) Run(ctx context.Context) {
 	}
 
 	var wg gosync.WaitGroup
-	wg.Add(5)
+	wg.Add(6)
 	go s.runUserRequests(ctx, &wg)
 	go s.runSyncLoop(ctx, &wg)
 	go s.runCommentLoop(ctx, &wg)
 	go s.runArchiveLoop(ctx, &wg)
 	go s.runDetailLoop(ctx, &wg)
+	go s.runCheckLoop(ctx, &wg)
 	wg.Wait()
 }
 
@@ -492,7 +495,14 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 			Date:        p.Check.Date,
 		})
 		if err != nil {
+			// Reset so the background loop retries
+			s.db.ResetChecksFetched(p.Patch.ID)
 			return err
+		}
+		// If the event lacks a description, reset so the background
+		// loop re-fetches with full data from the API.
+		if p.Check.Description == nil || *p.Check.Description == "" {
+			s.db.ResetChecksFetched(p.Patch.ID)
 		}
 		return s.db.RecountPatchChecks(p.Patch.ID)
 	case *api.SeriesCreatedPayload:
@@ -943,6 +953,79 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) fetchResult {
 		}
 		log.Printf("SYNC: fetched detail for cover %d (%d bytes)",
 			ref.ID, len(cover.Content))
+		if ref.IsActive {
+			return fetchActive
+		}
+		return fetchTerminal
+	}
+	return fetchNone
+}
+
+// runCheckLoop fetches CI check results one patch per cycle. Polls
+// every 5s while active-state items remain, slows to 60s for terminal.
+func (s *Syncer) runCheckLoop(ctx context.Context, wg *gosync.WaitGroup) {
+	defer wg.Done()
+
+	result := s.fetchNextChecks(ctx)
+	s.status.Clear(status.BgChecks)
+	if result != fetchNone {
+		s.notify()
+	}
+
+	for {
+		interval := activeInterval
+		if result == fetchTerminal {
+			interval = terminalInterval
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+			result = s.fetchNextChecks(ctx)
+			s.status.Clear(status.BgChecks)
+			if result != fetchNone {
+				s.notify()
+			}
+		}
+	}
+}
+
+func (s *Syncer) fetchNextChecks(ctx context.Context) fetchResult {
+	refs := s.db.GetPatchesNeedingChecks(s.cfg.States)
+	for _, ref := range refs {
+		if t, ok := s.checkSkip[ref.ID]; ok &&
+			time.Since(t) < commentSkipCooldown {
+			continue
+		}
+		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
+			status.BgChecks,
+			fmt.Sprintf("Fetching checks (%d remaining)...",
+				len(refs)))
+		// defer in loop is safe here: the function returns after each item.
+		defer s.status.EndFetch(ref.ID)
+
+		checks, err := s.client.GetPatchChecks(ctx, ref.ID)
+		if err != nil {
+			log.Printf("fetch checks %d: %v", ref.ID, err)
+			s.checkSkip[ref.ID] = time.Now()
+			return fetchNone
+		}
+		delete(s.checkSkip, ref.ID)
+		for _, c := range checks {
+			s.db.SaveCheck(db.CheckRow{
+				ID:          c.ID,
+				PatchID:     ref.ID,
+				Context:     c.Context,
+				State:       c.State,
+				TargetURL:   ptrStr(c.TargetURL),
+				Description: ptrStr(c.Description),
+				Date:        c.Date,
+			})
+		}
+		s.db.RecountPatchChecks(ref.ID)
+		s.db.MarkChecksFetched(ref.ID)
+		log.Printf("SYNC: fetched %d checks for patch %d",
+			len(checks), ref.ID)
 		if ref.IsActive {
 			return fetchActive
 		}

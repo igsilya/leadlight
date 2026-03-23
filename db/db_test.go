@@ -1759,6 +1759,119 @@ func TestRecountChecks_Batch_LatestPerContext(t *testing.T) {
 	}
 }
 
+func TestGetPatchesNeedingChecks(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "active",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 51, Name: "terminal",
+		Date: "2026-03-10", State: "accepted", Submitter: "Ipsum",
+	})
+	d.SavePatch(PatchRow{
+		ID: 102, SeriesID: 52, Name: "already fetched",
+		Date: "2026-03-10", State: "new", Submitter: "Dolor",
+	})
+	d.MarkChecksFetched(102)
+
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 2 {
+		t.Fatalf("got %d refs, want 2 (102 already fetched)", len(refs))
+	}
+	// Active first
+	if refs[0].ID != 100 || !refs[0].IsActive {
+		t.Errorf("refs[0] = {ID:%d IsActive:%v}, want {100 true}",
+			refs[0].ID, refs[0].IsActive)
+	}
+	if refs[1].ID != 101 || refs[1].IsActive {
+		t.Errorf("refs[1] = {ID:%d IsActive:%v}, want {101 false}",
+			refs[1].ID, refs[1].IsActive)
+	}
+}
+
+func TestMarkChecksFetched(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 1 {
+		t.Fatalf("before: got %d refs, want 1", len(refs))
+	}
+	d.MarkChecksFetched(100)
+	refs = d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 0 {
+		t.Errorf("after: got %d refs, want 0", len(refs))
+	}
+}
+
+func TestResetChecksFetched(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.MarkChecksFetched(100)
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 0 {
+		t.Fatal("should not need checks after marking")
+	}
+	d.ResetChecksFetched(100)
+	refs = d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 1 {
+		t.Errorf("got %d refs after reset, want 1", len(refs))
+	}
+}
+
+func TestStartupReset_ChecksWithoutDescriptions(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// Check without description
+	d.SaveCheck(CheckRow{
+		ID: 10, PatchID: 100, State: "success",
+		Context: "ci/build", Date: "2026-03-10",
+	})
+	d.MarkChecksFetched(100)
+
+	// Run the startup reset
+	d.RunResetChecksWithoutDescriptions()
+
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 1 {
+		t.Errorf("got %d refs, want 1 (reset because no description)",
+			len(refs))
+	}
+}
+
+func TestStartupReset_ChecksWithDescriptions_NoReset(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// Check with description
+	d.SaveCheck(CheckRow{
+		ID: 10, PatchID: 100, State: "success",
+		Context: "ci/build", Description: "All passed",
+		Date: "2026-03-10",
+	})
+	d.MarkChecksFetched(100)
+
+	// Run the startup reset — should NOT reset
+	d.RunResetChecksWithoutDescriptions()
+
+	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	if len(refs) != 0 {
+		t.Errorf("got %d refs, want 0 (has description, no reset)",
+			len(refs))
+	}
+}
+
 func TestGetPatchesNeedingComments(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{

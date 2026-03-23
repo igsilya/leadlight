@@ -127,6 +127,18 @@ CREATE INDEX IF NOT EXISTS idx_comments_cover ON comments(cover_id);
 CREATE INDEX IF NOT EXISTS idx_covers_series ON covers(series_id);
 `
 
+// Reset checks_fetched for patches that have check records with empty
+// descriptions. This triggers the background check loop to re-fetch
+// the full check data including descriptions from the API.
+const resetChecksWithoutDescriptions = `
+UPDATE patches SET checks_fetched = 0
+WHERE checks_fetched = 1
+AND id IN (
+  SELECT DISTINCT patch_id FROM checks
+  WHERE COALESCE(description, '') = ''
+);
+`
+
 // Recount check totals on every startup to repair inconsistencies from
 // interrupted syncs or schema changes. Pending checks are excluded —
 // they'll resolve to pass/fail/warning eventually.
@@ -169,6 +181,7 @@ var alterStatements = []string{
 	// stores warning count, not pending count.
 	`ALTER TABLE patches RENAME COLUMN checks_pending TO checks_warn`,
 	`ALTER TABLE checks ADD COLUMN description TEXT DEFAULT ''`,
+	`ALTER TABLE patches ADD COLUMN checks_fetched INTEGER DEFAULT 0`,
 }
 
 func migrate(db *sql.DB) error {
@@ -182,6 +195,7 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	db.Exec(resetChecksWithoutDescriptions)
 	// Bump this version when comment schema changes require re-fetch
 	const commentSchemaVersion = "2"
 	var ver string

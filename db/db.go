@@ -337,9 +337,64 @@ func (d *DB) SaveCheck(c CheckRow) error {
 	return err
 }
 
-// RecountPatchChecks recounts check totals for a single patch.
-// Only the latest check per context is counted — Patchwork creates
-// new records for state changes, so older states are superseded.
+func (d *DB) GetPatchesNeedingChecks(
+	priorityStates []string,
+) []FetchRef {
+	if len(priorityStates) == 0 {
+		priorityStates = []string{"new", "under-review"}
+	}
+	placeholders := make([]string, len(priorityStates))
+	args := make([]interface{}, len(priorityStates))
+	for i, s := range priorityStates {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := fmt.Sprintf(`
+		SELECT id, COALESCE(series_id, 0),
+			CASE WHEN state IN (%s) THEN 1 ELSE 0 END
+		FROM patches
+		WHERE COALESCE(checks_fetched, 0) = 0
+		ORDER BY
+			CASE WHEN state IN (%s)
+				THEN 0 ELSE 1 END,
+			id DESC`,
+		strings.Join(placeholders, ","),
+		strings.Join(placeholders, ","))
+	doubleArgs := append(args, args...)
+	rows, err := d.conn.Query(query, doubleArgs...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var refs []FetchRef
+	for rows.Next() {
+		var ref FetchRef
+		var active int
+		rows.Scan(&ref.ID, &ref.SeriesID, &active)
+		ref.IsActive = active == 1
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func (d *DB) MarkChecksFetched(patchID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(
+		"UPDATE patches SET checks_fetched = 1 WHERE id = ?",
+		patchID)
+	return err
+}
+
+func (d *DB) ResetChecksFetched(patchID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(
+		"UPDATE patches SET checks_fetched = 0 WHERE id = ?",
+		patchID)
+	return err
+}
+
 // RunRecountChecks runs the batch recount of all check counters.
 // Exposed for testing — normally runs automatically during migration.
 func (d *DB) RunRecountChecks() {
@@ -348,6 +403,18 @@ func (d *DB) RunRecountChecks() {
 	d.conn.Exec(recountChecks)
 }
 
+// RunResetChecksWithoutDescriptions resets checks_fetched for patches
+// with description-less checks. Exposed for testing — normally runs
+// automatically during migration.
+func (d *DB) RunResetChecksWithoutDescriptions() {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(resetChecksWithoutDescriptions)
+}
+
+// RecountPatchChecks recounts check totals for a single patch.
+// Only the latest check per context is counted — Patchwork creates
+// new records for state changes, so older states are superseded.
 func (d *DB) RecountPatchChecks(patchID int) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
