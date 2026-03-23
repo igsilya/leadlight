@@ -1540,6 +1540,165 @@ func TestUpdatePatchChecks_WarnField(t *testing.T) {
 	}
 }
 
+func TestRecountPatchChecks_LatestPerContext(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// ai-review: pending then success (two records, same context)
+	d.InsertCheck(CheckRow{
+		ID: 10, PatchID: 100, State: "pending",
+		Context: "ai-review", Date: "2026-03-10T10:00:00",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 20, PatchID: 100, State: "success",
+		Context: "ai-review", Date: "2026-03-10T10:05:00",
+	})
+	d.RecountPatchChecks(100)
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 1 {
+		t.Errorf("pass = %d, want 1 (latest ai-review is success)",
+			row.ChecksPass)
+	}
+	if row.ChecksWarn != 0 {
+		t.Errorf("warn = %d, want 0", row.ChecksWarn)
+	}
+}
+
+func TestRecountPatchChecks_MultipleContextsWithSuperseded(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// build: pending → success
+	d.InsertCheck(CheckRow{
+		ID: 10, PatchID: 100, State: "pending",
+		Context: "build", Date: "2026-03-10T10:00:00",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 20, PatchID: 100, State: "success",
+		Context: "build", Date: "2026-03-10T10:05:00",
+	})
+	// lint: pending → warning
+	d.InsertCheck(CheckRow{
+		ID: 30, PatchID: 100, State: "pending",
+		Context: "lint", Date: "2026-03-10T10:00:00",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 40, PatchID: 100, State: "warning",
+		Context: "lint", Date: "2026-03-10T10:05:00",
+	})
+	// test: pending → fail
+	d.InsertCheck(CheckRow{
+		ID: 50, PatchID: 100, State: "pending",
+		Context: "test", Date: "2026-03-10T10:00:00",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 60, PatchID: 100, State: "fail",
+		Context: "test", Date: "2026-03-10T10:05:00",
+	})
+	d.RecountPatchChecks(100)
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 1 {
+		t.Errorf("pass = %d, want 1 (build)", row.ChecksPass)
+	}
+	if row.ChecksFail != 1 {
+		t.Errorf("fail = %d, want 1 (test)", row.ChecksFail)
+	}
+	if row.ChecksWarn != 1 {
+		t.Errorf("warn = %d, want 1 (lint)", row.ChecksWarn)
+	}
+}
+
+func TestGetChecksForPatch_LatestPerContext(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// ai-review: pending → success
+	d.InsertCheck(CheckRow{
+		ID: 10, PatchID: 100, State: "pending",
+		Context: "ai-review", Date: "2026-03-10T10:00:00",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 20, PatchID: 100, State: "success",
+		Context: "ai-review", Date: "2026-03-10T10:05:00",
+	})
+	// build: only one record
+	d.InsertCheck(CheckRow{
+		ID: 30, PatchID: 100, State: "success",
+		Context: "build", Date: "2026-03-10T10:05:00",
+	})
+
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2 (one per context)",
+			len(checks))
+	}
+	// Ordered by context: ai-review, build
+	if checks[0].Context != "ai-review" || checks[0].State != "success" {
+		t.Errorf("check 0: context=%q state=%q, want ai-review/success",
+			checks[0].Context, checks[0].State)
+	}
+	if checks[1].Context != "build" || checks[1].State != "success" {
+		t.Errorf("check 1: context=%q state=%q, want build/success",
+			checks[1].Context, checks[1].State)
+	}
+}
+
+func TestGetChecksForPatch_PendingNotSuperseded(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// Only a pending check — no superseding record yet
+	d.InsertCheck(CheckRow{
+		ID: 10, PatchID: 100, State: "pending",
+		Context: "ai-review", Date: "2026-03-10T10:00:00",
+	})
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 1 {
+		t.Fatalf("got %d checks, want 1", len(checks))
+	}
+	if checks[0].State != "pending" {
+		t.Errorf("state = %q, want pending", checks[0].State)
+	}
+}
+
+func TestRecountChecks_Batch_LatestPerContext(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// build: pending → success (two records)
+	d.InsertCheck(CheckRow{
+		ID: 10, PatchID: 100, State: "pending",
+		Context: "build", Date: "2026-03-10T10:00:00",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 20, PatchID: 100, State: "success",
+		Context: "build", Date: "2026-03-10T10:05:00",
+	})
+	// Set wrong counters, then run the batch recount SQL
+	d.UpdatePatchChecks(100, 0, 0, 0)
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 0 {
+		t.Fatalf("precondition: pass should be 0")
+	}
+	// Run the same batch recount that runs on startup
+	d.RunRecountChecks()
+	row, _ = d.GetPatch(100)
+	if row.ChecksPass != 1 {
+		t.Errorf("pass = %d after batch recount, want 1",
+			row.ChecksPass)
+	}
+}
+
 func TestGetPatchesNeedingComments(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{

@@ -324,20 +324,40 @@ func (d *DB) InsertCheck(c CheckRow) error {
 	return err
 }
 
+// RecountPatchChecks recounts check totals for a single patch.
+// Only the latest check per context is counted — Patchwork creates
+// new records for state changes, so older states are superseded.
+// RunRecountChecks runs the batch recount of all check counters.
+// Exposed for testing — normally runs automatically during migration.
+func (d *DB) RunRecountChecks() {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(recountChecks)
+}
+
 func (d *DB) RecountPatchChecks(patchID int) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE patches SET
 			checks_pass = (
-				SELECT COUNT(*) FROM checks
-				WHERE patch_id = ? AND state = 'success'),
+				SELECT COUNT(*) FROM checks c
+				WHERE c.patch_id = ? AND c.state = 'success'
+				AND c.id = (SELECT MAX(c2.id) FROM checks c2
+					WHERE c2.patch_id = c.patch_id
+					AND c2.context = c.context)),
 			checks_fail = (
-				SELECT COUNT(*) FROM checks
-				WHERE patch_id = ? AND state = 'fail'),
+				SELECT COUNT(*) FROM checks c
+				WHERE c.patch_id = ? AND c.state = 'fail'
+				AND c.id = (SELECT MAX(c2.id) FROM checks c2
+					WHERE c2.patch_id = c.patch_id
+					AND c2.context = c.context)),
 			checks_warn = (
-				SELECT COUNT(*) FROM checks
-				WHERE patch_id = ? AND state = 'warning')
+				SELECT COUNT(*) FROM checks c
+				WHERE c.patch_id = ? AND c.state = 'warning'
+				AND c.id = (SELECT MAX(c2.id) FROM checks c2
+					WHERE c2.patch_id = c.patch_id
+					AND c2.context = c.context))
 		WHERE id = ?`,
 		patchID, patchID, patchID, patchID)
 	return err
@@ -1249,11 +1269,18 @@ func (d *DB) ResetAllCommentsFetched(states []string) error {
 	return err
 }
 
+// GetChecksForPatch returns the latest check per context for a patch.
+// Patchwork creates new records for state changes, so we only return
+// the most recent (highest ID) per context.
 func (d *DB) GetChecksForPatch(patchID int) []CheckRow {
 	rows, err := d.conn.Query(`
 		SELECT id, patch_id, context, state,
 			COALESCE(target_url, ''), COALESCE(date, '')
-		FROM checks WHERE patch_id = ?
+		FROM checks
+		WHERE patch_id = ?
+			AND id = (SELECT MAX(c2.id) FROM checks c2
+				WHERE c2.patch_id = checks.patch_id
+				AND c2.context = checks.context)
 		ORDER BY context`, patchID)
 	if err != nil {
 		return nil

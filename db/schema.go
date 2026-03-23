@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS tags (
     identity   TEXT NOT NULL,
     UNIQUE(patch_id, cover_id, source, type, identity)
 );
+CREATE INDEX IF NOT EXISTS idx_checks_patch_context ON checks(patch_id, context, id);
 CREATE INDEX IF NOT EXISTS idx_tags_patch ON tags(patch_id);
 CREATE INDEX IF NOT EXISTS idx_tags_cover ON tags(cover_id);
 CREATE INDEX IF NOT EXISTS idx_patches_series ON patches(series_id);
@@ -129,20 +130,28 @@ CREATE INDEX IF NOT EXISTS idx_covers_series ON covers(series_id);
 // Recount check totals on every startup to repair inconsistencies from
 // interrupted syncs or schema changes. Pending checks are excluded —
 // they'll resolve to pass/fail/warning eventually.
+// latestCheckSubquery filters to the most recent check per context.
+// Patchwork creates a new check record (new ID) for each state change,
+// so a context like "ai-review" may have both a "pending" and a "success"
+// record. We only count the latest (highest ID) per context.
+const latestCheckSubquery = `c.id = (
+  SELECT MAX(c2.id) FROM checks c2
+  WHERE c2.patch_id = c.patch_id AND c2.context = c.context)`
+
 const recountChecks = `
 UPDATE patches SET
   checks_pass = (
-    SELECT COUNT(*) FROM checks
-    WHERE checks.patch_id = patches.id
-    AND state = 'success'),
+    SELECT COUNT(*) FROM checks c
+    WHERE c.patch_id = patches.id AND c.state = 'success'
+    AND ` + latestCheckSubquery + `),
   checks_fail = (
-    SELECT COUNT(*) FROM checks
-    WHERE checks.patch_id = patches.id
-    AND state = 'fail'),
+    SELECT COUNT(*) FROM checks c
+    WHERE c.patch_id = patches.id AND c.state = 'fail'
+    AND ` + latestCheckSubquery + `),
   checks_warn = (
-    SELECT COUNT(*) FROM checks
-    WHERE checks.patch_id = patches.id
-    AND state = 'warning')
+    SELECT COUNT(*) FROM checks c
+    WHERE c.patch_id = patches.id AND c.state = 'warning'
+    AND ` + latestCheckSubquery + `)
 WHERE id IN (
   SELECT DISTINCT patch_id FROM checks
 );
