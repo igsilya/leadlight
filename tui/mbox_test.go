@@ -766,7 +766,6 @@ func TestFormatChecks_WarningAndPendingDistinct(t *testing.T) {
 		{Context: "ci/pend", State: "pending"},
 	}
 	result := FormatChecks(checks, 80)
-	// Warning should show ! and pending should show ?
 	lines := strings.Split(result, "\n")
 	foundWarn, foundPend := false, false
 	for _, line := range lines {
@@ -782,5 +781,98 @@ func TestFormatChecks_WarningAndPendingDistinct(t *testing.T) {
 	}
 	if !foundPend {
 		t.Error("pending check should show ? icon")
+	}
+}
+
+func TestFormatChecks_WithDescription(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "ci/build", State: "success",
+			TargetURL:   "https://ci.example.com/123",
+			Description: "All tests passed"},
+	}
+	result := FormatChecks(checks, 120)
+	if !strings.Contains(result, "✓") {
+		t.Error("missing success icon")
+	}
+	if !strings.Contains(result, "ci/build") {
+		t.Error("missing context")
+	}
+	if !strings.Contains(result, "https://ci.example.com/123") {
+		t.Error("missing URL")
+	}
+	if !strings.Contains(result, "All tests passed") {
+		t.Error("missing description")
+	}
+	// Description should be on a separate indented line
+	lines := strings.Split(result, "\n")
+	foundDesc := false
+	for _, line := range lines {
+		if strings.Contains(line, "All tests passed") {
+			if !strings.HasPrefix(line, "      ") {
+				t.Error("description should have 6-space indent")
+			}
+			foundDesc = true
+		}
+	}
+	if !foundDesc {
+		t.Error("description not found on its own line")
+	}
+}
+
+func TestFormatChecks_MultiLineDescription(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "ynl", State: "success",
+			Description: "Generated files up to date;\n" +
+				"no warnings/errors;\n" +
+				"no diff in generated;"},
+	}
+	result := FormatChecks(checks, 120)
+	lines := strings.Split(result, "\n")
+	descLines := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "      ") {
+			descLines++
+		}
+	}
+	if descLines != 3 {
+		t.Errorf("got %d description lines, want 3", descLines)
+	}
+}
+
+func TestFormatChecks_NoDescription(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "ci/build", State: "success",
+			TargetURL: "https://ci.example.com/123"},
+	}
+	result := FormatChecks(checks, 120)
+	lines := strings.Split(result, "\n")
+	// Should be: header, context+url, empty trailing
+	nonEmpty := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty != 2 {
+		t.Errorf("got %d non-empty lines, want 2 (header + check)",
+			nonEmpty)
+	}
+}
+
+func TestFormatChecks_URLOnContextLine(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "build", State: "success",
+			TargetURL:   "https://ci.example.com/build/123",
+			Description: "Lorem ipsum"},
+	}
+	result := FormatChecks(checks, 120)
+	lines := strings.Split(result, "\n")
+	// First non-header line should have both context and URL
+	contextLine := lines[1]
+	if !strings.Contains(contextLine, "build") {
+		t.Error("context line missing context name")
+	}
+	if !strings.Contains(contextLine, "https://ci.example.com") {
+		t.Error("context line missing URL")
 	}
 }

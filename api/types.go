@@ -75,12 +75,13 @@ type CommentSummary struct {
 }
 
 type CheckSummary struct {
-	ID        int     `json:"id"`
-	URL       string  `json:"url"`
-	Date      string  `json:"date"`
-	State     string  `json:"state"`
-	TargetURL *string `json:"target_url"`
-	Context   string  `json:"context"`
+	ID          int     `json:"id"`
+	URL         string  `json:"url"`
+	Date        string  `json:"date"`
+	State       string  `json:"state"`
+	TargetURL   *string `json:"target_url"`
+	Context     string  `json:"context"`
+	Description *string `json:"description"`
 }
 
 type Patch struct {

@@ -168,6 +168,7 @@ var alterStatements = []string{
 	// Requires SQLite 3.25+ (2018). Fixes the naming: this column
 	// stores warning count, not pending count.
 	`ALTER TABLE patches RENAME COLUMN checks_pending TO checks_warn`,
+	`ALTER TABLE checks ADD COLUMN description TEXT DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {

@@ -606,9 +606,10 @@ func GetChecksForPatch(d *db.DB, patchID int) []CheckInfo {
 	checks := make([]CheckInfo, len(rows))
 	for i, r := range rows {
 		checks[i] = CheckInfo{
-			Context:   r.Context,
-			State:     r.State,
-			TargetURL: r.TargetURL,
+			Context:     r.Context,
+			State:       r.State,
+			TargetURL:   r.TargetURL,
+			Description: r.Description,
 		}
 	}
 	return checks

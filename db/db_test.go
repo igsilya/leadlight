@@ -302,7 +302,7 @@ func TestUpdatePatchMbox(t *testing.T) {
 	}
 }
 
-func TestInsertCheck(t *testing.T) {
+func TestSaveCheck_InsertAndUpsert(t *testing.T) {
 	d := openTestDB(t)
 
 	d.SavePatch(PatchRow{
@@ -319,13 +319,73 @@ func TestInsertCheck(t *testing.T) {
 		TargetURL: "https://pw.example.com/ci/123",
 		Context:   "ci/build",
 	}
-	if err := d.InsertCheck(check); err != nil {
+	if err := d.SaveCheck(check); err != nil {
 		t.Fatal(err)
 	}
 
 	// Insert same check again — should not error (idempotent)
-	if err := d.InsertCheck(check); err != nil {
+	if err := d.SaveCheck(check); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSaveCheck_UpsertPreservesDescription(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// Event inserts check without description
+	d.SaveCheck(CheckRow{
+		ID: 500, PatchID: 100, State: "pending",
+		Context: "ci/build", Date: "2026-03-10T10:00:00",
+	})
+	// Check loop fetches same check with description
+	d.SaveCheck(CheckRow{
+		ID: 500, PatchID: 100, State: "success",
+		Context:     "ci/build",
+		Description: "All tests passed",
+		Date:        "2026-03-10T10:05:00",
+	})
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 1 {
+		t.Fatalf("got %d checks, want 1", len(checks))
+	}
+	if checks[0].State != "success" {
+		t.Errorf("state = %q, want success", checks[0].State)
+	}
+	if checks[0].Description != "All tests passed" {
+		t.Errorf("description = %q, want 'All tests passed'",
+			checks[0].Description)
+	}
+}
+
+func TestSaveCheck_UpsertKeepsExistingDescription(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// Check loop inserts with description
+	d.SaveCheck(CheckRow{
+		ID: 500, PatchID: 100, State: "success",
+		Context:     "ci/build",
+		Description: "All tests passed",
+		Date:        "2026-03-10T10:05:00",
+	})
+	// Event re-inserts same check without description
+	d.SaveCheck(CheckRow{
+		ID: 500, PatchID: 100, State: "success",
+		Context: "ci/build",
+		Date:    "2026-03-10T10:05:00",
+	})
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 1 {
+		t.Fatalf("got %d checks, want 1", len(checks))
+	}
+	if checks[0].Description != "All tests passed" {
+		t.Errorf("description = %q, want 'All tests passed' (should be preserved)",
+			checks[0].Description)
 	}
 }
 
@@ -1406,17 +1466,17 @@ func TestGetChecksForPatch(t *testing.T) {
 		Date: "2026-03-10", State: "new",
 		Submitter: "Lorem",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 1, PatchID: 100,
 		Context: "ci/build", State: "success",
 		TargetURL: "https://ci.example.com/1",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 2, PatchID: 100,
 		Context: "ci/test", State: "fail",
 		TargetURL: "https://ci.example.com/2",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 3, PatchID: 200,
 		Context: "ci/other", State: "success",
 	})
@@ -1440,23 +1500,23 @@ func TestRecountPatchChecks(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 1, PatchID: 100,
 		State: "success", Context: "ci/build",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 2, PatchID: 100,
 		State: "success", Context: "ci/lint",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 3, PatchID: 100,
 		State: "fail", Context: "ci/test",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 4, PatchID: 100,
 		State: "pending", Context: "ci/deploy",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 5, PatchID: 100,
 		State: "warning", Context: "ci/style",
 	})
@@ -1483,11 +1543,11 @@ func TestRecountPatchChecks_WarnExcludesPending(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 	// Only pending checks — no warnings
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 1, PatchID: 100,
 		State: "pending", Context: "ci/build",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 2, PatchID: 100,
 		State: "pending", Context: "ci/test",
 	})
@@ -1507,11 +1567,11 @@ func TestRecountPatchChecks_AllStates(t *testing.T) {
 		ID: 100, Name: "test", Date: "2026-03-10",
 		State: "new", Submitter: "Lorem",
 	})
-	d.InsertCheck(CheckRow{ID: 1, PatchID: 100, State: "success", Context: "ci/a"})
-	d.InsertCheck(CheckRow{ID: 2, PatchID: 100, State: "fail", Context: "ci/b"})
-	d.InsertCheck(CheckRow{ID: 3, PatchID: 100, State: "warning", Context: "ci/c"})
-	d.InsertCheck(CheckRow{ID: 4, PatchID: 100, State: "warning", Context: "ci/d"})
-	d.InsertCheck(CheckRow{ID: 5, PatchID: 100, State: "pending", Context: "ci/e"})
+	d.SaveCheck(CheckRow{ID: 1, PatchID: 100, State: "success", Context: "ci/a"})
+	d.SaveCheck(CheckRow{ID: 2, PatchID: 100, State: "fail", Context: "ci/b"})
+	d.SaveCheck(CheckRow{ID: 3, PatchID: 100, State: "warning", Context: "ci/c"})
+	d.SaveCheck(CheckRow{ID: 4, PatchID: 100, State: "warning", Context: "ci/d"})
+	d.SaveCheck(CheckRow{ID: 5, PatchID: 100, State: "pending", Context: "ci/e"})
 	d.RecountPatchChecks(100)
 	row, _ := d.GetPatch(100)
 	if row.ChecksPass != 1 {
@@ -1547,11 +1607,11 @@ func TestRecountPatchChecks_LatestPerContext(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 	// ai-review: pending then success (two records, same context)
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 10, PatchID: 100, State: "pending",
 		Context: "ai-review", Date: "2026-03-10T10:00:00",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 20, PatchID: 100, State: "success",
 		Context: "ai-review", Date: "2026-03-10T10:05:00",
 	})
@@ -1573,29 +1633,29 @@ func TestRecountPatchChecks_MultipleContextsWithSuperseded(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 	// build: pending → success
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 10, PatchID: 100, State: "pending",
 		Context: "build", Date: "2026-03-10T10:00:00",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 20, PatchID: 100, State: "success",
 		Context: "build", Date: "2026-03-10T10:05:00",
 	})
 	// lint: pending → warning
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 30, PatchID: 100, State: "pending",
 		Context: "lint", Date: "2026-03-10T10:00:00",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 40, PatchID: 100, State: "warning",
 		Context: "lint", Date: "2026-03-10T10:05:00",
 	})
 	// test: pending → fail
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 50, PatchID: 100, State: "pending",
 		Context: "test", Date: "2026-03-10T10:00:00",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 60, PatchID: 100, State: "fail",
 		Context: "test", Date: "2026-03-10T10:05:00",
 	})
@@ -1619,16 +1679,16 @@ func TestGetChecksForPatch_LatestPerContext(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 	// ai-review: pending → success
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 10, PatchID: 100, State: "pending",
 		Context: "ai-review", Date: "2026-03-10T10:00:00",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 20, PatchID: 100, State: "success",
 		Context: "ai-review", Date: "2026-03-10T10:05:00",
 	})
 	// build: only one record
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 30, PatchID: 100, State: "success",
 		Context: "build", Date: "2026-03-10T10:05:00",
 	})
@@ -1656,7 +1716,7 @@ func TestGetChecksForPatch_PendingNotSuperseded(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 	// Only a pending check — no superseding record yet
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 10, PatchID: 100, State: "pending",
 		Context: "ai-review", Date: "2026-03-10T10:00:00",
 	})
@@ -1676,11 +1736,11 @@ func TestRecountChecks_Batch_LatestPerContext(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 	// build: pending → success (two records)
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 10, PatchID: 100, State: "pending",
 		Context: "build", Date: "2026-03-10T10:00:00",
 	})
-	d.InsertCheck(CheckRow{
+	d.SaveCheck(CheckRow{
 		ID: 20, PatchID: 100, State: "success",
 		Context: "build", Date: "2026-03-10T10:05:00",
 	})

@@ -482,13 +482,14 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 		}
 		return s.db.UpdatePatchDelegate(p.Patch.ID, id, name, email)
 	case *api.CheckCreatedPayload:
-		err := s.db.InsertCheck(db.CheckRow{
-			ID:        p.Check.ID,
-			PatchID:   p.Patch.ID,
-			Context:   p.Check.Context,
-			State:     p.Check.State,
-			TargetURL: ptrStr(p.Check.TargetURL),
-			Date:      p.Check.Date,
+		err := s.db.SaveCheck(db.CheckRow{
+			ID:          p.Check.ID,
+			PatchID:     p.Patch.ID,
+			Context:     p.Check.Context,
+			State:       p.Check.State,
+			TargetURL:   ptrStr(p.Check.TargetURL),
+			Description: ptrStr(p.Check.Description),
+			Date:        p.Check.Date,
 		})
 		if err != nil {
 			return err

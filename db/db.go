@@ -79,12 +79,13 @@ type PatchRow struct {
 }
 
 type CheckRow struct {
-	ID        int
-	PatchID   int
-	Context   string
-	State     string
-	TargetURL string
-	Date      string
+	ID          int
+	PatchID     int
+	Context     string
+	State       string
+	TargetURL   string
+	Description string
+	Date        string
 }
 
 type CommentRow struct {
@@ -312,15 +313,27 @@ func (d *DB) UpdateSeriesPatches(seriesID int, submitter, email string) error {
 	return err
 }
 
-func (d *DB) InsertCheck(c CheckRow) error {
+// SaveCheck inserts or updates a check record. Merge-on-conflict:
+// same pattern as SavePatch — prefer non-empty incoming values,
+// preserve existing data when incoming is empty.
+func (d *DB) SaveCheck(c CheckRow) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
-		INSERT OR IGNORE INTO checks
-			(id, patch_id, context, state, target_url, date)
-		VALUES (?,?,?,?,?,?)`,
+		INSERT INTO checks
+			(id, patch_id, context, state, target_url, description, date)
+		VALUES (?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			state = CASE WHEN excluded.state != ''
+				THEN excluded.state ELSE checks.state END,
+			target_url = CASE WHEN excluded.target_url != ''
+				THEN excluded.target_url ELSE checks.target_url END,
+			description = CASE WHEN excluded.description != ''
+				THEN excluded.description ELSE checks.description END,
+			date = CASE WHEN excluded.date != ''
+				THEN excluded.date ELSE checks.date END`,
 		c.ID, c.PatchID, c.Context,
-		c.State, c.TargetURL, c.Date)
+		c.State, c.TargetURL, c.Description, c.Date)
 	return err
 }
 
@@ -1275,7 +1288,9 @@ func (d *DB) ResetAllCommentsFetched(states []string) error {
 func (d *DB) GetChecksForPatch(patchID int) []CheckRow {
 	rows, err := d.conn.Query(`
 		SELECT id, patch_id, context, state,
-			COALESCE(target_url, ''), COALESCE(date, '')
+			COALESCE(target_url, ''),
+			COALESCE(description, ''),
+			COALESCE(date, '')
 		FROM checks
 		WHERE patch_id = ?
 			AND id = (SELECT MAX(c2.id) FROM checks c2
@@ -1291,7 +1306,7 @@ func (d *DB) GetChecksForPatch(patchID int) []CheckRow {
 	for rows.Next() {
 		var r CheckRow
 		rows.Scan(&r.ID, &r.PatchID, &r.Context,
-			&r.State, &r.TargetURL, &r.Date)
+			&r.State, &r.TargetURL, &r.Description, &r.Date)
 		result = append(result, r)
 	}
 	return result

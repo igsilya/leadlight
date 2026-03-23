@@ -368,9 +368,10 @@ func truncateLine(s string, width int) string {
 }
 
 type CheckInfo struct {
-	Context   string
-	State     string
-	TargetURL string
+	Context     string
+	State       string
+	TargetURL   string
+	Description string
 }
 
 func FormatChecks(checks []CheckInfo, width int) string {
@@ -405,13 +406,32 @@ func FormatChecks(checks []CheckInfo, width int) string {
 			icon = "?"
 			style = checksPendingStyle
 		}
-		line := fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context)
+		// Colored: icon + context. Uncolored: URL on same line.
+		prefix := fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context)
+		b.WriteString(style.Render(prefix))
 		if c.TargetURL != "" {
-			line += "  " + c.TargetURL
+			url := "  " + c.TargetURL
+			remaining := width - len(prefix)
+			if len(url) > remaining && remaining > 5 {
+				url = url[:remaining-1] + "…"
+			}
+			b.WriteString(url)
 		}
-		line = truncateLine(line, width)
-		b.WriteString(style.Render(line))
 		b.WriteByte('\n')
+		// Uncolored: description on indented lines below
+		if c.Description != "" {
+			for _, descLine := range strings.Split(
+				c.Description, "\n") {
+				descLine = strings.TrimSpace(descLine)
+				if descLine == "" {
+					continue
+				}
+				line := "      " + descLine
+				line = truncateLine(line, width)
+				b.WriteString(line)
+				b.WriteByte('\n')
+			}
+		}
 	}
 	return b.String()
 }
