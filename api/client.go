@@ -120,6 +120,10 @@ func (c *Client) waitForRateLimit() {
 			time.Sleep(c.minDelay - elapsed)
 		}
 	}
+	// Reserve this time slot so other goroutines wait. markRequestDone
+	// updates lastReq again when the request completes, so the next
+	// waiter accounts for the actual request duration.
+	c.lastReq = time.Now()
 }
 
 func (c *Client) markRequestDone() {
