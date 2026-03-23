@@ -740,15 +740,28 @@ func (s *Syncer) fetchCommentsForCover(ctx context.Context, coverID int) {
 func (s *Syncer) checkMailArchive(ctx context.Context) {
 	s.status.Set(status.Archive, "Checking mail archive...", true)
 	defer s.status.Clear(status.Archive)
+
 	now := time.Now()
-	s.checkArchiveMonth(ctx, now.Year(), now.Month())
-	// On the 1st-2nd, also check last month — messages near midnight
-	// on the last day may not have been indexed when we last checked.
-	if now.Day() <= 2 {
-		prev := now.AddDate(0, -1, 0)
-		s.checkArchiveMonth(
-			ctx, prev.Year(), prev.Month())
+
+	// Check all months since the last archive check. Each month tracks
+	// its own high-water mark (last_archive_msg:YYYY-Month), so re-checking
+	// a month only processes messages newer than the last seen. This handles
+	// gaps of any length — days, months, or years.
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if last := s.db.GetSyncState("last_archive_check"); last != "" {
+		if t, err := time.Parse("2006-01", last); err == nil {
+			start = t
+		}
 	}
+
+	for m := start; !m.After(now); m = m.AddDate(0, 1, 0) {
+		s.status.Set(status.Archive,
+			fmt.Sprintf("Checking archive (%s %d)...",
+				m.Month(), m.Year()), true)
+		s.checkArchiveMonth(ctx, m.Year(), m.Month())
+	}
+
+	s.db.SetSyncState("last_archive_check", now.Format("2006-01"))
 }
 
 func (s *Syncer) checkArchiveMonth(

@@ -1785,6 +1785,172 @@ func TestCheckMailArchive_CoverComments(t *testing.T) {
 	}
 }
 
+func TestCheckMailArchive_MultiMonthCatchup(t *testing.T) {
+	requestedPaths := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			requestedPaths = append(requestedPaths, r.URL.Path)
+			w.Write([]byte(`<HTML><BODY><ul></ul></BODY></HTML>`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	// Simulate last check was 3 months ago
+	threeMonthsAgo := time.Now().AddDate(0, -3, 0)
+	d.SetSyncState("last_archive_check",
+		threeMonthsAgo.Format("2006-01"))
+
+	cfg := &config.Config{
+		Server:      srv.URL,
+		Project:     "test",
+		APIVersion:  "1.2",
+		MailArchive: srv.URL + "/archive/",
+		States:      []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.checkMailArchive(context.Background())
+
+	// Should have checked at least 4 months (3 ago + 2 ago + 1 ago + current)
+	if len(requestedPaths) < 4 {
+		t.Errorf("expected at least 4 archive requests, got %d: %v",
+			len(requestedPaths), requestedPaths)
+	}
+
+	// last_archive_check should be updated to current month
+	check := d.GetSyncState("last_archive_check")
+	want := time.Now().Format("2006-01")
+	if check != want {
+		t.Errorf("last_archive_check = %q, want %q", check, want)
+	}
+}
+
+func TestCheckMailArchive_FirstRun(t *testing.T) {
+	requestedPaths := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			requestedPaths = append(requestedPaths, r.URL.Path)
+			w.Write([]byte(`<HTML><BODY><ul></ul></BODY></HTML>`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	// No last_archive_check set — first run
+	cfg := &config.Config{
+		Server:      srv.URL,
+		Project:     "test",
+		APIVersion:  "1.2",
+		MailArchive: srv.URL + "/archive/",
+		States:      []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.checkMailArchive(context.Background())
+
+	// Should check only current month
+	if len(requestedPaths) != 1 {
+		t.Errorf("expected 1 archive request (current month), got %d",
+			len(requestedPaths))
+	}
+
+	// last_archive_check should be set
+	check := d.GetSyncState("last_archive_check")
+	if check == "" {
+		t.Error("last_archive_check should be set after first run")
+	}
+}
+
+func TestCheckMailArchive_SameMonth(t *testing.T) {
+	requestedPaths := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			requestedPaths = append(requestedPaths, r.URL.Path)
+			w.Write([]byte(`<HTML><BODY><ul></ul></BODY></HTML>`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	// Last check was this month — no gap
+	d.SetSyncState("last_archive_check",
+		time.Now().Format("2006-01"))
+
+	cfg := &config.Config{
+		Server:      srv.URL,
+		Project:     "test",
+		APIVersion:  "1.2",
+		MailArchive: srv.URL + "/archive/",
+		States:      []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.checkMailArchive(context.Background())
+
+	// Should check only current month (re-check for new messages)
+	if len(requestedPaths) != 1 {
+		t.Errorf("expected 1 archive request, got %d",
+			len(requestedPaths))
+	}
+}
+
+func TestCheckMailArchive_YearBoundary(t *testing.T) {
+	requestedPaths := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			requestedPaths = append(requestedPaths, r.URL.Path)
+			w.Write([]byte(`<HTML><BODY><ul></ul></BODY></HTML>`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	// Set last check to November of previous year (crosses year boundary)
+	lastNov := time.Date(time.Now().Year()-1, 11, 1, 0, 0, 0, 0, time.UTC)
+	d.SetSyncState("last_archive_check",
+		lastNov.Format("2006-01"))
+
+	cfg := &config.Config{
+		Server:      srv.URL,
+		Project:     "test",
+		APIVersion:  "1.2",
+		MailArchive: srv.URL + "/archive/",
+		States:      []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.checkMailArchive(context.Background())
+
+	// Nov, Dec of last year + Jan through current month of this year
+	now := time.Now()
+	expectedMonths := int(now.Month()) + 2 // Nov + Dec + Jan..now
+	if len(requestedPaths) != expectedMonths {
+		t.Errorf("expected %d archive requests (year boundary), got %d",
+			expectedMonths, len(requestedPaths))
+	}
+}
+
 func TestNeedsArchiveMonitoring(t *testing.T) {
 	tests := []struct {
 		version string
