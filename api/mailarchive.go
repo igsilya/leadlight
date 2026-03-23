@@ -77,6 +77,58 @@ func cleanArchiveSubject(s string) string {
 
 var bracketPrefixRe = regexp.MustCompile(`^\[[^\]]*\]\s*`)
 
+// Matches "v2", "V10", "PATCHv2" etc. — no word boundary before v
+// because "PATCHv2" is a common format in the wild.
+var versionInBracketRe = regexp.MustCompile(`(?i)v(\d+)\b`)
+
+// extractVersion extracts a version token (e.g., "v2") from a patch
+// subject. Skips to the first '[' (ignoring any reply prefix in any
+// language), then scans consecutive bracket groups. Stops as soon as
+// non-bracket text is encountered — brackets buried in (was: ...) or
+// quoted text are ignored, and the caller falls back to matching all
+// versions to avoid false negatives.
+func extractVersion(subject string) string {
+	s := strings.TrimSpace(subject)
+	i := strings.Index(s, "[")
+	if i < 0 {
+		return ""
+	}
+	// If there's a '(' before the first '[', the bracket is likely
+	// inside a parenthetical like "(was: [PATCH v2] ...)" — don't
+	// trust it for version extraction.
+	if strings.Contains(s[:i], "(") {
+		return ""
+	}
+	s = s[i:]
+	for strings.HasPrefix(s, "[") {
+		close := strings.Index(s, "]")
+		if close < 0 {
+			break
+		}
+		bracket := s[1:close]
+		if m := versionInBracketRe.FindString(bracket); m != "" {
+			return strings.ToLower(m)
+		}
+		s = strings.TrimSpace(s[close+1:])
+	}
+	return ""
+}
+
+// versionsMatch checks if an archive message version matches a patch
+// version. Unversioned patches are implicitly v1.
+func versionsMatch(msgVersion, patchVersion string) bool {
+	if msgVersion == patchVersion {
+		return true
+	}
+	if msgVersion == "v1" && patchVersion == "" {
+		return true
+	}
+	if patchVersion == "v1" && msgVersion == "" {
+		return true
+	}
+	return false
+}
+
 func ExtractPatchCore(s string) string {
 	for {
 		stripped := bracketPrefixRe.ReplaceAllString(s, "")
@@ -130,18 +182,32 @@ func longestCommonSubstring(a, b string) int {
 }
 
 func MatchPatchSubjects(msgs []ArchiveMessage, patchNames map[int]string) []int {
-	cores := map[int]string{}
+	type patchInfo struct {
+		core    string
+		version string
+	}
+	patches := map[int]patchInfo{}
 	for id, name := range patchNames {
 		c := ExtractPatchCore(name)
 		if c != "" {
-			cores[id] = c
+			patches[id] = patchInfo{
+				core:    c,
+				version: extractVersion(name),
+			}
 		}
 	}
 
 	matched := map[int]bool{}
 	for _, msg := range msgs {
-		for id, core := range cores {
-			if subjectMatch(core, msg.Subject) {
+		msgVersion := extractVersion(msg.Subject)
+		for id, p := range patches {
+			if !subjectMatch(p.core, msg.Subject) {
+				continue
+			}
+			// If the archive message has no extractable version,
+			// match all versions to avoid false negatives.
+			if msgVersion == "" ||
+				versionsMatch(msgVersion, p.version) {
 				matched[id] = true
 			}
 		}

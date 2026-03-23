@@ -357,3 +357,230 @@ func TestFilterNewMessages_NoneNew(t *testing.T) {
 		t.Errorf("len = %d, want 0", len(filtered))
 	}
 }
+
+func TestExtractVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		subject string
+		want    string
+	}{
+		{"simple v2", "[PATCH v2] Fix bug", "v2"},
+		{"comma separated", "[dev,v3,1/3] Fix bug", "v3"},
+		{"no version", "[PATCH] Fix bug", ""},
+		{"no brackets", "Fix bug", ""},
+		{"Re prefix", "Re: [PATCH v2] Fix bug", "v2"},
+		{"multiple Re", "Re: Re: [dev,v2] Fix", "v2"},
+		{"case insensitive", "[PATCH V10] Fix", "v10"},
+		{"high version", "[PATCH v123] Fix", "v123"},
+		{"version in second bracket",
+			"[resend] [PATCH v2] Fix", "v2"},
+		{"version in third bracket",
+			"[RFC] [resend] [PATCH v4] Fix", "v4"},
+		{"v1 explicit", "[PATCH v1] Fix bug", "v1"},
+		{"space before version", "[PATCH v2] Fix", "v2"},
+		{"PATCHv2 no space", "[PATCHv2] Fix", "v2"},
+		{"was suffix ignored",
+			"Re: [PATCH v3] New (was: Old)", "v3"},
+		{"was with brackets",
+			"Re: [PATCH v3] New (was: [PATCH v2] Old)", "v3"},
+		{"version past non-bracket text ignored",
+			"Re: New topic (was: [PATCH v2] Fix)", ""},
+		{"empty subject", "", ""},
+		{"only Re", "Re:", ""},
+		{"brackets no patch", "[ovs-dev] Discussion", ""},
+		{"chinese reply", "回复: [PATCH v2] Fix", "v2"},
+		{"german reply", "AW: [PATCH v3] Fix", "v3"},
+		{"swedish reply", "SV: [PATCH v4] Fix", "v4"},
+		{"forwarded reply", "Fwd: Re: [PATCH v2] Fix", "v2"},
+		{"unknown prefix", "XYZ: [PATCH v4] Fix", "v4"},
+		{"nested forward",
+			"转发: 回复: [PATCH v5] Fix", "v5"},
+		{"prefix with brackets",
+			"[Re] [PATCH v2] Fix", "v2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractVersion(tt.subject)
+			if got != tt.want {
+				t.Errorf("extractVersion(%q) = %q, want %q",
+					tt.subject, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVersionsMatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		msgVer   string
+		patchVer string
+		want     bool
+	}{
+		{"same version", "v2", "v2", true},
+		{"different version", "v2", "v3", false},
+		{"v1 matches empty", "v1", "", true},
+		{"empty matches v1", "", "v1", true},
+		{"both empty", "", "", true},
+		{"v2 does not match empty", "v2", "", false},
+		{"empty does not match v2", "", "v2", false},
+		{"same v1", "v1", "v1", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := versionsMatch(tt.msgVer, tt.patchVer)
+			if got != tt.want {
+				t.Errorf("versionsMatch(%q, %q) = %v, want %v",
+					tt.msgVer, tt.patchVer, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchPatchSubjects_VersionFiltering(t *testing.T) {
+	msgs := []ArchiveMessage{
+		{Number: 200,
+			Subject: "Re: [dev] [PATCH v2] Fix the widget"},
+	}
+	patchNames := map[int]string{
+		1000: "[dev] Fix the widget",    // v1 (implicit)
+		1001: "[dev,v2] Fix the widget", // v2
+		1002: "[dev,v3] Fix the widget", // v3
+	}
+	ids := MatchPatchSubjects(msgs, patchNames)
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if got[1000] {
+		t.Error("v1 patch should NOT match v2 reply")
+	}
+	if !got[1001] {
+		t.Error("v2 patch should match v2 reply")
+	}
+	if got[1002] {
+		t.Error("v3 patch should NOT match v2 reply")
+	}
+}
+
+func TestMatchPatchSubjects_NoVersionMatchesAll(t *testing.T) {
+	msgs := []ArchiveMessage{
+		{Number: 200,
+			Subject: "Re: Fix the widget"},
+	}
+	patchNames := map[int]string{
+		1000: "[dev] Fix the widget",
+		1001: "[dev,v2] Fix the widget",
+		1002: "[dev,v3] Fix the widget",
+	}
+	ids := MatchPatchSubjects(msgs, patchNames)
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	// No version in reply → match all versions (avoid false negatives)
+	if !got[1000] {
+		t.Error("v1 should match (no version in reply)")
+	}
+	if !got[1001] {
+		t.Error("v2 should match (no version in reply)")
+	}
+	if !got[1002] {
+		t.Error("v3 should match (no version in reply)")
+	}
+}
+
+func TestMatchPatchSubjects_V1MatchesUnversioned(t *testing.T) {
+	msgs := []ArchiveMessage{
+		{Number: 200,
+			Subject: "Re: [dev] [PATCH v1] Fix the widget"},
+	}
+	patchNames := map[int]string{
+		1000: "[dev] Fix the widget", // no explicit version = v1
+	}
+	ids := MatchPatchSubjects(msgs, patchNames)
+	if len(ids) != 1 || ids[0] != 1000 {
+		t.Errorf("v1 reply should match unversioned patch, got %v",
+			ids)
+	}
+}
+
+func TestMatchPatchSubjects_WasDoesNotCrossMatch(t *testing.T) {
+	msgs := []ArchiveMessage{
+		{Number: 200,
+			Subject: "Re: [PATCH v3] New name " +
+				"(was: [PATCH v2] Old name)"},
+	}
+	patchNames := map[int]string{
+		1000: "[PATCH v2] Old name",
+		1001: "[PATCH v3] New name",
+	}
+	ids := MatchPatchSubjects(msgs, patchNames)
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	// Version is v3 (from main brackets), so only v3 should match
+	if got[1000] {
+		t.Error("v2 'Old name' should NOT match v3 reply")
+	}
+	if !got[1001] {
+		t.Error("v3 'New name' should match v3 reply")
+	}
+}
+
+func TestMatchPatchSubjects_WasOnlyVersion(t *testing.T) {
+	// Subject changed — version is only in (was:) part, which is past
+	// non-bracket text. Version extraction stops before reaching it,
+	// so all matching patches are marked (safe fallback).
+	msgs := []ArchiveMessage{
+		{Number: 200,
+			Subject: "Re: Discussion about the fix " +
+				"(was: [PATCH v2] Fix the widget)"},
+	}
+	patchNames := map[int]string{
+		1000: "[dev] Fix the widget",    // v1
+		1001: "[dev,v2] Fix the widget", // v2
+	}
+	ids := MatchPatchSubjects(msgs, patchNames)
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	// No version extracted → both versions match (no false negatives)
+	if !got[1000] {
+		t.Error("v1 should match (no version extracted)")
+	}
+	if !got[1001] {
+		t.Error("v2 should match (no version extracted)")
+	}
+}
+
+func TestMatchPatchSubjects_MixedVersionsAndUnrelated(t *testing.T) {
+	msgs := []ArchiveMessage{
+		{Number: 100,
+			Subject: "Re: [ovs-dev] [PATCH] Fix bug"},
+		{Number: 101,
+			Subject: "[ovs-dev] Unrelated topic"},
+		{Number: 102,
+			Subject: "Re: [ovs-dev] [PATCH v2] Add feature"},
+	}
+	patchNames := map[int]string{
+		1000: "[ovs-dev,v1] Fix bug",
+		1001: "[ovs-dev] [PATCH v2] Add feature",
+		1002: "[ovs-dev] Something else entirely",
+	}
+	ids := MatchPatchSubjects(msgs, patchNames)
+	got := map[int]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got[1000] {
+		t.Error("patch 1000 should match (Fix bug, no version in reply → matches all)")
+	}
+	if !got[1001] {
+		t.Error("patch 1001 should match (Add feature v2)")
+	}
+	if got[1002] {
+		t.Error("patch 1002 should not match")
+	}
+}
