@@ -6,22 +6,86 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
+// HistoryLimit controls how far back to fetch historical patches.
+// Uses calendar units for correct date math (e.g., "1y" from March
+// 2026 = March 2025, handling leap years and varying month lengths).
+type HistoryLimit struct {
+	Years  int
+	Months int
+	Days   int
+}
+
+func (h HistoryLimit) IsZero() bool {
+	return h.Years == 0 && h.Months == 0 && h.Days == 0
+}
+
+// Before returns the cutoff time for history backfill.
+func (h HistoryLimit) Before() time.Time {
+	return time.Now().AddDate(-h.Years, -h.Months, -h.Days)
+}
+
+// ParseHistoryLimit parses a duration string like "30d", "4w", "6mo",
+// "1y" into calendar components. Returns zero value for "" and "0d".
+func ParseHistoryLimit(s string) (HistoryLimit, error) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" || s == "0" || s == "0d" {
+		return HistoryLimit{}, nil
+	}
+	if strings.HasSuffix(s, "y") {
+		n, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil || n < 0 {
+			return HistoryLimit{}, fmt.Errorf(
+				"invalid history limit: %q", s)
+		}
+		return HistoryLimit{Years: n}, nil
+	}
+	if strings.HasSuffix(s, "mo") {
+		n, err := strconv.Atoi(s[:len(s)-2])
+		if err != nil || n < 0 {
+			return HistoryLimit{}, fmt.Errorf(
+				"invalid history limit: %q", s)
+		}
+		return HistoryLimit{Months: n}, nil
+	}
+	if strings.HasSuffix(s, "w") {
+		n, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil || n < 0 {
+			return HistoryLimit{}, fmt.Errorf(
+				"invalid history limit: %q", s)
+		}
+		return HistoryLimit{Days: n * 7}, nil
+	}
+	if strings.HasSuffix(s, "d") {
+		n, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil || n < 0 {
+			return HistoryLimit{}, fmt.Errorf(
+				"invalid history limit: %q", s)
+		}
+		return HistoryLimit{Days: n}, nil
+	}
+	return HistoryLimit{}, fmt.Errorf(
+		"invalid history limit: %q (use Nd, Nw, Nmo, or Ny)", s)
+}
+
 type Config struct {
-	Server      string
-	Project     string
-	Token       string
-	Username    string
-	Password    string
-	DBPath      string
-	States      []string
-	LoreURL     string
-	MailArchive string
-	Theme       string
-	BaseURL     string
-	APIVersion  string
+	Server       string
+	Project      string
+	Token        string
+	Username     string
+	Password     string
+	DBPath       string
+	States       []string
+	LoreURL      string
+	MailArchive  string
+	Theme        string
+	BaseURL      string
+	APIVersion   string
+	HistoryLimit HistoryLimit
 }
 
 func Load(dir string) (*Config, error) {
@@ -53,6 +117,15 @@ func Load(dir string) (*Config, error) {
 
 	cfg.BaseURL = deriveBaseURL(cfg.Server)
 	cfg.APIVersion = parseAPIVersion(cfg.Server)
+
+	historyStr := gitConfigGet(dir, "leadlight.history")
+	if historyStr != "" {
+		limit, err := ParseHistoryLimit(historyStr)
+		if err != nil {
+			return nil, err
+		}
+		cfg.HistoryLimit = limit
+	}
 
 	if err := validate(cfg); err != nil {
 		return nil, err

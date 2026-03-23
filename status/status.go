@@ -15,6 +15,7 @@ const (
 	BgCoverComments Key = "bgcovercomments"
 	Detail          Key = "detail"
 	BgChecks        Key = "bgchecks"
+	History         Key = "history"
 	Archive         Key = "archive"
 	Update          Key = "update"
 	Info            Key = "info"

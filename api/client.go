@@ -68,6 +68,15 @@ type PatchListParams struct {
 	State   []string
 	Project string
 	Since   string
+	Before  string
+	Order   string
+}
+
+type SeriesListParams struct {
+	Project string
+	Since   string
+	Before  string
+	Order   string
 }
 
 type EventListParams struct {
@@ -401,12 +410,20 @@ func (c *Client) GetPatchesPage(
 	return getPage[Patch](c, ctx, pageURL)
 }
 
-func (c *Client) BuildSeriesURL(project, since string) string {
+func (c *Client) BuildSeriesURL(params SeriesListParams) string {
 	v := url.Values{}
 	v.Set("per_page", "100")
-	v.Set("project", project)
-	if since != "" {
-		v.Set("since", since)
+	if params.Project != "" {
+		v.Set("project", params.Project)
+	}
+	if params.Since != "" {
+		v.Set("since", params.Since)
+	}
+	if params.Before != "" {
+		v.Set("before", params.Before)
+	}
+	if params.Order != "" {
+		v.Set("order", params.Order)
 	}
 	return c.baseURL + "/series/?" + v.Encode()
 }
@@ -428,6 +445,12 @@ func (c *Client) BuildPatchesURL(
 	}
 	if params.Since != "" {
 		v.Set("since", params.Since)
+	}
+	if params.Before != "" {
+		v.Set("before", params.Before)
+	}
+	if params.Order != "" {
+		v.Set("order", params.Order)
 	}
 	return c.baseURL + "/patches/?" + v.Encode()
 }

@@ -150,6 +150,7 @@ func (s *Syncer) Run(ctx context.Context) {
 		s.initialSync(ctx)
 		s.notify()
 	}
+	s.backfillHistory(ctx)
 
 	var wg gosync.WaitGroup
 	wg.Add(6)
@@ -548,7 +549,10 @@ func (s *Syncer) fetchMissingSeries(ctx context.Context) {
 		s.status.Set(status.BgSync, "Fetching series...", true)
 		log.Printf("SYNC: fetching series since %s", since)
 
-		pageURL := s.client.BuildSeriesURL(s.cfg.Project, since)
+		pageURL := s.client.BuildSeriesURL(api.SeriesListParams{
+			Project: s.cfg.Project,
+			Since:   since,
+		})
 		page, err := s.client.GetSeriesPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("SYNC: fetchMissingSeries: %v", err)
@@ -959,6 +963,120 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) fetchResult {
 		return fetchTerminal
 	}
 	return fetchNone
+}
+
+// backfillHistory fetches historical patches and series going back
+// to the configured history limit. Runs at startup, blocking before
+// the background loops start. Patches and series are backfilled
+// independently — each tracks its own progress via the oldest date
+// in the DB, so interruptions are self-healing.
+func (s *Syncer) backfillHistory(ctx context.Context) {
+	if s.cfg.HistoryLimit.IsZero() {
+		return
+	}
+	targetStr := s.cfg.HistoryLimit.Before().
+		Format("2006-01-02T15:04:05")
+
+	s.backfillPaginatedPatches(ctx, targetStr)
+	s.backfillPaginatedSeries(ctx, targetStr)
+	s.status.Clear(status.History)
+}
+
+func (s *Syncer) backfillPaginatedPatches(
+	ctx context.Context, targetStr string,
+) {
+	oldest := s.db.GetOldestPatchDate()
+	if oldest != "" && oldest <= targetStr {
+		return
+	}
+	// Start from just after our oldest known date (or now if empty).
+	// The +1h overshoot avoids missing items at the boundary.
+	before := time.Now().Add(1 * time.Hour).
+		Format("2006-01-02T15:04:05")
+	if oldest != "" {
+		oldestTime, _ := time.Parse("2006-01-02T15:04:05", oldest)
+		before = oldestTime.Add(1 * time.Hour).
+			Format("2006-01-02T15:04:05")
+	}
+
+	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
+		Project: s.cfg.Project,
+		Before:  before,
+		Since:   targetStr,
+		Order:   "-date",
+	})
+	pageNum := 0
+
+	for pageURL != "" {
+		pageNum++
+		s.status.Set(status.History,
+			fmt.Sprintf("Backfilling patches (page %d)...",
+				pageNum), true)
+
+		page, err := s.client.GetPatchesPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("SYNC: backfill patches: %v", err)
+			return
+		}
+		if len(page.Items) == 0 {
+			return
+		}
+		for _, p := range page.Items {
+			s.db.SavePatch(patchToRow(p))
+			for _, ss := range p.Series {
+				s.db.SaveSeriesSummary(
+					ss.ID, ss.Name, ss.Date, ss.Version)
+			}
+		}
+		s.notify()
+		pageURL = page.NextURL
+	}
+}
+
+func (s *Syncer) backfillPaginatedSeries(
+	ctx context.Context, targetStr string,
+) {
+	oldest := s.db.GetOldestSeriesDate()
+	if oldest != "" && oldest <= targetStr {
+		return
+	}
+	before := time.Now().Add(1 * time.Hour).
+		Format("2006-01-02T15:04:05")
+	if oldest != "" {
+		oldestTime, _ := time.Parse("2006-01-02T15:04:05", oldest)
+		before = oldestTime.Add(1 * time.Hour).
+			Format("2006-01-02T15:04:05")
+	}
+
+	pageURL := s.client.BuildSeriesURL(api.SeriesListParams{
+		Project: s.cfg.Project,
+		Before:  before,
+		Since:   targetStr,
+		Order:   "-date",
+	})
+	pageNum := 0
+
+	for pageURL != "" {
+		pageNum++
+		s.status.Set(status.History,
+			fmt.Sprintf("Backfilling series (page %d)...",
+				pageNum), true)
+
+		page, err := s.client.GetSeriesPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("SYNC: backfill series: %v", err)
+			return
+		}
+		if len(page.Items) == 0 {
+			return
+		}
+		for _, sr := range page.Items {
+			s.db.SaveSeriesSummary(
+				sr.ID, sr.Name, sr.Date, sr.Version)
+		}
+		s.notify()
+		pageURL = page.NextURL
+	}
 }
 
 // runCheckLoop fetches CI check results one patch per cycle. Polls

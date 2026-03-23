@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setupGitRepo(t *testing.T, configs map[string]string) string {
@@ -446,5 +447,72 @@ func TestLoad_EmptyRepo(t *testing.T) {
 	_, err := Load(dir)
 	if err == nil {
 		t.Error("expected error for empty repo config")
+	}
+}
+
+func TestParseHistoryLimit(t *testing.T) {
+	tests := []struct {
+		input   string
+		years   int
+		months  int
+		days    int
+		wantErr bool
+	}{
+		{"", 0, 0, 0, false},
+		{"0d", 0, 0, 0, false},
+		{"0", 0, 0, 0, false},
+		{"30d", 0, 0, 30, false},
+		{"4w", 0, 0, 28, false},
+		{"6mo", 0, 6, 0, false},
+		{"1y", 1, 0, 0, false},
+		{"2y", 2, 0, 0, false},
+		{"12mo", 0, 12, 0, false},
+		{"90d", 0, 0, 90, false},
+		{"abc", 0, 0, 0, true},
+		{"-1d", 0, 0, 0, true},
+		{"3x", 0, 0, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			h, err := ParseHistoryLimit(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if h.Years != tt.years || h.Months != tt.months ||
+				h.Days != tt.days {
+				t.Errorf("got {%d, %d, %d}, want {%d, %d, %d}",
+					h.Years, h.Months, h.Days,
+					tt.years, tt.months, tt.days)
+			}
+		})
+	}
+}
+
+func TestHistoryLimit_IsZero(t *testing.T) {
+	if !(HistoryLimit{}).IsZero() {
+		t.Error("zero value should be zero")
+	}
+	if (HistoryLimit{Days: 1}).IsZero() {
+		t.Error("{Days:1} should not be zero")
+	}
+	if (HistoryLimit{Months: 6}).IsZero() {
+		t.Error("{Months:6} should not be zero")
+	}
+}
+
+func TestHistoryLimit_Before(t *testing.T) {
+	h := HistoryLimit{Years: 1}
+	before := h.Before()
+	// Should be approximately 1 year ago (within a few seconds)
+	expected := time.Now().AddDate(-1, 0, 0)
+	diff := before.Sub(expected)
+	if diff < -time.Second || diff > time.Second {
+		t.Errorf("Before() = %v, want ~%v", before, expected)
 	}
 }

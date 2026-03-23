@@ -1262,6 +1262,14 @@ func (d *DB) getAllNames(table string) map[int]string {
 	return result
 }
 
+func (d *DB) GetOldestSeriesDate() string {
+	var date string
+	d.conn.QueryRow(
+		"SELECT COALESCE(MIN(date), '') FROM series",
+	).Scan(&date)
+	return date
+}
+
 func (d *DB) GetOldestPatchDate() string {
 	var date string
 	d.conn.QueryRow(

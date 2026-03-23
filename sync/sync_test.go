@@ -2707,6 +2707,121 @@ func TestProcessEvent_CheckCreated_WithDescription_KeepsFlag(t *testing.T) {
 	}
 }
 
+func TestBackfillHistory_Disabled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Error("no requests expected when history disabled")
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+		// HistoryLimit is zero (default)
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+	s.backfillHistory(context.Background())
+}
+
+func TestBackfillHistory_FetchesPages(t *testing.T) {
+	// Return patches that get progressively older
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			callCount++
+			path := r.URL.Path
+			if strings.Contains(path, "/patches/") {
+				// Return one patch per page, getting older
+				date := time.Now().AddDate(0, 0,
+					-callCount*30).Format("2006-01-02T15:04:05")
+				fmt.Fprintf(w,
+					`[{"id":%d,"name":"patch %d","date":"%s",`+
+						`"state":"accepted","submitter":{"name":"Lorem","email":"l@ex"},`+
+						`"delegate":null,"series":[],"web_url":"","msgid":"","mbox":"",`+
+						`"commit_ref":null,"archived":false}]`,
+					1000+callCount, callCount, date)
+			} else if strings.Contains(path, "/series/") {
+				w.Write([]byte("[]"))
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	// Seed a recent patch so oldest date is recent
+	d.SavePatch(db.PatchRow{
+		ID: 1, Name: "recent", State: "new",
+		Submitter: "Lorem",
+		Date:      time.Now().Format("2006-01-02T15:04:05"),
+	})
+
+	cfg := &config.Config{
+		Server:       srv.URL,
+		Project:      "test",
+		States:       []string{"new"},
+		HistoryLimit: config.HistoryLimit{Years: 1},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+	s.backfillHistory(context.Background())
+
+	if callCount < 2 {
+		t.Errorf("expected multiple API calls, got %d", callCount)
+	}
+}
+
+func TestBackfillHistory_AlreadyComplete(t *testing.T) {
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte("[]"))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	oldDate := time.Now().AddDate(-2, 0, 0).
+		Format("2006-01-02T15:04:05")
+	// Both patches and series already beyond the target
+	d.SavePatch(db.PatchRow{
+		ID: 1, Name: "old", State: "accepted",
+		Submitter: "Lorem", Date: oldDate,
+	})
+	d.SaveSeriesSummary(1, "old series", oldDate, 1)
+
+	cfg := &config.Config{
+		Server:       srv.URL,
+		Project:      "test",
+		States:       []string{"new"},
+		HistoryLimit: config.HistoryLimit{Years: 1},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+	s.backfillHistory(context.Background())
+
+	if requestCount != 0 {
+		t.Errorf("expected 0 requests (already complete), got %d",
+			requestCount)
+	}
+}
+
 func TestFetchNextChecks_Terminal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
