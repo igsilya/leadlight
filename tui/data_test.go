@@ -100,10 +100,30 @@ func TestFormatSeriesReviews_FromTags(t *testing.T) {
 
 func TestFormatChecks(t *testing.T) {
 	got := formatChecks(db.PatchRow{
-		ChecksPass: 3, ChecksFail: 1, ChecksPending: 2,
+		ChecksPass: 3, ChecksFail: 1, ChecksWarn: 2,
 	})
 	if got != "3 1 2" {
 		t.Errorf("got %q, want 3 1 2", got)
+	}
+}
+
+func TestFormatChecks_WarnNotPending(t *testing.T) {
+	got := formatChecks(db.PatchRow{
+		ChecksPass: 1, ChecksFail: 0, ChecksWarn: 3,
+	})
+	if got != "1 - 3" {
+		t.Errorf("got %q, want %q (third number is warnings)", got, "1 - 3")
+	}
+}
+
+func TestFormatSeriesChecks_WarnAggregation(t *testing.T) {
+	patches := []db.PatchRow{
+		{ChecksPass: 2, ChecksFail: 0, ChecksWarn: 1},
+		{ChecksPass: 1, ChecksFail: 1, ChecksWarn: 2},
+	}
+	got := formatSeriesChecks(patches)
+	if got != "3 1 3" {
+		t.Errorf("got %q, want %q (warn aggregated)", got, "3 1 3")
 	}
 }
 
@@ -116,8 +136,8 @@ func TestFormatChecks_AllZero(t *testing.T) {
 
 func TestFormatSeriesChecks(t *testing.T) {
 	patches := []db.PatchRow{
-		{ChecksPass: 2, ChecksFail: 0, ChecksPending: 1},
-		{ChecksPass: 1, ChecksFail: 1, ChecksPending: 0},
+		{ChecksPass: 2, ChecksFail: 0, ChecksWarn: 1},
+		{ChecksPass: 1, ChecksFail: 1, ChecksWarn: 0},
 	}
 	got := formatSeriesChecks(patches)
 	if got != "3 1 1" {

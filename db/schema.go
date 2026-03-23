@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS patches (
     archived          INTEGER DEFAULT 0,
     checks_pass       INTEGER DEFAULT 0,
     checks_fail       INTEGER DEFAULT 0,
-    checks_pending    INTEGER DEFAULT 0,
+    checks_warn       INTEGER DEFAULT 0,
     -- Legacy counters: superseded by the tags and comments tables.
     -- Kept to avoid ALTER TABLE migrations on existing databases.
     comments_count    INTEGER DEFAULT 0,
@@ -127,7 +127,8 @@ CREATE INDEX IF NOT EXISTS idx_covers_series ON covers(series_id);
 `
 
 // Recount check totals on every startup to repair inconsistencies from
-// interrupted syncs or logic changes (e.g., warnings counted as pending).
+// interrupted syncs or schema changes. Pending checks are excluded —
+// they'll resolve to pass/fail/warning eventually.
 const recountChecks = `
 UPDATE patches SET
   checks_pass = (
@@ -138,11 +139,8 @@ UPDATE patches SET
     SELECT COUNT(*) FROM checks
     WHERE checks.patch_id = patches.id
     AND state = 'fail'),
-  checks_pending = (
+  checks_warn = (
     SELECT COUNT(*) FROM checks
-    WHERE checks.patch_id = patches.id
-    AND state = 'pending')
-  + (SELECT COUNT(*) FROM checks
     WHERE checks.patch_id = patches.id
     AND state = 'warning')
 WHERE id IN (
@@ -158,6 +156,9 @@ var alterStatements = []string{
 	`ALTER TABLE comments ADD COLUMN headers TEXT DEFAULT ''`,
 	`ALTER TABLE comments ADD COLUMN web_url TEXT DEFAULT ''`,
 	`ALTER TABLE comments ADD COLUMN list_archive_url TEXT DEFAULT ''`,
+	// Requires SQLite 3.25+ (2018). Fixes the naming: this column
+	// stores warning count, not pending count.
+	`ALTER TABLE patches RENAME COLUMN checks_pending TO checks_warn`,
 }
 
 func migrate(db *sql.DB) error {

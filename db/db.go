@@ -68,7 +68,7 @@ type PatchRow struct {
 	Archived       bool
 	ChecksPass     int
 	ChecksFail     int
-	ChecksPending  int
+	ChecksWarn     int
 	Content        string
 	Diff           string
 	Headers        string
@@ -281,16 +281,15 @@ func (d *DB) UpdatePatchDetail(
 }
 
 func (d *DB) UpdatePatchChecks(
-	patchID, pass, fail, pending int,
+	patchID, pass, fail, warn int,
 ) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
 		UPDATE patches
-		SET checks_pass = ?, checks_fail = ?,
-			checks_pending = ?
+		SET checks_pass = ?, checks_fail = ?, checks_warn = ?
 		WHERE id = ?`,
-		pass, fail, pending, patchID)
+		pass, fail, warn, patchID)
 	return err
 }
 
@@ -336,14 +335,11 @@ func (d *DB) RecountPatchChecks(patchID int) error {
 			checks_fail = (
 				SELECT COUNT(*) FROM checks
 				WHERE patch_id = ? AND state = 'fail'),
-			-- warnings count as pending: both mean "not yet pass/fail"
-			checks_pending = (
+			checks_warn = (
 				SELECT COUNT(*) FROM checks
-				WHERE patch_id = ? AND state = 'pending')
-			+ (SELECT COUNT(*) FROM checks
 				WHERE patch_id = ? AND state = 'warning')
 		WHERE id = ?`,
-		patchID, patchID, patchID, patchID, patchID)
+		patchID, patchID, patchID, patchID)
 	return err
 }
 
@@ -598,7 +594,7 @@ const patchSelectSQL = `
 		COALESCE(archived, 0),
 		COALESCE(checks_pass, 0),
 		COALESCE(checks_fail, 0),
-		COALESCE(checks_pending, 0),
+		COALESCE(checks_warn, 0),
 		COALESCE(content, ''),
 		COALESCE(diff, ''),
 		COALESCE(headers, ''),
@@ -618,7 +614,7 @@ func scanPatchRow(
 		&r.DelegateID, &r.Delegate, &r.DelegateEmail,
 		&r.WebURL, &r.MsgID, &r.MboxURL, &r.CommitRef,
 		&r.Archived, &r.ChecksPass, &r.ChecksFail,
-		&r.ChecksPending,
+		&r.ChecksWarn,
 		&r.Content, &r.Diff, &r.Headers, &r.Prefixes,
 		&r.MboxContent, &r.DetailFetched, &r.UpdatedAt)
 }

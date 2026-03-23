@@ -55,13 +55,14 @@ var (
 	cellHighlightStyle     lipgloss.Style
 	checksPassStyle        lipgloss.Style
 	checksFailStyle        lipgloss.Style
-	checksPendingStyle     lipgloss.Style
+	checksWarnStyle        lipgloss.Style
+	checksPendingStyle     lipgloss.Style // mbox view only
 	checksZeroStyle        lipgloss.Style
 	afrtStyle              lipgloss.Style
 	afrtColor              string
 	checkPassColor         string
 	checkFailColor         string
-	checkPendColor         string
+	checkWarnColor         string
 	checkZeroColor         string
 	mboxHeaderLabel        lipgloss.Style
 	mboxHeaderValue        lipgloss.Style
@@ -87,7 +88,7 @@ type cachedBgStyle struct {
 	afrt      lipgloss.Style
 	checkPass lipgloss.Style
 	checkFail lipgloss.Style
-	checkPend lipgloss.Style
+	checkWarn lipgloss.Style
 	checkZero lipgloss.Style
 	bgHex     string
 	fgHex     string
@@ -126,13 +127,14 @@ func buildStyles(t *theme) {
 	cellHighlightStyle = hlStyle
 	checksPassStyle = bold(t.ChecksPassFg)
 	checksFailStyle = bold(t.ChecksFailFg)
-	checksPendingStyle = bold(t.ChecksPendingFg)
+	checksWarnStyle = bold(t.ChecksWarnFg)
+	checksPendingStyle = fg(t.ChecksPendingFg)
 	checksZeroStyle = fg(t.ChecksZeroFg)
 	afrtStyle = fg(t.AfrtFg).Bold(true)
 	afrtColor = t.AfrtFg
 	checkPassColor = t.ChecksPassFg
 	checkFailColor = t.ChecksFailFg
-	checkPendColor = t.ChecksPendingFg
+	checkWarnColor = t.ChecksWarnFg
 	checkZeroColor = t.ChecksZeroFg
 	mboxHeaderLabel = bold(t.MboxHeaderLabelFg)
 	mboxHeaderValue = fg(t.MboxHeaderValueFg)
@@ -149,7 +151,7 @@ func buildStyles(t *theme) {
 
 	passFg := checksPassStyle.GetForeground()
 	failFg := checksFailStyle.GetForeground()
-	pendFg := checksPendingStyle.GetForeground()
+	warnFg := checksWarnStyle.GetForeground()
 	zeroFg := checksZeroStyle.GetForeground()
 	aFg := afrtStyle.GetForeground()
 
@@ -168,7 +170,7 @@ func buildStyles(t *theme) {
 				afrt:      b.Foreground(aFg).Bold(true),
 				checkPass: b.Foreground(passFg).Bold(true),
 				checkFail: b.Foreground(failFg).Bold(true),
-				checkPend: b.Foreground(pendFg).Bold(true),
+				checkWarn: b.Foreground(warnFg).Bold(true),
 				checkZero: b.Foreground(zeroFg),
 			}
 		}

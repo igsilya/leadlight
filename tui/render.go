@@ -479,12 +479,12 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 			case 1:
 				b.WriteString(cached.checkFail.Render(part))
 			case 2:
-				b.WriteString(cached.checkPend.Render(part))
+				b.WriteString(cached.checkWarn.Render(part))
 			}
 		} else {
 			styles := []lipgloss.Style{
 				checksPassStyle, checksFailStyle,
-				checksPendingStyle,
+				checksWarnStyle,
 			}
 			b.WriteString(styles[i].Render(part))
 		}
@@ -501,7 +501,7 @@ func buildCheckColors(text string) []string {
 		return nil
 	}
 	fgColors := [3]string{
-		checkPassColor, checkFailColor, checkPendColor,
+		checkPassColor, checkFailColor, checkWarnColor,
 	}
 	var result []string
 	for i, part := range parts {

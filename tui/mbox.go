@@ -400,6 +400,9 @@ func FormatChecks(checks []CheckInfo, width int) string {
 			style = checksFailStyle
 		case "warning":
 			icon = "!"
+			style = checksWarnStyle
+		case "pending":
+			icon = "?"
 			style = checksPendingStyle
 		}
 		line := fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context)

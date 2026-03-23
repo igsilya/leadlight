@@ -731,3 +731,56 @@ func TestFormatDiff_Colors(t *testing.T) {
 		t.Error("missing new line")
 	}
 }
+
+func TestFormatChecks_AllFourStates(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "ci/build", State: "success"},
+		{Context: "ci/test", State: "fail"},
+		{Context: "ci/style", State: "warning"},
+		{Context: "ci/deploy", State: "pending"},
+	}
+	result := FormatChecks(checks, 80)
+	if !strings.Contains(result, "✓") {
+		t.Error("missing success icon ✓")
+	}
+	if !strings.Contains(result, "✗") {
+		t.Error("missing fail icon ✗")
+	}
+	if !strings.Contains(result, "!") {
+		t.Error("missing warning icon !")
+	}
+	if !strings.Contains(result, "?") {
+		t.Error("missing pending icon ?")
+	}
+	if !strings.Contains(result, "ci/build") {
+		t.Error("missing ci/build context")
+	}
+	if !strings.Contains(result, "ci/deploy") {
+		t.Error("missing ci/deploy context")
+	}
+}
+
+func TestFormatChecks_WarningAndPendingDistinct(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "ci/warn", State: "warning"},
+		{Context: "ci/pend", State: "pending"},
+	}
+	result := FormatChecks(checks, 80)
+	// Warning should show ! and pending should show ?
+	lines := strings.Split(result, "\n")
+	foundWarn, foundPend := false, false
+	for _, line := range lines {
+		if strings.Contains(line, "ci/warn") && strings.Contains(line, "!") {
+			foundWarn = true
+		}
+		if strings.Contains(line, "ci/pend") && strings.Contains(line, "?") {
+			foundPend = true
+		}
+	}
+	if !foundWarn {
+		t.Error("warning check should show ! icon")
+	}
+	if !foundPend {
+		t.Error("pending check should show ? icon")
+	}
+}

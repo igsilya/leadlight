@@ -22,8 +22,9 @@ type theme struct {
 
 	AfrtFg string // non-zero values in C and A F R T columns
 
-	ChecksPassFg, ChecksFailFg    string
-	ChecksPendingFg, ChecksZeroFg string
+	ChecksPassFg, ChecksFailFg string
+	ChecksWarnFg, ChecksZeroFg string
+	ChecksPendingFg            string // mbox view only (truly pending checks)
 
 	MboxHeaderLabelFg, MboxHeaderValueFg string
 	DiffAddFg, DiffDelFg, DiffHunkFg     string
@@ -77,8 +78,9 @@ var darkTheme = theme{
 
 	ChecksPassFg:    "34",  // forest green
 	ChecksFailFg:    "196", // bright red
-	ChecksPendingFg: "214", // warm amber
+	ChecksWarnFg:    "214", // warm amber
 	ChecksZeroFg:    "240", // mid-grey
+	ChecksPendingFg: "247", // light grey (mbox view: incomplete checks)
 
 	MboxHeaderLabelFg: "15",  // bright white
 	MboxHeaderValueFg: "252", // near-white
@@ -134,8 +136,9 @@ var lightTheme = theme{
 
 	ChecksPassFg:    "28",  // dark green
 	ChecksFailFg:    "124", // dark red
-	ChecksPendingFg: "166", // burnt orange
+	ChecksWarnFg:    "166", // burnt orange
 	ChecksZeroFg:    "245", // mid-grey
+	ChecksPendingFg: "242", // cool grey (mbox view: incomplete checks)
 
 	MboxHeaderLabelFg: "0",   // black
 	MboxHeaderValueFg: "238", // dark grey

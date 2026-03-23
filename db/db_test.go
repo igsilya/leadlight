@@ -277,8 +277,8 @@ func TestUpdatePatchChecks(t *testing.T) {
 	}
 
 	row, _ := d.GetPatch(100)
-	if row.ChecksPass != 3 || row.ChecksFail != 1 || row.ChecksPending != 2 {
-		t.Errorf("Checks = %d/%d/%d", row.ChecksPass, row.ChecksFail, row.ChecksPending)
+	if row.ChecksPass != 3 || row.ChecksFail != 1 || row.ChecksWarn != 2 {
+		t.Errorf("Checks = %d/%d/%d", row.ChecksPass, row.ChecksFail, row.ChecksWarn)
 	}
 }
 
@@ -1470,9 +1470,73 @@ func TestRecountPatchChecks(t *testing.T) {
 	if row.ChecksFail != 1 {
 		t.Errorf("fail = %d, want 1", row.ChecksFail)
 	}
-	// pending + warning = 2
-	if row.ChecksPending != 2 {
-		t.Errorf("pending = %d, want 2", row.ChecksPending)
+	// Only warning counts — pending checks are excluded
+	if row.ChecksWarn != 1 {
+		t.Errorf("warn = %d, want 1", row.ChecksWarn)
+	}
+}
+
+func TestRecountPatchChecks_WarnExcludesPending(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	// Only pending checks — no warnings
+	d.InsertCheck(CheckRow{
+		ID: 1, PatchID: 100,
+		State: "pending", Context: "ci/build",
+	})
+	d.InsertCheck(CheckRow{
+		ID: 2, PatchID: 100,
+		State: "pending", Context: "ci/test",
+	})
+	d.RecountPatchChecks(100)
+	row, _ := d.GetPatch(100)
+	if row.ChecksWarn != 0 {
+		t.Errorf("warn = %d, want 0 (pending should not count)", row.ChecksWarn)
+	}
+	if row.ChecksPass != 0 {
+		t.Errorf("pass = %d, want 0", row.ChecksPass)
+	}
+}
+
+func TestRecountPatchChecks_AllStates(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.InsertCheck(CheckRow{ID: 1, PatchID: 100, State: "success", Context: "ci/a"})
+	d.InsertCheck(CheckRow{ID: 2, PatchID: 100, State: "fail", Context: "ci/b"})
+	d.InsertCheck(CheckRow{ID: 3, PatchID: 100, State: "warning", Context: "ci/c"})
+	d.InsertCheck(CheckRow{ID: 4, PatchID: 100, State: "warning", Context: "ci/d"})
+	d.InsertCheck(CheckRow{ID: 5, PatchID: 100, State: "pending", Context: "ci/e"})
+	d.RecountPatchChecks(100)
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 1 {
+		t.Errorf("pass = %d, want 1", row.ChecksPass)
+	}
+	if row.ChecksFail != 1 {
+		t.Errorf("fail = %d, want 1", row.ChecksFail)
+	}
+	if row.ChecksWarn != 2 {
+		t.Errorf("warn = %d, want 2 (only warnings, not pending)",
+			row.ChecksWarn)
+	}
+}
+
+func TestUpdatePatchChecks_WarnField(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.UpdatePatchChecks(100, 5, 2, 3)
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 5 || row.ChecksFail != 2 || row.ChecksWarn != 3 {
+		t.Errorf("checks = %d/%d/%d, want 5/2/3",
+			row.ChecksPass, row.ChecksFail, row.ChecksWarn)
 	}
 }
 

@@ -417,17 +417,17 @@ func isTerminalState(state string) bool {
 }
 
 func formatChecks(p db.PatchRow) string {
-	return formatCount(p.ChecksPass) + " " + formatCount(p.ChecksFail) + " " + formatCount(p.ChecksPending)
+	return formatCount(p.ChecksPass) + " " + formatCount(p.ChecksFail) + " " + formatCount(p.ChecksWarn)
 }
 
 func formatSeriesChecks(patches []db.PatchRow) string {
-	pass, fail, pending := 0, 0, 0
+	pass, fail, warn := 0, 0, 0
 	for _, p := range patches {
 		pass += p.ChecksPass
 		fail += p.ChecksFail
-		pending += p.ChecksPending
+		warn += p.ChecksWarn
 	}
-	return formatCount(pass) + " " + formatCount(fail) + " " + formatCount(pending)
+	return formatCount(pass) + " " + formatCount(fail) + " " + formatCount(warn)
 }
 
 func parseDate(dateStr string) time.Time {
