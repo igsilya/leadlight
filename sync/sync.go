@@ -117,12 +117,23 @@ func (s *Syncer) RequestSync() {
 	}
 }
 
+// fetchResult indicates what type of item was fetched. The comment and
+// detail loops use this to select the polling interval: active items
+// poll every 5s, terminal items every 60s to reduce server load.
+type fetchResult int
+
 const (
-	syncInterval      = 5 * time.Minute // check for new events
-	commentInterval   = 5 * time.Second // fetch one item per tick to stay under rate limits
-	detailInterval    = 5 * time.Second // same drip-feed strategy for patch/cover details
-	archiveInterval   = 5 * time.Minute // poll mail archive (only for Patchwork < 1.3)
-	maintainerRefresh = 24 * time.Hour  // re-fetch project maintainer list
+	fetchNone     fetchResult = iota // nothing to fetch
+	fetchActive                      // fetched an item in active state
+	fetchTerminal                    // fetched an item in terminal state
+)
+
+const (
+	syncInterval      = 5 * time.Minute  // check for new events
+	activeInterval    = 5 * time.Second  // fetch interval for active-state items
+	terminalInterval  = 60 * time.Second // fetch interval for terminal-state items
+	archiveInterval   = 5 * time.Minute  // poll mail archive (only for Patchwork < 1.3)
+	maintainerRefresh = 24 * time.Hour   // re-fetch project maintainer list
 )
 
 // Patchwork >= 1.3 emits comment events; older versions need mail
@@ -225,32 +236,40 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	}
 }
 
+// runCommentLoop fetches comments one item per cycle. Polls every 5s
+// while active-state items remain, slows to 60s for terminal items.
 func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
-	s.runCommentCycle(ctx)
-
-	ticker := time.NewTicker(commentInterval)
-	defer ticker.Stop()
-
+	result := s.runCommentCycle(ctx)
 	for {
+		interval := activeInterval
+		if result == fetchTerminal {
+			interval = terminalInterval
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			s.runCommentCycle(ctx)
+		case <-time.After(interval):
+			result = s.runCommentCycle(ctx)
 		}
 	}
 }
 
-func (s *Syncer) runCommentCycle(ctx context.Context) {
-	changed := s.fetchNextComments(ctx)
-	changed = s.fetchNextCoverComments(ctx) || changed
-	s.status.Clear(status.BgComments)
-	s.status.Clear(status.BgCoverComments)
-	if changed {
+// runCommentCycle fetches one patch comment and one cover comment.
+// Returns the most urgent result (active > terminal > none).
+func (s *Syncer) runCommentCycle(ctx context.Context) fetchResult {
+	r1 := s.fetchNextComments(ctx)
+	r2 := s.fetchNextCoverComments(ctx)
+	if r1 == fetchActive || r2 == fetchActive {
 		s.notify()
+		return fetchActive
 	}
+	if r1 == fetchTerminal || r2 == fetchTerminal {
+		s.notify()
+		return fetchTerminal
+	}
+	return fetchNone
 }
 
 func (s *Syncer) runArchiveLoop(ctx context.Context, wg *gosync.WaitGroup) {
@@ -639,7 +658,7 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 	}
 }
 
-func (s *Syncer) fetchNextComments(ctx context.Context) bool {
+func (s *Syncer) fetchNextComments(ctx context.Context) fetchResult {
 	refs := s.db.GetPatchesNeedingComments(s.cfg.States)
 	for _, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
@@ -661,7 +680,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 		if err != nil {
 			log.Printf("fetch comments %d: %v", ref.ID, err)
 			s.commentSkip[ref.ID] = time.Now()
-			return false
+			return fetchNone
 		}
 		delete(s.commentSkip, ref.ID)
 		s.saveComments(comments, ref.ID, 0)
@@ -669,12 +688,15 @@ func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 		s.db.MarkCommentsFetched(ref.ID)
 		log.Printf("SYNC: fetched %d comments for patch %d",
 			len(comments), ref.ID)
-		return true
+		if ref.IsActive {
+			return fetchActive
+		}
+		return fetchTerminal
 	}
-	return false
+	return fetchNone
 }
 
-func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
+func (s *Syncer) fetchNextCoverComments(ctx context.Context) fetchResult {
 	refs := s.db.GetCoversNeedingComments(s.cfg.States)
 	for _, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
@@ -692,7 +714,7 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 			log.Printf("fetch cover comments %d: %v",
 				ref.ID, err)
 			s.commentSkip[ref.ID] = time.Now()
-			return false
+			return fetchNone
 		}
 		delete(s.commentSkip, ref.ID)
 		s.saveComments(comments, 0, ref.ID)
@@ -700,9 +722,12 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 		s.db.MarkCoverCommentsFetched(ref.ID)
 		log.Printf("SYNC: fetched %d comments for cover %d",
 			len(comments), ref.ID)
-		return true
+		if ref.IsActive {
+			return fetchActive
+		}
+		return fetchTerminal
 	}
-	return false
+	return fetchNone
 }
 
 func (s *Syncer) fetchCommentsForPatch(ctx context.Context, patchID int) {
@@ -812,34 +837,40 @@ func (s *Syncer) checkArchiveMonth(
 	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
 }
 
+// runDetailLoop fetches patch/cover details one item per cycle. Polls
+// every 5s while active-state items remain, slows to 60s for terminal.
 func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
-	s.fetchNextDetail(ctx)
-	s.notify()
-
-	ticker := time.NewTicker(detailInterval)
-	defer ticker.Stop()
+	result := s.fetchNextDetail(ctx)
+	if result != fetchNone {
+		s.notify()
+	}
 
 	for {
+		interval := activeInterval
+		if result == fetchTerminal {
+			interval = terminalInterval
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if s.fetchNextDetail(ctx) {
+		case <-time.After(interval):
+			result = s.fetchNextDetail(ctx)
+			if result != fetchNone {
 				s.notify()
 			}
 		}
 	}
 }
 
-func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
+func (s *Syncer) fetchNextDetail(ctx context.Context) fetchResult {
 	patchRefs := s.db.GetPatchesNeedingDetail(s.cfg.States)
 	coverRefs := s.db.GetCoversNeedingDetail(s.cfg.States)
 	total := len(patchRefs) + len(coverRefs)
 	if total == 0 {
 		s.status.Clear(status.Detail)
-		return false
+		return fetchNone
 	}
 
 	for _, ref := range patchRefs {
@@ -857,7 +888,7 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 		if err != nil {
 			log.Printf("fetch detail %d: %v", ref.ID, err)
 			s.detailSkip[ref.ID] = time.Now()
-			return false
+			return fetchNone
 		}
 		delete(s.detailSkip, ref.ID)
 		prefixes, _ := json.Marshal(detail.Prefixes)
@@ -872,7 +903,10 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 		}
 		log.Printf("SYNC: fetched detail for patch %d (%d bytes)",
 			ref.ID, len(detail.Content))
-		return true
+		if ref.IsActive {
+			return fetchActive
+		}
+		return fetchTerminal
 	}
 
 	for _, ref := range coverRefs {
@@ -891,7 +925,7 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 			log.Printf("fetch cover detail %d: %v",
 				ref.ID, err)
 			s.detailSkip[ref.ID] = time.Now()
-			return false
+			return fetchNone
 		}
 		delete(s.detailSkip, ref.ID)
 		hdrs, _ := json.Marshal(cover.Headers)
@@ -904,9 +938,12 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 		}
 		log.Printf("SYNC: fetched detail for cover %d (%d bytes)",
 			ref.ID, len(cover.Content))
-		return true
+		if ref.IsActive {
+			return fetchActive
+		}
+		return fetchTerminal
 	}
-	return false
+	return fetchNone
 }
 
 // Bump when tag extraction logic changes. MigrateTags re-extracts all

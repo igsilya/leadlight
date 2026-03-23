@@ -711,8 +711,9 @@ func (d *DB) GetIncompletePatches() []int {
 // parent series. Used by the syncer to track which items are being
 // fetched and to show per-row spinners in the TUI.
 type FetchRef struct {
-	ID       int // patch or cover ID
-	SeriesID int // parent series ID (0 if unknown)
+	ID       int  // patch or cover ID
+	SeriesID int  // parent series ID (0 if unknown)
+	IsActive bool // true if in an active state (e.g., new, under-review)
 }
 
 func (d *DB) GetPatchesNeedingDetail(
@@ -728,14 +729,18 @@ func (d *DB) GetPatchesNeedingDetail(
 		args[i] = s
 	}
 	query := fmt.Sprintf(`
-		SELECT id, COALESCE(series_id, 0) FROM patches
+		SELECT id, COALESCE(series_id, 0),
+			CASE WHEN state IN (%s) THEN 1 ELSE 0 END
+		FROM patches
 		WHERE COALESCE(detail_fetched, 0) = 0
 		ORDER BY
 			CASE WHEN state IN (%s)
 				THEN 0 ELSE 1 END,
 			id DESC`,
+		strings.Join(placeholders, ","),
 		strings.Join(placeholders, ","))
-	rows, err := d.conn.Query(query, args...)
+	doubleArgs := append(args, args...)
+	rows, err := d.conn.Query(query, doubleArgs...)
 	if err != nil {
 		return nil
 	}
@@ -743,7 +748,9 @@ func (d *DB) GetPatchesNeedingDetail(
 	var refs []FetchRef
 	for rows.Next() {
 		var ref FetchRef
-		rows.Scan(&ref.ID, &ref.SeriesID)
+		var active int
+		rows.Scan(&ref.ID, &ref.SeriesID, &active)
+		ref.IsActive = active == 1
 		refs = append(refs, ref)
 	}
 	return refs
@@ -761,17 +768,23 @@ func (d *DB) GetCoversNeedingDetail(
 		placeholders[i] = "?"
 		args[i] = s
 	}
+	stateCase := fmt.Sprintf(
+		"CASE WHEN p.state IN (%s) THEN 0 ELSE 1 END",
+		strings.Join(placeholders, ","))
 	query := fmt.Sprintf(`
-		SELECT cv.id, cv.series_id FROM covers cv
+		SELECT cv.id, cv.series_id,
+			CASE WHEN (SELECT MIN(%s) FROM patches p
+				WHERE p.series_id = cv.series_id) = 0
+			THEN 1 ELSE 0 END
+		FROM covers cv
 		WHERE COALESCE(cv.detail_fetched, 0) = 0
 		ORDER BY
-			(SELECT MIN(CASE WHEN p.state IN (%s)
-				THEN 0 ELSE 1 END)
-			 FROM patches p
+			(SELECT MIN(%s) FROM patches p
 			 WHERE p.series_id = cv.series_id),
 			cv.id DESC`,
-		strings.Join(placeholders, ","))
-	rows, err := d.conn.Query(query, args...)
+		stateCase, stateCase)
+	tripleArgs := append(append(args, args...), args...)
+	rows, err := d.conn.Query(query, tripleArgs...)
 	if err != nil {
 		return nil
 	}
@@ -779,7 +792,9 @@ func (d *DB) GetCoversNeedingDetail(
 	var refs []FetchRef
 	for rows.Next() {
 		var ref FetchRef
-		rows.Scan(&ref.ID, &ref.SeriesID)
+		var active int
+		rows.Scan(&ref.ID, &ref.SeriesID, &active)
+		ref.IsActive = active == 1
 		refs = append(refs, ref)
 	}
 	return refs
@@ -1168,15 +1183,19 @@ func (d *DB) GetPatchesNeedingComments(
 		args[i] = s
 	}
 	query := fmt.Sprintf(`
-		SELECT id, COALESCE(series_id, 0) FROM patches
+		SELECT id, COALESCE(series_id, 0),
+			CASE WHEN state IN (%s) THEN 1 ELSE 0 END
+		FROM patches
 		WHERE comments_fetched = 0
 		ORDER BY
 			CASE WHEN state IN (%s)
 				THEN 0 ELSE 1 END,
 			id DESC`,
+		strings.Join(placeholders, ","),
 		strings.Join(placeholders, ","))
 
-	rows, err := d.conn.Query(query, args...)
+	doubleArgs := append(args, args...)
+	rows, err := d.conn.Query(query, doubleArgs...)
 	if err != nil {
 		return nil
 	}
@@ -1185,7 +1204,9 @@ func (d *DB) GetPatchesNeedingComments(
 	var refs []FetchRef
 	for rows.Next() {
 		var ref FetchRef
-		rows.Scan(&ref.ID, &ref.SeriesID)
+		var active int
+		rows.Scan(&ref.ID, &ref.SeriesID, &active)
+		ref.IsActive = active == 1
 		refs = append(refs, ref)
 	}
 	return refs
@@ -1315,17 +1336,23 @@ func (d *DB) GetCoversNeedingComments(
 		placeholders[i] = "?"
 		args[i] = s
 	}
+	stateCase := fmt.Sprintf(
+		"CASE WHEN p.state IN (%s) THEN 0 ELSE 1 END",
+		strings.Join(placeholders, ","))
 	query := fmt.Sprintf(`
-		SELECT cv.id, cv.series_id FROM covers cv
+		SELECT cv.id, cv.series_id,
+			CASE WHEN (SELECT MIN(%s) FROM patches p
+				WHERE p.series_id = cv.series_id) = 0
+			THEN 1 ELSE 0 END
+		FROM covers cv
 		WHERE cv.comments_fetched = 0
 		ORDER BY
-			(SELECT MIN(CASE WHEN p.state IN (%s)
-				THEN 0 ELSE 1 END)
-			 FROM patches p
+			(SELECT MIN(%s) FROM patches p
 			 WHERE p.series_id = cv.series_id),
 			cv.id DESC`,
-		strings.Join(placeholders, ","))
-	rows, err := d.conn.Query(query, args...)
+		stateCase, stateCase)
+	tripleArgs := append(append(args, args...), args...)
+	rows, err := d.conn.Query(query, tripleArgs...)
 	if err != nil {
 		return nil
 	}
@@ -1334,7 +1361,9 @@ func (d *DB) GetCoversNeedingComments(
 	var refs []FetchRef
 	for rows.Next() {
 		var ref FetchRef
-		rows.Scan(&ref.ID, &ref.SeriesID)
+		var active int
+		rows.Scan(&ref.ID, &ref.SeriesID, &active)
+		ref.IsActive = active == 1
 		refs = append(refs, ref)
 	}
 	return refs
