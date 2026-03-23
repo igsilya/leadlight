@@ -330,10 +330,10 @@ func formatAge(dateStr string) string {
 func computePatchAFRT(patchID int, tags []db.TagRow) (a, f, r, t int) {
 	seen := map[string]bool{}
 	for _, tag := range tags {
-		if tag.PatchID != patchID && tag.CoverID == 0 {
+		if !tagAppliesToPatch(tag, patchID) {
 			continue
 		}
-		key := tag.Type + "\x00" + tag.Identity
+		key := tagKey(tag)
 		if seen[key] {
 			continue
 		}
@@ -367,6 +367,8 @@ func formatCommentCell(count int, submitters []string, author string) string {
 	seen := map[string]bool{}
 	var names []string
 	for _, s := range submitters {
+		// Exclude the series author — their own replies don't
+		// represent external review activity.
 		if s == author {
 			continue
 		}
@@ -451,12 +453,41 @@ func colorForSeries(
 	if isAllReviewed(patches, tags) {
 		return "reviewed"
 	}
+	return colorByAge(s.Date, commentCount > 0)
+}
 
-	age := time.Since(parseDate(s.Date))
-	hasComments := commentCount > 0
+// tagKey builds a unique key for a tag by combining type and identity
+// with a NUL separator that can't appear in either field.
+func tagKey(tag db.TagRow) string {
+	return tag.Type + "\x00" + tag.Identity
+}
+
+// tagAppliesToPatch returns true if the tag is directly on this patch
+// or on the series' cover letter (which applies to all patches).
+func tagAppliesToPatch(tag db.TagRow, patchID int) bool {
+	return tag.PatchID == patchID || tag.CoverID != 0
+}
+
+// commentReviewTags returns the set of unique review tag keys from
+// comment-sourced tags. Only acked-by and reviewed-by count as reviews;
+// tested-by and fixes don't establish that a patch was reviewed.
+func commentReviewTags(tags []db.TagRow) map[string]bool {
+	result := map[string]bool{}
+	for _, tag := range tags {
+		if tag.Source == "comment" && isReviewTag(tag.Type) {
+			result[tagKey(tag)] = true
+		}
+	}
+	return result
+}
+
+// colorByAge returns the semantic color name based on age and comment
+// activity. Called after terminal and reviewed states are ruled out.
+// Thresholds: >14 days = "old", >60 days = "very old" (likely abandoned).
+func colorByAge(date string, hasComments bool) string {
+	age := time.Since(parseDate(date))
 	old := age > 14*24*time.Hour
 	veryOld := age > 60*24*time.Hour
-
 	switch {
 	case old && hasComments:
 		return "aging"
@@ -475,17 +506,14 @@ func isReviewTag(tagType string) bool {
 	return tagType == "acked" || tagType == "reviewed"
 }
 
+// isAllReviewed returns true when every patch has at least one acked/reviewed
+// tag whose author also left a review comment — distinguishing actual
+// third-party reviews from self-applied tags in the original submission.
 func isAllReviewed(patches []db.PatchRow, tags []db.TagRow) bool {
 	if len(patches) == 0 {
 		return false
 	}
-	// R = acked/reviewed comment tags across the series
-	commentTags := map[string]bool{}
-	for _, tag := range tags {
-		if tag.Source == "comment" && isReviewTag(tag.Type) {
-			commentTags[tag.Type+"\x00"+tag.Identity] = true
-		}
-	}
+	commentTags := commentReviewTags(tags)
 	if len(commentTags) == 0 {
 		return false
 	}
@@ -497,18 +525,21 @@ func isAllReviewed(patches []db.PatchRow, tags []db.TagRow) bool {
 	return true
 }
 
+// patchOverlapsComments checks whether any review tag on this patch
+// (or its series' cover letter) also appears in the set of comment-sourced
+// review tags. This confirms that an external reviewer actually reviewed
+// this specific patch, not just the original submission.
 func patchOverlapsComments(
 	patchID int, tags []db.TagRow, commentTags map[string]bool,
 ) bool {
 	for _, tag := range tags {
-		if tag.PatchID != patchID && tag.CoverID == 0 {
+		if !tagAppliesToPatch(tag, patchID) {
 			continue
 		}
 		if !isReviewTag(tag.Type) {
 			continue
 		}
-		key := tag.Type + "\x00" + tag.Identity
-		if commentTags[key] {
+		if commentTags[tagKey(tag)] {
 			return true
 		}
 	}
@@ -516,12 +547,7 @@ func patchOverlapsComments(
 }
 
 func isPatchReviewed(patchID int, tags []db.TagRow) bool {
-	commentTags := map[string]bool{}
-	for _, tag := range tags {
-		if tag.Source == "comment" && isReviewTag(tag.Type) {
-			commentTags[tag.Type+"\x00"+tag.Identity] = true
-		}
-	}
+	commentTags := commentReviewTags(tags)
 	if len(commentTags) == 0 {
 		return false
 	}
@@ -537,22 +563,7 @@ func colorForPatch(
 	if isPatchReviewed(p.ID, tags) {
 		return "reviewed"
 	}
-	age := time.Since(parseDate(p.Date))
-	hasComments := commentCount > 0
-	old := age > 14*24*time.Hour
-	veryOld := age > 60*24*time.Hour
-	switch {
-	case old && hasComments:
-		return "aging"
-	case !old && hasComments:
-		return "active"
-	case veryOld:
-		return "stale"
-	case !old:
-		return "pending"
-	default:
-		return "overdue"
-	}
+	return colorByAge(p.Date, commentCount > 0)
 }
 
 func convertComments(rows []db.CommentRow) []CommentInfo {

@@ -346,6 +346,7 @@ func (m *Model) renderGradientRow(
 ) string {
 	runes := []rune(rawRow)
 	total := len(runes)
+	// fill = how many characters the gradient has reached in the animation.
 	fill := min(
 		int(m.highlightProgress*float64(total)), total)
 
@@ -354,6 +355,8 @@ func (m *Model) renderGradientRow(
 		palette = gradientPalettes["stale"]
 	}
 
+	// Gradient occupies 40% on each edge, leaving a center gap that fills
+	// last — creates a "pinch" effect rather than a uniform sweep.
 	leftWidth := max(fill*40/100, 1)
 	rightWidth := max(fill*40/100, 1)
 	rightStart := total - rightWidth
@@ -386,7 +389,7 @@ func (m *Model) renderGradientRow(
 		bold := false
 
 		if pos < leftWidth {
-			idx := pos * 255 / max(leftWidth-1, 1)
+			idx := pos * 255 / max(leftWidth-1, 1) // max prevents div-by-zero for single-char regions
 			bg = palette[idx].bg
 			fg = palette[idx].fg
 			bold = true
@@ -486,17 +489,7 @@ func renderChecksCellWithBg(text string, width int, bgName string) string {
 			b.WriteString(styles[i].Render(part))
 		}
 	}
-	rendered := b.String()
-	visualWidth := lipgloss.Width(rendered)
-	if visualWidth < width {
-		if cached != nil {
-			rendered += cached.row.Render(
-				strings.Repeat(" ", width-visualWidth))
-		} else {
-			rendered += strings.Repeat(" ", width-visualWidth)
-		}
-	}
-	return rendered
+	return padStyledCell(b.String(), width, cached)
 }
 
 func buildCheckColors(text string) []string {
@@ -524,6 +517,20 @@ func buildCheckColors(text string) []string {
 		}
 	}
 	return result
+}
+
+// padStyledCell pads a pre-rendered cell to the target width using
+// the row's background style for consistent coloring.
+func padStyledCell(rendered string, width int, cached *cachedBgStyle) string {
+	visualWidth := lipgloss.Width(rendered)
+	if visualWidth < width {
+		pad := strings.Repeat(" ", width-visualWidth)
+		if cached != nil {
+			return rendered + cached.row.Render(pad)
+		}
+		return rendered + pad
+	}
+	return rendered
 }
 
 // renderBoldDimCellWithBg renders a space-separated cell with per-part
@@ -557,16 +564,7 @@ func renderBoldDimCellWithBg(text string, width int, bgName string) string {
 			}
 		}
 	}
-	rendered := b.String()
-	visualWidth := lipgloss.Width(rendered)
-	if visualWidth < width {
-		if cached != nil {
-			rendered += cached.row.Render(strings.Repeat(" ", width-visualWidth))
-		} else {
-			rendered += strings.Repeat(" ", width-visualWidth)
-		}
-	}
-	return rendered
+	return padStyledCell(b.String(), width, cached)
 }
 
 // renderCommentCellExpanded renders the wide Comments column:
@@ -647,7 +645,7 @@ func renderScrollBar(entries []barEntry, selectedIdx, maxWidth, maxVisible int) 
 		grew := false
 		if lo > 0 && hi-lo < maxVisible {
 			w := entries[lo-1].width + sepWidth
-			if used+w+4 <= maxWidth {
+			if used+w+4 <= maxWidth { // +4 reserves space for ◀ and ▶ indicators
 				lo--
 				used += w
 				grew = true

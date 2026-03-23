@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS patches (
     checks_pass       INTEGER DEFAULT 0,
     checks_fail       INTEGER DEFAULT 0,
     checks_pending    INTEGER DEFAULT 0,
+    -- Legacy counters: superseded by the tags and comments tables.
+    -- Kept to avoid ALTER TABLE migrations on existing databases.
     comments_count    INTEGER DEFAULT 0,
     acked_by          INTEGER DEFAULT 0,
     fixes             INTEGER DEFAULT 0,
@@ -124,6 +126,8 @@ CREATE INDEX IF NOT EXISTS idx_comments_cover ON comments(cover_id);
 CREATE INDEX IF NOT EXISTS idx_covers_series ON covers(series_id);
 `
 
+// Recount check totals on every startup to repair inconsistencies from
+// interrupted syncs or logic changes (e.g., warnings counted as pending).
 const recountChecks = `
 UPDATE patches SET
   checks_pass = (

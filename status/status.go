@@ -146,6 +146,10 @@ func (r *Registry) HasActiveFetches() bool {
 	return len(r.activeFetches) > 0
 }
 
+// Active returns the most recently updated status message for display.
+// The bool indicates whether the spinner tick should run: true if any
+// status entry has a spinner OR if item-level fetches are active (for
+// per-row spinner indicators).
 func (r *Registry) Active() (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -164,6 +168,7 @@ func (r *Registry) Active() (string, bool) {
 		}
 	}
 	if !found {
+		// No status messages, but keep spinner alive for per-row indicators
 		return "", len(r.activeFetches) > 0
 	}
 	return latest.message, latest.spinner || len(r.activeFetches) > 0

@@ -67,6 +67,8 @@ func extractHeader(headers, name string) string {
 }
 
 func splitBodyDiff(body string) (string, string) {
+	// Try markers from most specific to least: "diff --git" (git format),
+	// "--- a/" (non-git unified diff), "---\n" (mbox commit/diff separator).
 	markers := []string{"\ndiff --git ", "\n--- a/", "\n---\n"}
 	for _, m := range markers {
 		if idx := strings.Index(body, m); idx >= 0 {
@@ -184,6 +186,10 @@ func wrapHeaderValue(s string, width int) []string {
 	return lines
 }
 
+// replaceControlChars converts control characters to caret notation
+// (e.g., ^L for form feed). Adding 0x40 maps the control code to its
+// letter: 0x0C + 0x40 = 'L'. Prevents terminal rendering glitches from
+// characters like form feed (^L) in C source diffs.
 func replaceControlChars(s string) string {
 	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 && r != '\t' && r != '\n' }) {
 		return s
@@ -225,9 +231,9 @@ func writeStyledLine(b *strings.Builder, line string, quoted bool) {
 }
 
 const (
-	collapseMinBlock = 8
-	collapseHead     = 3
-	collapseTailFall = 20
+	collapseMinBlock = 8  // don't collapse quotes shorter than this
+	collapseHead     = 3  // show first N lines of a collapsed quote
+	collapseTailFall = 20 // tail lines shown when no @@ hunk header found
 )
 
 func collapseQuotedBlocks(lines []string) []string {
@@ -265,6 +271,8 @@ func collapseQuotedBlocks(lines []string) []string {
 }
 
 func collapseTail(block []string) []string {
+	// Search backward for a diff hunk header — the most useful anchor
+	// point when a reply quotes a diff. Fall back to the last N lines.
 	for i := len(block) - 1; i >= 0; i-- {
 		trimmed := strings.TrimLeft(block[i], " >")
 		if strings.HasPrefix(trimmed, "@@ ") {

@@ -134,6 +134,8 @@ type Model struct {
 	spinnerFrame         int
 	spinnerRunning       bool
 
+	// Gradient "reveal" animation: sweeps from 0.0 to 1.0 when the
+	// user moves to a new row, expanding inward from both edges.
 	highlightProgress  float64
 	highlightAnimating bool
 
@@ -142,11 +144,12 @@ type Model struct {
 	selectorOptions []string
 	selectorIDs     []int
 	selectorFilter  string
-	selectorBarLo   int
-	selectorBarHi   int
-
-	commentBarLo int
-	commentBarHi int
+	// [lo, hi) range of entries visible in the scroll bars.
+	// Number keys 1-9 map relative to this window.
+	selectorBarLo int
+	selectorBarHi int
+	commentBarLo  int
+	commentBarHi  int
 
 	selectedID string
 	showAll    bool
@@ -532,6 +535,7 @@ func (m *Model) getVisibleItems() []visibleItem {
 			canExpand: len(rd.SubRows) > 0,
 		})
 
+		// Auto-expand series with matching sub-rows during filtering
 		showSubs := rd.Expanded || (filter != "" && len(matchingSubs) > 0)
 		if showSubs {
 			for si, sub := range rd.SubRows {
@@ -602,6 +606,8 @@ func (m *Model) columnWidths() []int {
 	if hasDynamic {
 		commentsW := m.ColumnDefs[ColComments].FixedWidth
 		cW := m.ColumnDefs[ColC].FixedWidth
+		// 90 = minimum Name column width for the expanded Comments
+		// column to be useful. Below that, show the narrow C column.
 		if remaining-commentsW >= 90 {
 			m.ColumnDefs[ColC].Visible = false
 			m.ColumnDefs[ColComments].Visible = true

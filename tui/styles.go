@@ -9,14 +9,15 @@ import (
 )
 
 const (
+	// 10 steps * 20ms = ~200ms total animation. Tuned to feel snappy.
 	highlightAnimInterval = 20
 	highlightAnimStep     = 0.1
-	spinnerInterval       = 100
+	spinnerInterval       = 100 // ~10 FPS, standard terminal spinner rate
 
 	subRowIndent   = " "
-	scrollBuffer   = 2
-	reservedLines  = 3
-	indicatorWidth = 2
+	scrollBuffer   = 2 // rows kept visible below cursor when scrolling
+	reservedLines  = 3 // header + separator + status bar
+	indicatorWidth = 2 // "▸ " selection indicator
 )
 
 var spinnerFrames = []string{
@@ -176,6 +177,8 @@ func buildStyles(t *theme) {
 		makePalette := func(targetBg, targetFg rgb) [256]gradientEntry {
 			var p [256]gradientEntry
 			for i := range p {
+				// Gamma < 1 biases toward the target color, making the bright
+				// highlight band narrow and the fade-out gradual.
 				tt := math.Pow(float64(i)/255.0, 0.35)
 				bg := t.GradientStart.lerp(targetBg, tt)
 				fg := t.GradientFgStart.lerp(targetFg, tt)
@@ -185,6 +188,9 @@ func buildStyles(t *theme) {
 		}
 		gradientPalettes[name] = makePalette(c.bg, c.fg)
 
+		// Sub-rows get a dimmed variant of the parent color. The "sub:"
+		// prefix lets the renderer look up the right style by prepending
+		// "sub:" to the parent's color name (e.g., "sub:active").
 		subBg := c.bg.lerp(t.SubRowBgAnchor, t.SubRowBgBlend)
 		subFg := c.fg.lerp(t.SubRowFgAnchor, t.SubRowFgBlend)
 		bgStyles["sub:"+name] = makeCachedStyle(subBg.hex(), subFg.hex())

@@ -281,7 +281,9 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			rel := int(msg.String()[0] - '1')
 			barIdx := m.commentBarLo + rel
 			if rel < m.commentBarHi-m.commentBarLo {
-				commentIdx := barIdx - 1 // entry 0 is "patch" -> viewCommentIdx -1
+				// Bar entry 0 is "patch" (viewCommentIdx -1), entry 1 is
+				// comment 0, etc. Subtract 1 to convert bar→comment index.
+				commentIdx := barIdx - 1
 				if commentIdx >= -1 && commentIdx < len(m.viewComments) {
 					m.viewCommentIdx = commentIdx
 					m.quotesExpanded = false

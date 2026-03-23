@@ -17,6 +17,8 @@ import (
 	"leadlight/status"
 )
 
+// Skip retrying failed fetches for 30 minutes to avoid hammering the API
+// for items whose endpoint is broken or rate-limited.
 const commentSkipCooldown = 30 * time.Minute
 
 type Syncer struct {
@@ -28,7 +30,7 @@ type Syncer struct {
 	updateC     chan PatchUpdateRequest
 	commentC    chan CommentRequest
 	syncNowC    chan context.Context
-	commentSkip map[int]time.Time
+	commentSkip map[int]time.Time // last failure time per item; retried after cooldown
 	detailSkip  map[int]time.Time
 	status      *status.Registry
 }
@@ -116,13 +118,15 @@ func (s *Syncer) RequestSync() {
 }
 
 const (
-	syncInterval      = 5 * time.Minute
-	commentInterval   = 5 * time.Second
-	detailInterval    = 5 * time.Second
-	archiveInterval   = 5 * time.Minute
-	maintainerRefresh = 24 * time.Hour
+	syncInterval      = 5 * time.Minute // check for new events
+	commentInterval   = 5 * time.Second // fetch one item per tick to stay under rate limits
+	detailInterval    = 5 * time.Second // same drip-feed strategy for patch/cover details
+	archiveInterval   = 5 * time.Minute // poll mail archive (only for Patchwork < 1.3)
+	maintainerRefresh = 24 * time.Hour  // re-fetch project maintainer list
 )
 
+// Patchwork >= 1.3 emits comment events; older versions need mail
+// archive polling to discover new comments.
 func (s *Syncer) needsArchiveMonitoring() bool {
 	return s.cfg.APIVersion < "1.3" && s.cfg.MailArchive != ""
 }
@@ -646,6 +650,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 			status.BgComments,
 			fmt.Sprintf("Fetching comments (%d remaining)...",
 				len(refs)))
+		// defer in loop is safe here: the function returns after each item.
 		defer s.status.EndFetch(ref.ID)
 		row, _ := s.db.GetPatch(ref.ID)
 		if row != nil {
@@ -737,6 +742,8 @@ func (s *Syncer) checkMailArchive(ctx context.Context) {
 	defer s.status.Clear(status.Archive)
 	now := time.Now()
 	s.checkArchiveMonth(ctx, now.Year(), now.Month())
+	// On the 1st-2nd, also check last month — messages near midnight
+	// on the last day may not have been indexed when we last checked.
 	if now.Day() <= 2 {
 		prev := now.AddDate(0, -1, 0)
 		s.checkArchiveMonth(
@@ -889,6 +896,8 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 	return false
 }
 
+// Bump when tag extraction logic changes. MigrateTags re-extracts all
+// tags from stored content when the version doesn't match.
 const tagSchemaVersion = "2"
 
 func MigrateTags(d *db.DB) {
@@ -1053,6 +1062,8 @@ func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) 
 	_, err := s.client.UpdatePatch(ctx, req.PatchID, update)
 	if err != nil {
 		log.Printf("SYNC: patch update %d failed: %v", req.PatchID, err)
+		// "Invalid pk" means the cached user ID is stale — clear it
+		// so the next attempt re-resolves the username.
 		if req.DelegateUsername != nil &&
 			strings.Contains(err.Error(), "Invalid pk") {
 			s.db.ClearMaintainerUserID(*req.DelegateUsername)
@@ -1086,6 +1097,7 @@ func (s *Syncer) fetchMbox(
 	}
 
 	if s.cfg.LoreURL != "" && row.MsgID != "" {
+		// Strip angle brackets from Message-ID header for the URL path
 		msgid := strings.Trim(row.MsgID, "<>")
 		loreURL := strings.TrimRight(
 			s.cfg.LoreURL, "/") + "/" + msgid + "/raw"
@@ -1113,6 +1125,7 @@ func (s *Syncer) fetchMbox(
 	}
 
 	if row.MboxURL != "" {
+		// Some Patchwork instances return http:// URLs even over https
 		mboxURL := row.MboxURL
 		if strings.HasPrefix(s.cfg.Server, "https://") &&
 			strings.HasPrefix(mboxURL, "http://") {

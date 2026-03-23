@@ -11,7 +11,7 @@ import (
 
 type DB struct {
 	conn    *sql.DB
-	writeMu sync.Mutex
+	writeMu sync.Mutex // SQLite allows concurrent reads but only one writer
 }
 
 func Open(path string) (*DB, error) {
@@ -19,6 +19,7 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	// WAL mode allows the TUI to read while the syncer writes concurrently.
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("set journal mode: %w", err)
@@ -173,6 +174,9 @@ func (d *DB) SaveSeriesSummary(
 func (d *DB) SavePatch(p PatchRow) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
+	// Merge-on-conflict: preserve existing non-empty values when the
+	// incoming data has zero/empty. Different sync sources provide
+	// different fields (events vs list pages vs API detail).
 	_, err := d.conn.Exec(`
 		INSERT INTO patches (id, series_id, name, date,
 			state, submitter, submitter_email,
@@ -332,6 +336,7 @@ func (d *DB) RecountPatchChecks(patchID int) error {
 			checks_fail = (
 				SELECT COUNT(*) FROM checks
 				WHERE patch_id = ? AND state = 'fail'),
+			-- warnings count as pending: both mean "not yet pass/fail"
 			checks_pending = (
 				SELECT COUNT(*) FROM checks
 				WHERE patch_id = ? AND state = 'pending')
