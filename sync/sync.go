@@ -261,6 +261,8 @@ func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 func (s *Syncer) runCommentCycle(ctx context.Context) fetchResult {
 	r1 := s.fetchNextComments(ctx)
 	r2 := s.fetchNextCoverComments(ctx)
+	s.status.Clear(status.BgComments)
+	s.status.Clear(status.BgCoverComments)
 	if r1 == fetchActive || r2 == fetchActive {
 		s.notify()
 		return fetchActive
@@ -843,6 +845,7 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
 	result := s.fetchNextDetail(ctx)
+	s.status.Clear(status.Detail)
 	if result != fetchNone {
 		s.notify()
 	}
@@ -857,6 +860,7 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 			return
 		case <-time.After(interval):
 			result = s.fetchNextDetail(ctx)
+			s.status.Clear(status.Detail)
 			if result != fetchNone {
 				s.notify()
 			}
