@@ -706,9 +706,17 @@ func (d *DB) GetIncompletePatches() []int {
 	return ids
 }
 
+// FetchRef identifies an item that needs fetching, along with its
+// parent series. Used by the syncer to track which items are being
+// fetched and to show per-row spinners in the TUI.
+type FetchRef struct {
+	ID       int // patch or cover ID
+	SeriesID int // parent series ID (0 if unknown)
+}
+
 func (d *DB) GetPatchesNeedingDetail(
 	priorityStates []string,
-) []int {
+) []FetchRef {
 	if len(priorityStates) == 0 {
 		priorityStates = []string{"new", "under-review"}
 	}
@@ -719,7 +727,7 @@ func (d *DB) GetPatchesNeedingDetail(
 		args[i] = s
 	}
 	query := fmt.Sprintf(`
-		SELECT id FROM patches
+		SELECT id, COALESCE(series_id, 0) FROM patches
 		WHERE COALESCE(detail_fetched, 0) = 0
 		ORDER BY
 			CASE WHEN state IN (%s)
@@ -731,18 +739,18 @@ func (d *DB) GetPatchesNeedingDetail(
 		return nil
 	}
 	defer rows.Close()
-	var ids []int
+	var refs []FetchRef
 	for rows.Next() {
-		var id int
-		rows.Scan(&id)
-		ids = append(ids, id)
+		var ref FetchRef
+		rows.Scan(&ref.ID, &ref.SeriesID)
+		refs = append(refs, ref)
 	}
-	return ids
+	return refs
 }
 
 func (d *DB) GetCoversNeedingDetail(
 	priorityStates []string,
-) []int {
+) []FetchRef {
 	if len(priorityStates) == 0 {
 		priorityStates = []string{"new", "under-review"}
 	}
@@ -753,7 +761,7 @@ func (d *DB) GetCoversNeedingDetail(
 		args[i] = s
 	}
 	query := fmt.Sprintf(`
-		SELECT cv.id FROM covers cv
+		SELECT cv.id, cv.series_id FROM covers cv
 		WHERE COALESCE(cv.detail_fetched, 0) = 0
 		ORDER BY
 			(SELECT MIN(CASE WHEN p.state IN (%s)
@@ -767,13 +775,13 @@ func (d *DB) GetCoversNeedingDetail(
 		return nil
 	}
 	defer rows.Close()
-	var ids []int
+	var refs []FetchRef
 	for rows.Next() {
-		var id int
-		rows.Scan(&id)
-		ids = append(ids, id)
+		var ref FetchRef
+		rows.Scan(&ref.ID, &ref.SeriesID)
+		refs = append(refs, ref)
 	}
-	return ids
+	return refs
 }
 
 type TagRow struct {
@@ -1148,7 +1156,7 @@ func (d *DB) GetOldestPatchDate() string {
 
 func (d *DB) GetPatchesNeedingComments(
 	priorityStates []string,
-) []int {
+) []FetchRef {
 	if len(priorityStates) == 0 {
 		priorityStates = []string{"new", "under-review"}
 	}
@@ -1159,7 +1167,7 @@ func (d *DB) GetPatchesNeedingComments(
 		args[i] = s
 	}
 	query := fmt.Sprintf(`
-		SELECT id FROM patches
+		SELECT id, COALESCE(series_id, 0) FROM patches
 		WHERE comments_fetched = 0
 		ORDER BY
 			CASE WHEN state IN (%s)
@@ -1173,13 +1181,13 @@ func (d *DB) GetPatchesNeedingComments(
 	}
 	defer rows.Close()
 
-	var ids []int
+	var refs []FetchRef
 	for rows.Next() {
-		var id int
-		rows.Scan(&id)
-		ids = append(ids, id)
+		var ref FetchRef
+		rows.Scan(&ref.ID, &ref.SeriesID)
+		refs = append(refs, ref)
 	}
-	return ids
+	return refs
 }
 
 func (d *DB) MarkCommentsFetched(patchID int) error {
@@ -1296,7 +1304,7 @@ func (d *DB) GetCommentsForCover(coverID int) []CommentRow {
 
 func (d *DB) GetCoversNeedingComments(
 	priorityStates []string,
-) []int {
+) []FetchRef {
 	if len(priorityStates) == 0 {
 		priorityStates = []string{"new", "under-review"}
 	}
@@ -1307,7 +1315,7 @@ func (d *DB) GetCoversNeedingComments(
 		args[i] = s
 	}
 	query := fmt.Sprintf(`
-		SELECT cv.id FROM covers cv
+		SELECT cv.id, cv.series_id FROM covers cv
 		WHERE cv.comments_fetched = 0
 		ORDER BY
 			(SELECT MIN(CASE WHEN p.state IN (%s)
@@ -1322,13 +1330,13 @@ func (d *DB) GetCoversNeedingComments(
 	}
 	defer rows.Close()
 
-	var ids []int
+	var refs []FetchRef
 	for rows.Next() {
-		var id int
-		rows.Scan(&id)
-		ids = append(ids, id)
+		var ref FetchRef
+		rows.Scan(&ref.ID, &ref.SeriesID)
+		refs = append(refs, ref)
 	}
-	return ids
+	return refs
 }
 
 func (d *DB) MarkCoverCommentsFetched(coverID int) error {

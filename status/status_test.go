@@ -81,6 +81,126 @@ func TestRegistry_NilOnChange(t *testing.T) {
 	r.Clear(Sync)
 }
 
+func TestStartEndFetch(t *testing.T) {
+	r := NewRegistry(nil)
+	if r.IsFetchingPatch(100) {
+		t.Error("should not be fetching before start")
+	}
+	r.StartFetchAndSetStatus(100, 50, BgComments, "fetching...")
+	if !r.IsFetchingPatch(100) {
+		t.Error("should be fetching after start")
+	}
+	r.EndFetch(100)
+	if r.IsFetchingPatch(100) {
+		t.Error("should not be fetching after end")
+	}
+}
+
+func TestIsFetchingSeries(t *testing.T) {
+	r := NewRegistry(nil)
+	r.StartFetchAndSetStatus(100, 50, BgComments, "fetching...")
+	if !r.IsFetchingSeries(50) {
+		t.Error("series 50 should be fetching")
+	}
+	if r.IsFetchingSeries(99) {
+		t.Error("series 99 should not be fetching")
+	}
+	r.EndFetch(100)
+	if r.IsFetchingSeries(50) {
+		t.Error("series 50 should not be fetching after end")
+	}
+}
+
+func TestHasActiveFetches(t *testing.T) {
+	r := NewRegistry(nil)
+	if r.HasActiveFetches() {
+		t.Error("should have no active fetches initially")
+	}
+	r.StartFetchAndSetStatus(100, 50, BgComments, "fetching...")
+	if !r.HasActiveFetches() {
+		t.Error("should have active fetches")
+	}
+	r.EndFetch(100)
+	if r.HasActiveFetches() {
+		t.Error("should have no active fetches after end")
+	}
+}
+
+func TestStartFetch_SetsStatus(t *testing.T) {
+	r := NewRegistry(nil)
+	r.StartFetchAndSetStatus(100, 50, BgComments, "Fetching comments...")
+	msg, spinner := r.Active()
+	if msg != "Fetching comments..." {
+		t.Errorf("msg = %q, want Fetching comments...", msg)
+	}
+	if !spinner {
+		t.Error("should be spinner")
+	}
+}
+
+func TestStartFetch_OnChange(t *testing.T) {
+	called := 0
+	r := NewRegistry(func() { called++ })
+	r.StartFetchAndSetStatus(100, 50, BgComments, "fetching...")
+	r.EndFetch(100)
+	if called != 2 {
+		t.Errorf("onChange called %d times, want 2", called)
+	}
+}
+
+func TestMultipleFetches_SameSeries(t *testing.T) {
+	r := NewRegistry(nil)
+	r.StartFetchAndSetStatus(100, 50, BgComments, "comments...")
+	r.StartFetchAndSetStatus(101, 50, Detail, "details...")
+	if !r.IsFetchingSeries(50) {
+		t.Error("series 50 should be fetching")
+	}
+	r.EndFetch(100)
+	if !r.IsFetchingSeries(50) {
+		t.Error("series 50 should still be fetching (101 active)")
+	}
+	r.EndFetch(101)
+	if r.IsFetchingSeries(50) {
+		t.Error("series 50 should not be fetching after all ended")
+	}
+}
+
+func TestMultipleFetches_SameItem(t *testing.T) {
+	r := NewRegistry(nil)
+	r.StartFetchAndSetStatus(100, 50, BgComments, "comments...")
+	r.StartFetchAndSetStatus(100, 50, Detail, "details...")
+	if !r.IsFetchingPatch(100) {
+		t.Error("patch 100 should be fetching")
+	}
+	r.EndFetch(100)
+	if !r.IsFetchingPatch(100) {
+		t.Error("patch 100 should still be fetching (refCount=1)")
+	}
+	r.EndFetch(100)
+	if r.IsFetchingPatch(100) {
+		t.Error("patch 100 should not be fetching after both ended")
+	}
+}
+
+func TestActiveFetches_SpinnerLifecycle(t *testing.T) {
+	r := NewRegistry(nil)
+	_, spinning := r.Active()
+	if spinning {
+		t.Error("should not be spinning with no fetches")
+	}
+	r.StartFetchAndSetStatus(100, 50, BgComments, "fetching...")
+	_, spinning = r.Active()
+	if !spinning {
+		t.Error("should be spinning with active fetch")
+	}
+	r.EndFetch(100)
+	r.Clear(BgComments)
+	_, spinning = r.Active()
+	if spinning {
+		t.Error("should not be spinning after fetch ended and status cleared")
+	}
+}
+
 func TestRegistry_Concurrent(t *testing.T) {
 	r := NewRegistry(nil)
 	var wg sync.WaitGroup

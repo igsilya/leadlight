@@ -63,6 +63,20 @@ type visibleItem struct {
 	canExpand bool
 }
 
+func (m *Model) isRowFetching(item visibleItem) bool {
+	if m.Status == nil || len(item.data) == 0 {
+		return false
+	}
+	id, err := strconv.Atoi(item.data[ColID])
+	if err != nil {
+		return false
+	}
+	if item.isSubRow {
+		return m.Status.IsFetchingPatch(id)
+	}
+	return m.Status.IsFetchingSeries(id)
+}
+
 type SyncUpdateMsg struct{}
 type StatusUpdateMsg struct{}
 type patchUpdateResultMsg struct{ err error }

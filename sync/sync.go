@@ -636,65 +636,65 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 }
 
 func (s *Syncer) fetchNextComments(ctx context.Context) bool {
-	ids := s.db.GetPatchesNeedingComments(s.cfg.States)
-	if len(ids) > 0 {
-		s.status.Set(status.BgComments,
-			fmt.Sprintf("Fetching comments (%d remaining)...",
-				len(ids)), true)
-	}
-	for _, patchID := range ids {
-		if t, ok := s.commentSkip[patchID]; ok &&
+	refs := s.db.GetPatchesNeedingComments(s.cfg.States)
+	for _, ref := range refs {
+		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		row, _ := s.db.GetPatch(patchID)
+		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
+			status.BgComments,
+			fmt.Sprintf("Fetching comments (%d remaining)...",
+				len(refs)))
+		defer s.status.EndFetch(ref.ID)
+		row, _ := s.db.GetPatch(ref.ID)
 		if row != nil {
 			log.Printf("SYNC: fetchNextComments: patch %d %q",
-				patchID, row.Name)
+				ref.ID, row.Name)
 		}
-		comments, err := s.client.GetPatchComments(ctx, patchID)
+		comments, err := s.client.GetPatchComments(ctx, ref.ID)
 		if err != nil {
-			log.Printf("fetch comments %d: %v", patchID, err)
-			s.commentSkip[patchID] = time.Now()
+			log.Printf("fetch comments %d: %v", ref.ID, err)
+			s.commentSkip[ref.ID] = time.Now()
 			return false
 		}
-		delete(s.commentSkip, patchID)
-		s.saveComments(comments, patchID, 0)
-		s.updatePatchTagsFromComments(patchID)
-		s.db.MarkCommentsFetched(patchID)
+		delete(s.commentSkip, ref.ID)
+		s.saveComments(comments, ref.ID, 0)
+		s.updatePatchTagsFromComments(ref.ID)
+		s.db.MarkCommentsFetched(ref.ID)
 		log.Printf("SYNC: fetched %d comments for patch %d",
-			len(comments), patchID)
+			len(comments), ref.ID)
 		return true
 	}
 	return false
 }
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
-	ids := s.db.GetCoversNeedingComments(s.cfg.States)
-	if len(ids) > 0 {
-		s.status.Set(status.BgCoverComments,
-			fmt.Sprintf("Fetching cover comments (%d remaining)...",
-				len(ids)), true)
-	}
-	for _, coverID := range ids {
-		if t, ok := s.commentSkip[coverID]; ok &&
+	refs := s.db.GetCoversNeedingComments(s.cfg.States)
+	for _, ref := range refs {
+		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		log.Printf("SYNC: fetchNextCoverComments: cover %d", coverID)
-		comments, err := s.client.GetCoverComments(ctx, coverID)
+		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
+			status.BgCoverComments,
+			fmt.Sprintf("Fetching cover comments (%d remaining)...",
+				len(refs)))
+		defer s.status.EndFetch(ref.ID)
+		log.Printf("SYNC: fetchNextCoverComments: cover %d", ref.ID)
+		comments, err := s.client.GetCoverComments(ctx, ref.ID)
 		if err != nil {
 			log.Printf("fetch cover comments %d: %v",
-				coverID, err)
-			s.commentSkip[coverID] = time.Now()
+				ref.ID, err)
+			s.commentSkip[ref.ID] = time.Now()
 			return false
 		}
-		delete(s.commentSkip, coverID)
-		s.saveComments(comments, 0, coverID)
-		s.updateCoverTagsFromComments(coverID)
-		s.db.MarkCoverCommentsFetched(coverID)
+		delete(s.commentSkip, ref.ID)
+		s.saveComments(comments, 0, ref.ID)
+		s.updateCoverTagsFromComments(ref.ID)
+		s.db.MarkCoverCommentsFetched(ref.ID)
 		log.Printf("SYNC: fetched %d comments for cover %d",
-			len(comments), coverID)
+			len(comments), ref.ID)
 		return true
 	}
 	return false
@@ -814,68 +814,76 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 }
 
 func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
-	patchIDs := s.db.GetPatchesNeedingDetail(s.cfg.States)
-	coverIDs := s.db.GetCoversNeedingDetail(s.cfg.States)
-	total := len(patchIDs) + len(coverIDs)
+	patchRefs := s.db.GetPatchesNeedingDetail(s.cfg.States)
+	coverRefs := s.db.GetCoversNeedingDetail(s.cfg.States)
+	total := len(patchRefs) + len(coverRefs)
 	if total == 0 {
 		s.status.Clear(status.Detail)
 		return false
 	}
-	s.status.Set(status.Detail,
-		fmt.Sprintf("Fetching details (%d remaining)...",
-			total), true)
 
-	for _, id := range patchIDs {
-		if t, ok := s.detailSkip[id]; ok &&
+	for _, ref := range patchRefs {
+		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		log.Printf("SYNC: fetchNextDetail: patch %d", id)
-		detail, err := s.client.GetPatch(ctx, id)
+		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
+			status.Detail,
+			fmt.Sprintf("Fetching details (%d remaining)...",
+				total))
+		defer s.status.EndFetch(ref.ID)
+		log.Printf("SYNC: fetchNextDetail: patch %d", ref.ID)
+		detail, err := s.client.GetPatch(ctx, ref.ID)
 		if err != nil {
-			log.Printf("fetch detail %d: %v", id, err)
-			s.detailSkip[id] = time.Now()
+			log.Printf("fetch detail %d: %v", ref.ID, err)
+			s.detailSkip[ref.ID] = time.Now()
 			return false
 		}
-		delete(s.detailSkip, id)
+		delete(s.detailSkip, ref.ID)
 		prefixes, _ := json.Marshal(detail.Prefixes)
 		headers, _ := json.Marshal(detail.Headers)
-		s.db.UpdatePatchDetail(id,
+		s.db.UpdatePatchDetail(ref.ID,
 			detail.Content, detail.Diff,
 			string(headers), string(prefixes))
 		if detail.Content != "" {
-			s.db.ClearTags(id, 0, "original")
+			s.db.ClearTags(ref.ID, 0, "original")
 			tags := extractReviewTags(detail.Content)
-			s.db.SaveTags(id, 0, 0, "original", tags)
+			s.db.SaveTags(ref.ID, 0, 0, "original", tags)
 		}
 		log.Printf("SYNC: fetched detail for patch %d (%d bytes)",
-			id, len(detail.Content))
+			ref.ID, len(detail.Content))
 		return true
 	}
 
-	for _, id := range coverIDs {
-		if t, ok := s.detailSkip[id]; ok &&
+	for _, ref := range coverRefs {
+		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		log.Printf("SYNC: fetchNextDetail: cover %d", id)
-		cover, err := s.client.GetCover(ctx, id)
+		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
+			status.Detail,
+			fmt.Sprintf("Fetching details (%d remaining)...",
+				total))
+		defer s.status.EndFetch(ref.ID)
+		log.Printf("SYNC: fetchNextDetail: cover %d", ref.ID)
+		cover, err := s.client.GetCover(ctx, ref.ID)
 		if err != nil {
-			log.Printf("fetch cover detail %d: %v", id, err)
-			s.detailSkip[id] = time.Now()
+			log.Printf("fetch cover detail %d: %v",
+				ref.ID, err)
+			s.detailSkip[ref.ID] = time.Now()
 			return false
 		}
-		delete(s.detailSkip, id)
+		delete(s.detailSkip, ref.ID)
 		hdrs, _ := json.Marshal(cover.Headers)
-		s.db.UpdateCoverDetail(id,
+		s.db.UpdateCoverDetail(ref.ID,
 			cover.Content, string(hdrs))
 		if cover.Content != "" {
-			s.db.ClearTags(0, id, "original")
+			s.db.ClearTags(0, ref.ID, "original")
 			tags := extractReviewTags(cover.Content)
-			s.db.SaveTags(0, id, 0, "original", tags)
+			s.db.SaveTags(0, ref.ID, 0, "original", tags)
 		}
 		log.Printf("SYNC: fetched detail for cover %d (%d bytes)",
-			id, len(cover.Content))
+			ref.ID, len(cover.Content))
 		return true
 	}
 	return false

@@ -186,18 +186,26 @@ func (m *Model) renderRows(
 			break
 		}
 
+		fetching := m.isRowFetching(items[i])
 		var row string
 		if i == m.selectedRow {
+			ind := indicator
+			if fetching {
+				ind = "▸" + spinnerFrames[m.spinnerFrame]
+			}
 			if m.selectorMode != selectorNone {
-				row = indicator + m.buildRow(
+				row = ind + m.buildRow(
 					items[i], widths, m.selectorHighlightCol)
 			} else {
 				row = m.renderSelectedRow(
-					items[i], widths, indicator,
+					items[i], widths, ind,
 					checksStart, checksWidth,
 					afrtStart, afrtWidth,
 					commentStart, commentWidth)
 			}
+		} else if fetching {
+			prefix := " " + spinnerFrames[m.spinnerFrame]
+			row = m.buildStyledRow(items[i], widths, prefix)
 		} else if i < len(m.cachedRows) && m.cachedRows[i] != "" {
 			row = m.cachedRows[i]
 		} else {

@@ -419,6 +419,66 @@ func TestColumnWidths_CustomColumns(t *testing.T) {
 	}
 }
 
+func TestIsRowFetching_SeriesRow(t *testing.T) {
+	reg := status.NewRegistry(nil)
+	m := &Model{Status: reg}
+	item := visibleItem{
+		data:     []string{"50", "", "Lorem series"},
+		isSubRow: false,
+	}
+	if m.isRowFetching(item) {
+		t.Error("should not be fetching before start")
+	}
+	reg.StartFetchAndSetStatus(100, 50, status.BgComments, "fetching...")
+	if !m.isRowFetching(item) {
+		t.Error("series 50 should be fetching (patch 100 in series)")
+	}
+	reg.EndFetch(100)
+	if m.isRowFetching(item) {
+		t.Error("should not be fetching after end")
+	}
+}
+
+func TestIsRowFetching_SubRow(t *testing.T) {
+	reg := status.NewRegistry(nil)
+	m := &Model{Status: reg}
+	item := visibleItem{
+		data:     []string{"100", "", "Lorem patch"},
+		isSubRow: true,
+	}
+	if m.isRowFetching(item) {
+		t.Error("should not be fetching before start")
+	}
+	reg.StartFetchAndSetStatus(100, 50, status.Detail, "fetching...")
+	if !m.isRowFetching(item) {
+		t.Error("patch 100 should be fetching")
+	}
+	// Different patch in same series — sub-row 100 not fetching
+	reg.EndFetch(100)
+	reg.StartFetchAndSetStatus(101, 50, status.Detail, "fetching...")
+	if m.isRowFetching(item) {
+		t.Error("patch 100 should not be fetching (101 is)")
+	}
+	reg.EndFetch(101)
+}
+
+func TestIsRowFetching_EmptyData(t *testing.T) {
+	reg := status.NewRegistry(nil)
+	m := &Model{Status: reg}
+	item := visibleItem{data: nil}
+	if m.isRowFetching(item) {
+		t.Error("should not crash on empty data")
+	}
+}
+
+func TestIsRowFetching_NilStatus(t *testing.T) {
+	m := &Model{}
+	item := visibleItem{data: []string{"50"}}
+	if m.isRowFetching(item) {
+		t.Error("should not crash with nil status")
+	}
+}
+
 func TestView_ZeroSize(t *testing.T) {
 	m := testModel()
 	m.width = 0

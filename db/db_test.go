@@ -1090,14 +1090,14 @@ func TestGetPatchesNeedingComments_Order(t *testing.T) {
 		t.Fatalf("len = %d, want 3", len(ids))
 	}
 	// Active newest first, then terminal
-	if ids[0] != 300 {
-		t.Errorf("[0] = %d, want 300 (newest active)", ids[0])
+	if ids[0].ID != 300 {
+		t.Errorf("[0] = %d, want 300 (newest active)", ids[0].ID)
 	}
-	if ids[1] != 100 {
-		t.Errorf("[1] = %d, want 100 (older active)", ids[1])
+	if ids[1].ID != 100 {
+		t.Errorf("[1] = %d, want 100 (older active)", ids[1].ID)
 	}
-	if ids[2] != 200 {
-		t.Errorf("[2] = %d, want 200 (terminal)", ids[2])
+	if ids[2].ID != 200 {
+		t.Errorf("[2] = %d, want 200 (terminal)", ids[2].ID)
 	}
 }
 
@@ -1133,14 +1133,14 @@ func TestGetCoversNeedingComments_Order(t *testing.T) {
 		t.Fatalf("len = %d, want 3", len(ids))
 	}
 	// Active series covers first (newest), then terminal
-	if ids[0] != 92 {
-		t.Errorf("[0] = %d, want 92 (newest active)", ids[0])
+	if ids[0].ID != 92 {
+		t.Errorf("[0] = %d, want 92 (newest active)", ids[0].ID)
 	}
-	if ids[1] != 90 {
-		t.Errorf("[1] = %d, want 90 (older active)", ids[1])
+	if ids[1].ID != 90 {
+		t.Errorf("[1] = %d, want 90 (older active)", ids[1].ID)
 	}
-	if ids[2] != 91 {
-		t.Errorf("[2] = %d, want 91 (terminal)", ids[2])
+	if ids[2].ID != 91 {
+		t.Errorf("[2] = %d, want 91 (terminal)", ids[2].ID)
 	}
 }
 
@@ -1164,14 +1164,14 @@ func TestGetPatchesNeedingDetail_Order(t *testing.T) {
 	if len(ids) != 3 {
 		t.Fatalf("len = %d, want 3", len(ids))
 	}
-	if ids[0] != 300 {
-		t.Errorf("[0] = %d, want 300 (newest active)", ids[0])
+	if ids[0].ID != 300 {
+		t.Errorf("[0] = %d, want 300 (newest active)", ids[0].ID)
 	}
-	if ids[1] != 100 {
-		t.Errorf("[1] = %d, want 100 (older active)", ids[1])
+	if ids[1].ID != 100 {
+		t.Errorf("[1] = %d, want 100 (older active)", ids[1].ID)
 	}
-	if ids[2] != 200 {
-		t.Errorf("[2] = %d, want 200 (terminal)", ids[2])
+	if ids[2].ID != 200 {
+		t.Errorf("[2] = %d, want 200 (terminal)", ids[2].ID)
 	}
 }
 
@@ -1198,11 +1198,11 @@ func TestGetCoversNeedingDetail_Order(t *testing.T) {
 	if len(ids) != 2 {
 		t.Fatalf("len = %d, want 2", len(ids))
 	}
-	if ids[0] != 90 {
-		t.Errorf("[0] = %d, want 90 (active series)", ids[0])
+	if ids[0].ID != 90 {
+		t.Errorf("[0] = %d, want 90 (active series)", ids[0].ID)
 	}
-	if ids[1] != 91 {
-		t.Errorf("[1] = %d, want 91 (terminal series)", ids[1])
+	if ids[1].ID != 91 {
+		t.Errorf("[1] = %d, want 91 (terminal series)", ids[1].ID)
 	}
 }
 
@@ -1235,7 +1235,7 @@ func TestGetPatchesNeedingDetail(t *testing.T) {
 	d.UpdatePatchDetail(100, "body", "diff", "{}", "[]")
 
 	ids := d.GetPatchesNeedingDetail(nil)
-	if len(ids) != 1 || ids[0] != 101 {
+	if len(ids) != 1 || ids[0].ID != 101 {
 		t.Errorf("got %v, want [101]", ids)
 	}
 }
@@ -1253,7 +1253,7 @@ func TestGetCoversNeedingDetail(t *testing.T) {
 	d.UpdateCoverDetail(99, "body", "{}")
 
 	ids := d.GetCoversNeedingDetail(nil)
-	if len(ids) != 1 || ids[0] != 100 {
+	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("got %v, want [100]", ids)
 	}
 }
@@ -1496,7 +1496,7 @@ func TestGetPatchesNeedingComments(t *testing.T) {
 	d.MarkCommentsFetched(100)
 
 	ids = d.GetPatchesNeedingComments(states)
-	if len(ids) != 1 || ids[0] != 101 {
+	if len(ids) != 1 || ids[0].ID != 101 {
 		t.Errorf("got %v, want [101]", ids)
 	}
 
@@ -1528,15 +1528,15 @@ func TestGetPatchesNeedingComments_Priority(t *testing.T) {
 	if len(ids) != 3 {
 		t.Fatalf("got %d, want 3", len(ids))
 	}
-	if ids[0] != 102 {
-		t.Errorf("[0] = %d, want 102 (newest active)", ids[0])
+	if ids[0].ID != 102 {
+		t.Errorf("[0] = %d, want 102 (newest active)", ids[0].ID)
 	}
-	if ids[1] != 101 {
-		t.Errorf("[1] = %d, want 101 (older active)", ids[1])
+	if ids[1].ID != 101 {
+		t.Errorf("[1] = %d, want 101 (older active)", ids[1].ID)
 	}
-	if ids[2] != 100 {
+	if ids[2].ID != 100 {
 		t.Errorf("[2] = %d, want 100 (terminal, last)",
-			ids[2])
+			ids[2].ID)
 	}
 }
 
@@ -1557,7 +1557,7 @@ func TestResetCommentsFetched(t *testing.T) {
 	d.ResetCommentsFetched(100)
 
 	ids = d.GetPatchesNeedingComments(states)
-	if len(ids) != 1 || ids[0] != 100 {
+	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("got %v, want [100] after reset", ids)
 	}
 }
@@ -1593,8 +1593,8 @@ func TestResetAllCommentsFetched(t *testing.T) {
 		t.Fatalf("got %d, want 2", len(ids))
 	}
 	got := map[int]bool{}
-	for _, id := range ids {
-		got[id] = true
+	for _, ref := range ids {
+		got[ref.ID] = true
 	}
 	if !got[100] {
 		t.Error("patch 100 (new) should be reset")
@@ -1664,7 +1664,7 @@ func TestGetCoversNeedingComments(t *testing.T) {
 
 	d.MarkCoverCommentsFetched(99)
 	ids = d.GetCoversNeedingComments(nil)
-	if len(ids) != 1 || ids[0] != 100 {
+	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("after mark: ids = %v", ids)
 	}
 
@@ -1691,7 +1691,7 @@ func TestResetCoverCommentsFetched(t *testing.T) {
 
 	d.ResetCoverCommentsFetched(99)
 	ids = d.GetCoversNeedingComments(nil)
-	if len(ids) != 1 || ids[0] != 99 {
+	if len(ids) != 1 || ids[0].ID != 99 {
 		t.Errorf("after reset: ids = %v", ids)
 	}
 }

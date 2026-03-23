@@ -818,7 +818,7 @@ func TestProcessEvent_PatchCommentCreated(t *testing.T) {
 
 	// Should be reset — needs re-fetch
 	ids = d.GetPatchesNeedingComments([]string{"new"})
-	if len(ids) != 1 || ids[0] != 100 {
+	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("got %v, want [100] (reset by event)",
 			ids)
 	}
@@ -851,7 +851,7 @@ func TestProcessEvent_CoverCommentCreated(t *testing.T) {
 	}
 
 	ids = d.GetCoversNeedingComments(nil)
-	if len(ids) != 1 || ids[0] != 99 {
+	if len(ids) != 1 || ids[0].ID != 99 {
 		t.Errorf("got %v, want [99] (reset by event)", ids)
 	}
 }
@@ -1123,7 +1123,7 @@ func TestFetchNextDetail_ErrorNoMark(t *testing.T) {
 	s.fetchNextDetail(context.Background())
 
 	ids := d.GetPatchesNeedingDetail(nil)
-	if len(ids) != 1 || ids[0] != 100 {
+	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("should stay unfetched: %v", ids)
 	}
 }
@@ -1651,8 +1651,8 @@ func TestCheckMailArchive(t *testing.T) {
 	// Patch 1000 should be reset (subject matches)
 	ids := d.GetPatchesNeedingComments([]string{"new"})
 	got := map[int]bool{}
-	for _, id := range ids {
-		got[id] = true
+	for _, ref := range ids {
+		got[ref.ID] = true
 	}
 	if !got[1000] {
 		t.Error("patch 1000 should be reset (matches archive)")
@@ -1725,7 +1725,7 @@ func TestCheckMailArchive_SkipsOldMessages(t *testing.T) {
 
 	// Patch 1000 should be reset (new message 200 matches)
 	ids := d.GetPatchesNeedingComments([]string{"new"})
-	if len(ids) != 1 || ids[0] != 1000 {
+	if len(ids) != 1 || ids[0].ID != 1000 {
 		t.Errorf("got %v, want [1000]", ids)
 	}
 
@@ -1777,8 +1777,8 @@ func TestCheckMailArchive_CoverComments(t *testing.T) {
 
 	ids := d.GetCoversNeedingComments(nil)
 	got := map[int]bool{}
-	for _, id := range ids {
-		got[id] = true
+	for _, ref := range ids {
+		got[ref.ID] = true
 	}
 	if !got[99] {
 		t.Error("cover 99 should be reset (matches archive)")
