@@ -671,6 +671,9 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	if m.FetchPatchComments != nil && m.db.NeedsPatchComments(patchID) {
 		m.FetchPatchComments(patchID)
 	}
+	if m.FetchPatchChecks != nil && m.db.NeedsPatchChecks(patchID) {
+		m.FetchPatchChecks(patchID)
+	}
 
 	if row.MboxContent != "" {
 		log.Printf("TUI: mbox cached (%d bytes) for %q",

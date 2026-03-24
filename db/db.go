@@ -1504,6 +1504,14 @@ func (d *DB) ResetCoverCommentsFetched(coverID int) error {
 	return err
 }
 
+func (d *DB) NeedsPatchChecks(patchID int) bool {
+	var fetched int
+	err := d.conn.QueryRow(
+		"SELECT COALESCE(checks_fetched, 0) FROM patches WHERE id = ?",
+		patchID).Scan(&fetched)
+	return err == nil && fetched == 0
+}
+
 func (d *DB) NeedsPatchComments(patchID int) bool {
 	var fetched int
 	err := d.conn.QueryRow(

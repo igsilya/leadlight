@@ -29,6 +29,7 @@ type Syncer struct {
 	mboxC       chan MboxRequest
 	updateC     chan PatchUpdateRequest
 	commentC    chan CommentRequest
+	checkC      chan int
 	syncNowC    chan context.Context
 	commentSkip map[int]time.Time // last failure time per item; retried after cooldown
 	detailSkip  map[int]time.Time
@@ -76,6 +77,7 @@ func NewSyncer(
 		mboxC:       make(chan MboxRequest, 4),
 		updateC:     make(chan PatchUpdateRequest, 4),
 		commentC:    make(chan CommentRequest, 4),
+		checkC:      make(chan int, 4),
 		syncNowC:    make(chan context.Context, 1),
 		commentSkip: map[int]time.Time{},
 		detailSkip:  map[int]time.Time{},
@@ -107,6 +109,14 @@ func (s *Syncer) RequestComments(id int, isCover bool) {
 	select {
 	case s.commentC <- CommentRequest{ID: id, IsCover: isCover}:
 		s.status.Set(status.Comments, "Fetching comments...", true)
+	default:
+	}
+}
+
+func (s *Syncer) RequestChecks(patchID int) {
+	select {
+	case s.checkC <- patchID:
+		s.status.Set(status.BgChecks, "Fetching checks...", true)
 	default:
 	}
 }
@@ -195,6 +205,13 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 					s.fetchCommentsForPatch(noRL, req.ID)
 				}
 				s.status.Clear(status.Comments)
+				s.notify()
+			}()
+		case patchID := <-s.checkC:
+			go func() {
+				noRL := api.WithNoRateLimit(ctx)
+				s.fetchChecksForPatch(noRL, patchID)
+				s.status.Clear(status.BgChecks)
 				s.notify()
 			}()
 		}
@@ -1150,6 +1167,33 @@ func (s *Syncer) fetchNextChecks(ctx context.Context) fetchResult {
 		return fetchTerminal
 	}
 	return fetchNone
+}
+
+// fetchChecksForPatch fetches all checks for a single patch on demand
+// (user-initiated, bypasses rate limit).
+func (s *Syncer) fetchChecksForPatch(
+	ctx context.Context, patchID int,
+) {
+	checks, err := s.client.GetPatchChecks(ctx, patchID)
+	if err != nil {
+		log.Printf("fetch checks %d: %v", patchID, err)
+		return
+	}
+	for _, c := range checks {
+		s.db.SaveCheck(db.CheckRow{
+			ID:          c.ID,
+			PatchID:     patchID,
+			Context:     c.Context,
+			State:       c.State,
+			TargetURL:   ptrStr(c.TargetURL),
+			Description: ptrStr(c.Description),
+			Date:        c.Date,
+		})
+	}
+	s.db.RecountPatchChecks(patchID)
+	s.db.MarkChecksFetched(patchID)
+	log.Printf("SYNC: on-demand fetched %d checks for patch %d",
+		len(checks), patchID)
 }
 
 // Bump when tag extraction logic changes. MigrateTags re-extracts all

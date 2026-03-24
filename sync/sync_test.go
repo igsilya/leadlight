@@ -2822,6 +2822,58 @@ func TestBackfillHistory_AlreadyComplete(t *testing.T) {
 	}
 }
 
+func TestFetchChecksForPatch_OnDemand(t *testing.T) {
+	checksJSON := `[
+		{"id": 1, "state": "success", "context": "ci/build",
+		 "target_url": "https://ci.example.com/1",
+		 "description": "All tests passed", "date": "2026-03-10"}
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(checksJSON))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	if !d.NeedsPatchChecks(100) {
+		t.Fatal("should need checks before fetch")
+	}
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.fetchChecksForPatch(context.Background(), 100)
+
+	if d.NeedsPatchChecks(100) {
+		t.Error("should not need checks after on-demand fetch")
+	}
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 1 {
+		t.Fatalf("got %d checks, want 1", len(checks))
+	}
+	if checks[0].Description != "All tests passed" {
+		t.Errorf("description = %q", checks[0].Description)
+	}
+	row, _ := d.GetPatch(100)
+	if row.ChecksPass != 1 {
+		t.Errorf("pass = %d, want 1", row.ChecksPass)
+	}
+}
+
 func TestFetchNextChecks_Terminal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {

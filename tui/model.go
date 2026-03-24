@@ -180,6 +180,7 @@ type Model struct {
 	RequestSync        func()
 	FetchPatchComments func(patchID int)
 	FetchCoverComments func(coverID int)
+	FetchPatchChecks   func(patchID int)
 	RequestPatchUpdate func(
 		patchID int, state *string,
 		delegateUsername *string, unsetDelegate bool,

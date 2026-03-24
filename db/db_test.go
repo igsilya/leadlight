@@ -1872,6 +1872,25 @@ func TestStartupReset_ChecksWithDescriptions_NoReset(t *testing.T) {
 	}
 }
 
+func TestNeedsPatchChecks(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	if !d.NeedsPatchChecks(100) {
+		t.Error("should need checks initially")
+	}
+	d.MarkChecksFetched(100)
+	if d.NeedsPatchChecks(100) {
+		t.Error("should not need checks after marking")
+	}
+	d.ResetChecksFetched(100)
+	if !d.NeedsPatchChecks(100) {
+		t.Error("should need checks after reset")
+	}
+}
+
 func TestGetPatchesNeedingComments(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{
