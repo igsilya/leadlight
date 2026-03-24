@@ -138,13 +138,13 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updateSelectedID()
 		return m, m.resetHighlight()
 
-	case "home":
+	case "home", "g":
 		m.selectedRow = 0
 		m.scrollOffset = 0
 		m.updateSelectedID()
 		return m, m.resetHighlight()
 
-	case "end":
+	case "end", "G":
 		items := m.getVisibleItems()
 		m.selectedRow = len(items) - 1
 		m.ensureSelectedVisible()
