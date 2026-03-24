@@ -12,7 +12,8 @@ type theme struct {
 	SubRowFgBlend  float64
 
 	HeaderFg, SeparatorFg           string
-	HelpFg, HelpBrightFg, HelpDimFg string
+	HelpBrightFg, HelpFg, HelpSepFg string
+	HelpDimFg                       string
 	StatusFg                        string
 
 	NormalOptionFg      string
@@ -63,9 +64,10 @@ var darkTheme = theme{
 	HeaderFg:    "15",  // bright white
 	SeparatorFg: "240", // mid-grey
 
-	HelpFg:       "241", // grey
-	HelpBrightFg: "250", // light grey
-	HelpDimFg:    "236", // dark grey
+	HelpBrightFg: "250",     // white-grey (keys)
+	HelpFg:       "#7f849c", // muted blue-grey (descriptions)
+	HelpSepFg:    "243",     // neutral mid-grey (separators, brackets)
+	HelpDimFg:    "236",     // very dark grey (inactive pane)
 
 	StatusFg: "214", // warm amber
 
@@ -121,9 +123,10 @@ var lightTheme = theme{
 	HeaderFg:    "0",   // black
 	SeparatorFg: "245", // mid-grey
 
-	HelpFg:       "244", // grey
-	HelpBrightFg: "236", // dark grey
-	HelpDimFg:    "250", // light grey
+	HelpBrightFg: "236",     // dark grey (keys)
+	HelpFg:       "#6c7086", // darker blue-grey (descriptions)
+	HelpSepFg:    "247",     // neutral mid-grey (separators, brackets)
+	HelpDimFg:    "250",     // very light grey (inactive pane)
 
 	StatusFg: "166", // burnt orange
 

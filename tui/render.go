@@ -71,34 +71,49 @@ func (m *Model) renderPatchView() string {
 		pct = m.viewportOffset * 100 / maxOff
 	}
 
+	bright, desc, sep := m.helpStyles()
+
 	var status string
 	if len(m.viewComments) > 0 {
-		expandHint := ""
+		var hb strings.Builder
+		hb.WriteString(sep.Render(" "))
+		hb.WriteString(bright.Render("←/→"))
 		if m.viewCommentIdx >= 0 {
+			hb.WriteString(helpSepStr(sep))
 			if m.quotesExpanded {
-				expandHint = "  e collapse"
+				hb.WriteString(helpKey(bright, desc,
+					"e", "collapse"))
 			} else {
-				expandHint = "  e expand"
+				hb.WriteString(helpKey(bright, desc,
+					"e", "expand"))
 			}
 		}
-		hs := m.mainHelp()
-		tabHint := ""
+		hb.WriteString(helpSepStr(sep))
+		hb.WriteString(bright.Render("↑/↓") +
+			sep.Render(" ") + bright.Render("pgup/dn"))
+		hb.WriteString(helpSepStr(sep))
+		hb.WriteString(bright.Render("esc"))
 		if m.logConsole {
-			tabHint = "  tab"
+			hb.WriteString(helpSepStr(sep))
+			hb.WriteString(helpKey(bright, desc, "tab", "log"))
 		}
-		helpText := hs.Render(fmt.Sprintf(
-			" ←/→%s | ↑/↓ pgup/dn | esc%s  %d%%", expandHint, tabHint, pct))
+		hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
+		helpText := hb.String()
 		barWidth := m.width - lipgloss.Width(helpText)
 		commentBar := m.renderCommentBar(barWidth)
 		status = commentBar + helpText
 	} else {
-		hs := m.mainHelp()
-		tabHint := ""
+		var hb strings.Builder
+		hb.WriteString(bright.Render("↑/↓") +
+			sep.Render(" ") + bright.Render("pgup/dn"))
+		hb.WriteString(helpSepStr(sep))
+		hb.WriteString(helpKey(bright, desc, "esc", "back"))
 		if m.logConsole {
-			tabHint = " | tab log"
+			hb.WriteString(helpSepStr(sep))
+			hb.WriteString(helpKey(bright, desc, "tab", "log"))
 		}
-		status = hs.Render(fmt.Sprintf(
-			"↑/↓ pgup/dn | esc back%s  %d%%", tabHint, pct))
+		hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
+		status = hb.String()
 	}
 
 	status = m.appendActiveStatus(status)
@@ -723,46 +738,81 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		return
 	}
 
-	hs := m.mainHelp()
+	bright, desc, sep := m.helpStyles()
 
 	if m.filterMode {
-		label := hs.Render("Filter: ")
-		text := normalOptionStyle.Render(m.filterText + "_")
-		hint := hs.Render("  ↑/↓ pgup/dn | esc clear")
-		out.WriteString(label + text + hint)
+		out.WriteString(desc.Render("Filter: "))
+		out.WriteString(normalOptionStyle.Render(m.filterText + "_"))
+		out.WriteString(sep.Render("  "))
+		out.WriteString(bright.Render("↑/↓") +
+			sep.Render(" ") + bright.Render("pgup/dn"))
+		out.WriteString(helpSepStr(sep))
+		out.WriteString(helpKey(bright, desc, "esc", "clear"))
 		return
 	}
 
-	filterLabel := "[" + strings.Join(m.states, ", ") + "]"
-	toggleHint := "a all"
-	if m.showAll {
-		filterLabel = "[all]"
-		toggleHint = "a active"
-	}
+	// Filter indicator: [filter: active] / [filter: all] / [filter: text]
+	var b strings.Builder
 	if m.filterText != "" {
-		filterLabel += " /" + m.filterText
+		b.WriteString(sep.Render("[") +
+			bright.Render("filter") +
+			sep.Render(": ") +
+			bright.Render(m.filterText) +
+			sep.Render("] "))
+	} else if m.showAll {
+		b.WriteString(sep.Render("[") +
+			desc.Render("filter") +
+			sep.Render(": ") +
+			bright.Render("all") +
+			sep.Render("] "))
+	} else {
+		b.WriteString(sep.Render("[") +
+			desc.Render("filter") +
+			sep.Render(": ") +
+			bright.Render("active") +
+			sep.Render("] "))
 	}
 
-	tabHint := ""
+	b.WriteString(helpKey(bright, desc, "q", "quit"))
+	b.WriteString(helpSepStr(sep))
+	b.WriteString(bright.Render("↑/↓") +
+		sep.Render(" ") + bright.Render("pgup/dn"))
+	b.WriteString(helpSepStr(sep))
+	b.WriteString(helpKey(bright, desc, "enter", "view"))
+	b.WriteString(helpSepStr(sep))
+	b.WriteString(helpKey(bright, desc, "space", "expand"))
+	b.WriteString(helpSepStr(sep))
+	b.WriteString(helpKey(bright, desc, "/", "filter"))
+	b.WriteString(helpSepStr(sep))
+	b.WriteString(helpKey(bright, desc, "f", "fetch"))
+	b.WriteString(helpSepStr(sep))
+	if m.showAll {
+		b.WriteString(helpKey(bright, desc, "a", "active"))
+	} else {
+		b.WriteString(helpKey(bright, desc, "a", "all"))
+	}
 	if m.logConsole {
-		tabHint = " | tab log"
+		b.WriteString(helpSepStr(sep))
+		b.WriteString(helpKey(bright, desc, "tab", "log"))
 	}
-	help := hs.Render(
-		filterLabel + " q quit | ↑/↓ pgup/dn" +
-			" | enter view | space expand | / filter | f fetch | " + toggleHint + tabHint)
 
-	out.WriteString(m.appendActiveStatus(help))
+	out.WriteString(m.appendActiveStatus(b.String()))
 }
 
 func (m *Model) renderSelectorBar(out *strings.Builder) {
-	prefix := "Status"
+	bright, desc, sep := m.helpStyles()
+	var prefix string
 	if m.selectorMode == selectorDelegate {
-		prefix = "Delegate"
+		prefix = bright.Render("Delegate")
+		if m.selectorFilter != "" {
+			prefix += sep.Render(" [") +
+				bright.Render(m.selectorFilter) +
+				sep.Render("]")
+		}
+	} else {
+		prefix = bright.Render("Status")
 	}
-	if m.selectorFilter != "" {
-		prefix += " [" + m.selectorFilter + "]"
-	}
-	prefix += ": "
+	prefix += sep.Render(": ")
 
 	filtered, _ := m.filteredOptions()
 	entries := make([]barEntry, len(filtered))
@@ -770,37 +820,54 @@ func (m *Model) renderSelectorBar(out *strings.Builder) {
 		entries[i] = barEntry{opt, 2 + len(opt)}
 	}
 
-	maxWidth := m.width - len(prefix)
+	maxWidth := m.width - lipgloss.Width(prefix)
 	rendered, lo, hi := renderScrollBar(entries, m.selectorCursor, maxWidth, 9)
 	m.selectorBarLo = lo
 	m.selectorBarHi = hi
-	out.WriteString(helpStyle.Render(prefix) + rendered)
+	out.WriteString(prefix + rendered)
 	out.WriteByte('\n')
 
-	hint := "←/→ select | enter confirm | esc "
+	out.WriteString(helpKey(bright, desc, "←/→", "select"))
+	out.WriteString(helpSepStr(sep))
+	out.WriteString(helpKey(bright, desc, "enter", "confirm"))
+	out.WriteString(helpSepStr(sep))
 	if m.selectorFilter != "" {
-		hint += "clear filter"
+		out.WriteString(helpKey(bright, desc, "esc", "clear filter"))
 	} else {
-		hint += "cancel"
+		out.WriteString(helpKey(bright, desc, "esc", "cancel"))
 	}
 	if m.selectorMode == selectorDelegate {
-		hint += ", type to filter"
+		out.WriteString(desc.Render(", type to filter"))
 	}
-	out.WriteString(helpStyle.Render(hint))
 }
 
-func (m *Model) mainHelp() lipgloss.Style {
+// helpStyles returns bright (keys), desc (descriptions), and sep
+// (separators/brackets) styles for help bar elements. When the main
+// pane is inactive, all return the same dim style for a monotone
+// unfocused look.
+func (m *Model) helpStyles() (bright, desc, sep lipgloss.Style) {
 	if m.logConsole && m.logFocused {
-		return helpDimStyle
+		return helpDimStyle, helpDimStyle, helpDimStyle
 	}
-	return helpBrightStyle
+	return helpBrightStyle, helpStyle, helpSepStyle
 }
 
-func (m *Model) logHelp() lipgloss.Style {
+func (m *Model) logHelpStyles() (bright, desc, sep lipgloss.Style) {
 	if m.logFocused {
-		return helpBrightStyle
+		return helpBrightStyle, helpStyle, helpSepStyle
 	}
-	return helpDimStyle
+	return helpDimStyle, helpDimStyle, helpDimStyle
+}
+
+func helpKey(bright, desc lipgloss.Style, key, descText string) string {
+	if descText == "" {
+		return bright.Render(key)
+	}
+	return bright.Render(key) + desc.Render(" "+descText)
+}
+
+func helpSepStr(sep lipgloss.Style) string {
+	return sep.Render(" | ")
 }
 
 func (m *Model) renderLogConsole(height int) string {
@@ -851,8 +918,15 @@ func (m *Model) renderLogConsole(height int) string {
 		out.WriteByte('\n')
 	}
 
-	out.WriteString(m.logHelp().Render(
-		"tab switch | ` close | ↑/↓ pgup/dn | w write"))
+	hb, hd, hs := m.logHelpStyles()
+	out.WriteString(helpKey(hb, hd, "tab", "switch"))
+	out.WriteString(helpSepStr(hs))
+	out.WriteString(helpKey(hb, hd, "`", "close"))
+	out.WriteString(helpSepStr(hs))
+	out.WriteString(hb.Render("↑/↓") +
+		hs.Render(" ") + hb.Render("pgup/dn"))
+	out.WriteString(helpSepStr(hs))
+	out.WriteString(helpKey(hb, hd, "w", "write"))
 	return out.String()
 }
 

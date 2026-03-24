@@ -47,6 +47,7 @@ var (
 	separatorStyle         lipgloss.Style
 	helpStyle              lipgloss.Style
 	helpBrightStyle        lipgloss.Style
+	helpSepStyle           lipgloss.Style
 	helpDimStyle           lipgloss.Style
 	statusStyle            lipgloss.Style
 	normalOptionStyle      lipgloss.Style
@@ -119,6 +120,7 @@ func buildStyles(t *theme) {
 	separatorStyle = fg(t.SeparatorFg)
 	helpStyle = fg(t.HelpFg)
 	helpBrightStyle = fg(t.HelpBrightFg)
+	helpSepStyle = fg(t.HelpSepFg)
 	helpDimStyle = fg(t.HelpDimFg)
 	statusStyle = fg(t.StatusFg)
 	normalOptionStyle = fg(t.NormalOptionFg)
