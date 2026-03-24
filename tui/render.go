@@ -749,7 +749,7 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 	}
 	help := hs.Render(
 		filterLabel + " q quit | ↑/↓ pgup/dn" +
-			" | enter view | space expand | / filter | " + toggleHint + tabHint)
+			" | enter view | space expand | / filter | f fetch | " + toggleHint + tabHint)
 
 	out.WriteString(m.appendActiveStatus(help))
 }

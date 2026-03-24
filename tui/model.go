@@ -181,6 +181,7 @@ type Model struct {
 	FetchPatchComments func(patchID int)
 	FetchCoverComments func(coverID int)
 	FetchPatchChecks   func(patchID int)
+	RequestFetchAll    func(seriesID, patchID int)
 	RequestPatchUpdate func(
 		patchID int, state *string,
 		delegateUsername *string, unsetDelegate bool,
@@ -403,6 +404,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if spinning && !m.spinnerRunning {
 			m.spinnerRunning = true
 			return m, spinnerTickCmd()
+		}
+		// If no spinner is running but a timed status entry exists,
+		// schedule a re-render when it expires so Active() cleans it up.
+		if !spinning {
+			if d := m.Status.NextExpiry(); d > 0 {
+				return m, tea.Tick(d, func(time.Time) tea.Msg {
+					return StatusUpdateMsg{}
+				})
+			}
 		}
 		return m, nil
 

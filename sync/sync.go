@@ -30,6 +30,7 @@ type Syncer struct {
 	updateC     chan PatchUpdateRequest
 	commentC    chan CommentRequest
 	checkC      chan int
+	fetchAllC   chan FetchAllRequest
 	syncNowC    chan context.Context
 	commentSkip map[int]time.Time // last failure time per item; retried after cooldown
 	detailSkip  map[int]time.Time
@@ -56,6 +57,30 @@ type PatchUpdateRequest struct {
 	ResultC          chan<- error
 }
 
+type fetchOriginKey struct{}
+
+const (
+	OriginBackground = "background"
+	OriginOnDemand   = "on-demand"
+	OriginFetchAll   = "fetch-all"
+)
+
+func WithFetchOrigin(ctx context.Context, origin string) context.Context {
+	return context.WithValue(ctx, fetchOriginKey{}, origin)
+}
+
+func fetchOrigin(ctx context.Context) string {
+	if v, ok := ctx.Value(fetchOriginKey{}).(string); ok {
+		return v
+	}
+	return OriginBackground
+}
+
+type FetchAllRequest struct {
+	SeriesID int // non-zero for series fetch
+	PatchID  int // non-zero for single patch fetch
+}
+
 type CommentRequest struct {
 	ID      int
 	IsCover bool
@@ -78,6 +103,7 @@ func NewSyncer(
 		updateC:     make(chan PatchUpdateRequest, 4),
 		commentC:    make(chan CommentRequest, 4),
 		checkC:      make(chan int, 4),
+		fetchAllC:   make(chan FetchAllRequest, 4),
 		syncNowC:    make(chan context.Context, 1),
 		commentSkip: map[int]time.Time{},
 		detailSkip:  map[int]time.Time{},
@@ -117,6 +143,30 @@ func (s *Syncer) RequestChecks(patchID int) {
 	select {
 	case s.checkC <- patchID:
 		s.status.Set(status.BgChecks, "Fetching checks...", true)
+	default:
+	}
+}
+
+func (s *Syncer) lookupSeriesID(id int, isCover bool) int {
+	if isCover {
+		cover, _ := s.db.GetCover(id)
+		if cover != nil {
+			return cover.SeriesID
+		}
+		return 0
+	}
+	row, _ := s.db.GetPatch(id)
+	if row != nil {
+		return row.SeriesID
+	}
+	return 0
+}
+
+func (s *Syncer) RequestFetchAll(seriesID, patchID int) {
+	select {
+	case s.fetchAllC <- FetchAllRequest{
+		SeriesID: seriesID, PatchID: patchID}:
+		s.status.Set(status.FetchAll, "Fetching...", true)
 	default:
 	}
 }
@@ -198,20 +248,38 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 			req.ResultC <- s.handlePatchUpdate(ctx, req)
 		case req := <-s.commentC:
 			go func() {
-				noRL := api.WithNoRateLimit(ctx)
+				noRL := WithFetchOrigin(
+					api.WithNoRateLimit(ctx), OriginOnDemand)
+				sid := s.lookupSeriesID(req.ID, req.IsCover)
 				if req.IsCover {
-					s.fetchCommentsForCover(noRL, req.ID)
+					s.fetchCommentsForCover(
+						noRL, req.ID, sid, status.Comments)
 				} else {
-					s.fetchCommentsForPatch(noRL, req.ID)
+					s.fetchCommentsForPatch(
+						noRL, req.ID, sid, status.Comments)
 				}
 				s.status.Clear(status.Comments)
 				s.notify()
 			}()
 		case patchID := <-s.checkC:
 			go func() {
-				noRL := api.WithNoRateLimit(ctx)
-				s.fetchChecksForPatch(noRL, patchID)
+				noRL := WithFetchOrigin(
+					api.WithNoRateLimit(ctx), OriginOnDemand)
+				sid := s.lookupSeriesID(patchID, false)
+				s.fetchChecksForPatch(
+					noRL, patchID, sid, status.BgChecks)
 				s.status.Clear(status.BgChecks)
+				s.notify()
+			}()
+		case req := <-s.fetchAllC:
+			go func() {
+				fctx := WithFetchOrigin(ctx, OriginFetchAll)
+				if req.SeriesID != 0 {
+					s.fetchAllForSeries(fctx, req.SeriesID)
+				} else if req.PatchID != 0 {
+					s.fetchAllForPatch(fctx, req.PatchID)
+				}
+				s.status.Clear(status.FetchAll)
 				s.notify()
 			}()
 		}
@@ -282,8 +350,6 @@ func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 func (s *Syncer) runCommentCycle(ctx context.Context) fetchResult {
 	r1 := s.fetchNextComments(ctx)
 	r2 := s.fetchNextCoverComments(ctx)
-	s.status.Clear(status.BgComments)
-	s.status.Clear(status.BgCoverComments)
 	if r1 == fetchActive || r2 == fetchActive {
 		s.notify()
 		return fetchActive
@@ -694,34 +760,20 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 
 func (s *Syncer) fetchNextComments(ctx context.Context) fetchResult {
 	refs := s.db.GetPatchesNeedingComments(s.cfg.States)
-	for _, ref := range refs {
+	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
-			status.BgComments,
-			fmt.Sprintf("Fetching comments (%d remaining)...",
-				len(refs)))
-		// defer in loop is safe here: the function returns after each item.
-		defer s.status.EndFetch(ref.ID)
-		row, _ := s.db.GetPatch(ref.ID)
-		if row != nil {
-			log.Printf("SYNC: fetchNextComments: patch %d %q",
-				ref.ID, row.Name)
-		}
-		comments, err := s.client.GetPatchComments(ctx, ref.ID)
-		if err != nil {
-			log.Printf("fetch comments %d: %v", ref.ID, err)
+		if !s.fetchCommentsForPatch(ctx, ref.ID, ref.SeriesID,
+			status.BgComments) {
 			s.commentSkip[ref.ID] = time.Now()
 			return fetchNone
 		}
 		delete(s.commentSkip, ref.ID)
-		s.saveComments(comments, ref.ID, 0)
-		s.updatePatchTagsFromComments(ref.ID)
-		s.db.MarkCommentsFetched(ref.ID)
-		log.Printf("SYNC: fetched %d comments for patch %d",
-			len(comments), ref.ID)
+		s.status.SetTimed(status.BgComments,
+			fmt.Sprintf("Comments fetched (%d remaining)",
+				len(refs)-i-1), 3*time.Second)
 		if ref.IsActive {
 			return fetchActive
 		}
@@ -732,30 +784,20 @@ func (s *Syncer) fetchNextComments(ctx context.Context) fetchResult {
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) fetchResult {
 	refs := s.db.GetCoversNeedingComments(s.cfg.States)
-	for _, ref := range refs {
+	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
-			status.BgCoverComments,
-			fmt.Sprintf("Fetching cover comments (%d remaining)...",
-				len(refs)))
-		defer s.status.EndFetch(ref.ID)
-		log.Printf("SYNC: fetchNextCoverComments: cover %d", ref.ID)
-		comments, err := s.client.GetCoverComments(ctx, ref.ID)
-		if err != nil {
-			log.Printf("fetch cover comments %d: %v",
-				ref.ID, err)
+		if !s.fetchCommentsForCover(ctx, ref.ID, ref.SeriesID,
+			status.BgCoverComments) {
 			s.commentSkip[ref.ID] = time.Now()
 			return fetchNone
 		}
 		delete(s.commentSkip, ref.ID)
-		s.saveComments(comments, 0, ref.ID)
-		s.updateCoverTagsFromComments(ref.ID)
-		s.db.MarkCoverCommentsFetched(ref.ID)
-		log.Printf("SYNC: fetched %d comments for cover %d",
-			len(comments), ref.ID)
+		s.status.SetTimed(status.BgCoverComments,
+			fmt.Sprintf("Cover comments fetched (%d remaining)",
+				len(refs)-i-1), 3*time.Second)
 		if ref.IsActive {
 			return fetchActive
 		}
@@ -764,36 +806,54 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) fetchResult {
 	return fetchNone
 }
 
-func (s *Syncer) fetchCommentsForPatch(ctx context.Context, patchID int) {
+func (s *Syncer) fetchCommentsForPatch(
+	ctx context.Context, patchID, seriesID int, sk status.Key,
+) bool {
 	if !s.db.NeedsPatchComments(patchID) {
-		return
+		return true
 	}
-	log.Printf("SYNC: fetchCommentsForPatch: %d", patchID)
+	s.status.StartFetchAndSetStatus(patchID, seriesID, sk,
+		fmt.Sprintf("Fetching comments for patch %d...", patchID))
+	defer s.status.EndFetch(patchID)
+	log.Printf("SYNC [%s]: fetching comments for patch %d",
+		fetchOrigin(ctx), patchID)
 	comments, err := s.client.GetPatchComments(ctx, patchID)
 	if err != nil {
-		log.Printf("fetch comments %d: %v", patchID, err)
-		return
+		log.Printf("SYNC [%s]: fetch comments %d: %v",
+			fetchOrigin(ctx), patchID, err)
+		return false
 	}
-	delete(s.commentSkip, patchID)
 	s.saveComments(comments, patchID, 0)
 	s.updatePatchTagsFromComments(patchID)
 	s.db.MarkCommentsFetched(patchID)
+	log.Printf("SYNC [%s]: fetched %d comments for patch %d",
+		fetchOrigin(ctx), len(comments), patchID)
+	return true
 }
 
-func (s *Syncer) fetchCommentsForCover(ctx context.Context, coverID int) {
+func (s *Syncer) fetchCommentsForCover(
+	ctx context.Context, coverID, seriesID int, sk status.Key,
+) bool {
 	if !s.db.NeedsCoverComments(coverID) {
-		return
+		return true
 	}
-	log.Printf("SYNC: fetchCommentsForCover: %d", coverID)
+	s.status.StartFetchAndSetStatus(coverID, seriesID, sk,
+		fmt.Sprintf("Fetching comments for cover %d...", coverID))
+	defer s.status.EndFetch(coverID)
+	log.Printf("SYNC [%s]: fetching comments for cover %d",
+		fetchOrigin(ctx), coverID)
 	comments, err := s.client.GetCoverComments(ctx, coverID)
 	if err != nil {
-		log.Printf("fetch cover comments %d: %v", coverID, err)
-		return
+		log.Printf("SYNC [%s]: fetch cover comments %d: %v",
+			fetchOrigin(ctx), coverID, err)
+		return false
 	}
-	delete(s.commentSkip, coverID)
 	s.saveComments(comments, 0, coverID)
 	s.updateCoverTagsFromComments(coverID)
 	s.db.MarkCoverCommentsFetched(coverID)
+	log.Printf("SYNC [%s]: fetched %d comments for cover %d",
+		fetchOrigin(ctx), len(comments), coverID)
+	return true
 }
 
 func (s *Syncer) checkMailArchive(ctx context.Context) {
@@ -877,7 +937,6 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
 	result := s.fetchNextDetail(ctx)
-	s.status.Clear(status.Detail)
 	if result != fetchNone {
 		s.notify()
 	}
@@ -892,7 +951,6 @@ func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 			return
 		case <-time.After(interval):
 			result = s.fetchNextDetail(ctx)
-			s.status.Clear(status.Detail)
 			if result != fetchNone {
 				s.notify()
 			}
@@ -909,71 +967,40 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) fetchResult {
 		return fetchNone
 	}
 
-	for _, ref := range patchRefs {
+	for i, ref := range patchRefs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
-			status.Detail,
-			fmt.Sprintf("Fetching details (%d remaining)...",
-				total))
-		defer s.status.EndFetch(ref.ID)
-		log.Printf("SYNC: fetchNextDetail: patch %d", ref.ID)
-		detail, err := s.client.GetPatch(ctx, ref.ID)
-		if err != nil {
-			log.Printf("fetch detail %d: %v", ref.ID, err)
+		if err := s.fetchDetailForPatch(ctx, ref.ID,
+			ref.SeriesID, status.Detail); err != nil {
 			s.detailSkip[ref.ID] = time.Now()
 			return fetchNone
 		}
 		delete(s.detailSkip, ref.ID)
-		prefixes, _ := json.Marshal(detail.Prefixes)
-		headers, _ := json.Marshal(detail.Headers)
-		s.db.UpdatePatchDetail(ref.ID,
-			detail.Content, detail.Diff,
-			string(headers), string(prefixes))
-		if detail.Content != "" {
-			s.db.ClearTags(ref.ID, 0, "original")
-			tags := extractReviewTags(detail.Content)
-			s.db.SaveTags(ref.ID, 0, 0, "original", tags)
-		}
-		log.Printf("SYNC: fetched detail for patch %d (%d bytes)",
-			ref.ID, len(detail.Content))
+		s.status.SetTimed(status.Detail,
+			fmt.Sprintf("Details fetched (%d remaining)",
+				total-i-1), 3*time.Second)
 		if ref.IsActive {
 			return fetchActive
 		}
 		return fetchTerminal
 	}
 
-	for _, ref := range coverRefs {
+	for i, ref := range coverRefs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
-			status.Detail,
-			fmt.Sprintf("Fetching details (%d remaining)...",
-				total))
-		defer s.status.EndFetch(ref.ID)
-		log.Printf("SYNC: fetchNextDetail: cover %d", ref.ID)
-		cover, err := s.client.GetCover(ctx, ref.ID)
-		if err != nil {
-			log.Printf("fetch cover detail %d: %v",
-				ref.ID, err)
+		if err := s.fetchDetailForCover(ctx, ref.ID,
+			ref.SeriesID, status.Detail); err != nil {
 			s.detailSkip[ref.ID] = time.Now()
 			return fetchNone
 		}
 		delete(s.detailSkip, ref.ID)
-		hdrs, _ := json.Marshal(cover.Headers)
-		s.db.UpdateCoverDetail(ref.ID,
-			cover.Content, string(hdrs))
-		if cover.Content != "" {
-			s.db.ClearTags(0, ref.ID, "original")
-			tags := extractReviewTags(cover.Content)
-			s.db.SaveTags(0, ref.ID, 0, "original", tags)
-		}
-		log.Printf("SYNC: fetched detail for cover %d (%d bytes)",
-			ref.ID, len(cover.Content))
+		s.status.SetTimed(status.Detail,
+			fmt.Sprintf("Details fetched (%d remaining)",
+				total-len(patchRefs)-i-1), 3*time.Second)
 		if ref.IsActive {
 			return fetchActive
 		}
@@ -1102,7 +1129,6 @@ func (s *Syncer) runCheckLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
 
 	result := s.fetchNextChecks(ctx)
-	s.status.Clear(status.BgChecks)
 	if result != fetchNone {
 		s.notify()
 	}
@@ -1117,7 +1143,6 @@ func (s *Syncer) runCheckLoop(ctx context.Context, wg *gosync.WaitGroup) {
 			return
 		case <-time.After(interval):
 			result = s.fetchNextChecks(ctx)
-			s.status.Clear(status.BgChecks)
 			if result != fetchNone {
 				s.notify()
 			}
@@ -1127,40 +1152,22 @@ func (s *Syncer) runCheckLoop(ctx context.Context, wg *gosync.WaitGroup) {
 
 func (s *Syncer) fetchNextChecks(ctx context.Context) fetchResult {
 	refs := s.db.GetPatchesNeedingChecks(s.cfg.States)
-	for _, ref := range refs {
+	for i, ref := range refs {
 		if t, ok := s.checkSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
-		s.status.StartFetchAndSetStatus(ref.ID, ref.SeriesID,
-			status.BgChecks,
-			fmt.Sprintf("Fetching checks (%d remaining)...",
-				len(refs)))
-		// defer in loop is safe here: the function returns after each item.
-		defer s.status.EndFetch(ref.ID)
-
-		checks, err := s.client.GetPatchChecks(ctx, ref.ID)
-		if err != nil {
-			log.Printf("fetch checks %d: %v", ref.ID, err)
+		s.fetchChecksForPatch(ctx, ref.ID, ref.SeriesID,
+			status.BgChecks)
+		if s.db.NeedsPatchChecks(ref.ID) {
+			// Fetch failed — the shared function logged the error
 			s.checkSkip[ref.ID] = time.Now()
 			return fetchNone
 		}
 		delete(s.checkSkip, ref.ID)
-		for _, c := range checks {
-			s.db.SaveCheck(db.CheckRow{
-				ID:          c.ID,
-				PatchID:     ref.ID,
-				Context:     c.Context,
-				State:       c.State,
-				TargetURL:   ptrStr(c.TargetURL),
-				Description: ptrStr(c.Description),
-				Date:        c.Date,
-			})
-		}
-		s.db.RecountPatchChecks(ref.ID)
-		s.db.MarkChecksFetched(ref.ID)
-		log.Printf("SYNC: fetched %d checks for patch %d",
-			len(checks), ref.ID)
+		s.status.SetTimed(status.BgChecks,
+			fmt.Sprintf("Checks fetched (%d remaining)",
+				len(refs)-i-1), 3*time.Second)
 		if ref.IsActive {
 			return fetchActive
 		}
@@ -1169,14 +1176,132 @@ func (s *Syncer) fetchNextChecks(ctx context.Context) fetchResult {
 	return fetchNone
 }
 
-// fetchChecksForPatch fetches all checks for a single patch on demand
-// (user-initiated, bypasses rate limit).
-func (s *Syncer) fetchChecksForPatch(
+// fetchAllForSeries fetches all data for a series: cover detail +
+// comments, and for each patch: detail + comments + checks. Uses
+// the standard rate limit (not bypassed).
+func (s *Syncer) fetchAllForSeries(
+	ctx context.Context, seriesID int,
+) {
+	patches := s.db.GetPatchesForSeries(seriesID)
+	total := len(patches)
+
+	cover, _ := s.db.GetCover(seriesID)
+	if cover != nil {
+		if !cover.DetailFetched {
+			s.fetchDetailForCover(ctx, cover.ID,
+				seriesID, status.FetchAll)
+		}
+		s.fetchCommentsForCover(ctx, cover.ID,
+			seriesID, status.FetchAll)
+	}
+
+	for i, p := range patches {
+		if !p.DetailFetched {
+			s.fetchDetailForPatch(ctx, p.ID,
+				seriesID, status.FetchAll)
+		}
+		s.fetchCommentsForPatch(ctx, p.ID,
+			seriesID, status.FetchAll)
+		s.fetchChecksForPatch(ctx, p.ID,
+			seriesID, status.FetchAll)
+		s.status.SetTimed(status.FetchAll,
+			fmt.Sprintf("Series %d: %d/%d patches done",
+				seriesID, i+1, total),
+			3*time.Second)
+		s.notify()
+	}
+}
+
+// fetchAllForPatch fetches all data for a single patch: detail +
+// comments + checks. Uses the standard rate limit (not bypassed).
+func (s *Syncer) fetchAllForPatch(
 	ctx context.Context, patchID int,
 ) {
+	row, _ := s.db.GetPatch(patchID)
+	if row == nil {
+		return
+	}
+	seriesID := row.SeriesID
+	if !row.DetailFetched {
+		s.fetchDetailForPatch(ctx, patchID,
+			seriesID, status.FetchAll)
+	}
+	s.fetchCommentsForPatch(ctx, patchID,
+		seriesID, status.FetchAll)
+	s.fetchChecksForPatch(ctx, patchID,
+		seriesID, status.FetchAll)
+}
+
+// fetchDetailForPatch fetches and saves detail for a single patch.
+func (s *Syncer) fetchDetailForPatch(
+	ctx context.Context, patchID, seriesID int, sk status.Key,
+) error {
+	s.status.StartFetchAndSetStatus(patchID, seriesID, sk,
+		fmt.Sprintf("Fetching details for patch %d...", patchID))
+	defer s.status.EndFetch(patchID)
+	detail, err := s.client.GetPatch(ctx, patchID)
+	if err != nil {
+		log.Printf("SYNC [%s]: fetch details %d: %v",
+			fetchOrigin(ctx), patchID, err)
+		return err
+	}
+	prefixes, _ := json.Marshal(detail.Prefixes)
+	headers, _ := json.Marshal(detail.Headers)
+	s.db.UpdatePatchDetail(patchID,
+		detail.Content, detail.Diff,
+		string(headers), string(prefixes))
+	if detail.Content != "" {
+		s.db.ClearTags(patchID, 0, "original")
+		tags := extractReviewTags(detail.Content)
+		s.db.SaveTags(patchID, 0, 0, "original", tags)
+	}
+	log.Printf("SYNC [%s]: fetched details for patch %d (%d bytes)",
+		fetchOrigin(ctx), patchID, len(detail.Content))
+	return nil
+}
+
+// fetchDetailForCover fetches and saves detail for a single cover.
+func (s *Syncer) fetchDetailForCover(
+	ctx context.Context, coverID, seriesID int, sk status.Key,
+) error {
+	s.status.StartFetchAndSetStatus(coverID, seriesID, sk,
+		fmt.Sprintf("Fetching details for cover %d...", coverID))
+	defer s.status.EndFetch(coverID)
+	cover, err := s.client.GetCover(ctx, coverID)
+	if err != nil {
+		log.Printf("SYNC [%s]: fetch cover details %d: %v",
+			fetchOrigin(ctx), coverID, err)
+		return err
+	}
+	hdrs, _ := json.Marshal(cover.Headers)
+	s.db.UpdateCoverDetail(coverID,
+		cover.Content, string(hdrs))
+	if cover.Content != "" {
+		s.db.ClearTags(0, coverID, "original")
+		tags := extractReviewTags(cover.Content)
+		s.db.SaveTags(0, coverID, 0, "original", tags)
+	}
+	log.Printf("SYNC [%s]: fetched details for cover %d (%d bytes)",
+		fetchOrigin(ctx), coverID, len(cover.Content))
+	return nil
+}
+
+// fetchChecksForPatch fetches all checks for a single patch.
+func (s *Syncer) fetchChecksForPatch(
+	ctx context.Context, patchID, seriesID int, sk status.Key,
+) {
+	if !s.db.NeedsPatchChecks(patchID) {
+		return
+	}
+	s.status.StartFetchAndSetStatus(patchID, seriesID, sk,
+		fmt.Sprintf("Fetching checks for patch %d...", patchID))
+	defer s.status.EndFetch(patchID)
+	log.Printf("SYNC [%s]: fetching checks for patch %d",
+		fetchOrigin(ctx), patchID)
 	checks, err := s.client.GetPatchChecks(ctx, patchID)
 	if err != nil {
-		log.Printf("fetch checks %d: %v", patchID, err)
+		log.Printf("SYNC [%s]: fetch checks %d: %v",
+			fetchOrigin(ctx), patchID, err)
 		return
 	}
 	for _, c := range checks {
@@ -1192,8 +1317,8 @@ func (s *Syncer) fetchChecksForPatch(
 	}
 	s.db.RecountPatchChecks(patchID)
 	s.db.MarkChecksFetched(patchID)
-	log.Printf("SYNC: on-demand fetched %d checks for patch %d",
-		len(checks), patchID)
+	log.Printf("SYNC [%s]: fetched %d checks for patch %d",
+		fetchOrigin(ctx), len(checks), patchID)
 }
 
 // Bump when tag extraction logic changes. MigrateTags re-extracts all

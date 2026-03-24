@@ -132,6 +132,9 @@ func main() {
 	m.FetchPatchChecks = func(patchID int) {
 		go syncer.RequestChecks(patchID)
 	}
+	m.RequestFetchAll = func(seriesID, patchID int) {
+		syncer.RequestFetchAll(seriesID, patchID)
+	}
 
 	m.RequestCoverMbox = func(seriesID int) {
 		log.Printf("MAIN: RequestCoverMbox series=%d", seriesID)

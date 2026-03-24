@@ -16,6 +16,7 @@ const (
 	Detail          Key = "detail"
 	BgChecks        Key = "bgchecks"
 	History         Key = "history"
+	FetchAll        Key = "fetchall"
 	Archive         Key = "archive"
 	Update          Key = "update"
 	Info            Key = "info"
@@ -146,6 +147,29 @@ func (r *Registry) HasActiveFetches() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.activeFetches) > 0
+}
+
+// NextExpiry returns the duration until the next timed entry expires,
+// or 0 if there are no pending timed entries.
+func (r *Registry) NextExpiry() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var earliest time.Time
+	for _, e := range r.entries {
+		if !e.expireAt.IsZero() {
+			if earliest.IsZero() || e.expireAt.Before(earliest) {
+				earliest = e.expireAt
+			}
+		}
+	}
+	if earliest.IsZero() {
+		return 0
+	}
+	d := time.Until(earliest)
+	if d <= 0 {
+		return time.Millisecond
+	}
+	return d
 }
 
 // Active returns the most recently updated status message for display.

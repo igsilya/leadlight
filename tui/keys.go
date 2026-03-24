@@ -182,6 +182,17 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		log.Println("TUI: key 'd' pressed")
 		m.openDelegateSelector()
 
+	case "f":
+		items := m.getVisibleItems()
+		if m.selectedRow < len(items) && m.RequestFetchAll != nil {
+			item := items[m.selectedRow]
+			id, _ := strconv.Atoi(item.data[ColID])
+			if item.isSubRow {
+				m.RequestFetchAll(0, id)
+			} else {
+				m.RequestFetchAll(id, 0)
+			}
+		}
 	case "a":
 		m.showAll = !m.showAll
 		m.reloadData()

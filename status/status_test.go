@@ -201,6 +201,50 @@ func TestActiveFetches_SpinnerLifecycle(t *testing.T) {
 	}
 }
 
+func TestNextExpiry_NoTimedEntries(t *testing.T) {
+	r := NewRegistry(nil)
+	r.Set(BgComments, "fetching...", true)
+	if d := r.NextExpiry(); d != 0 {
+		t.Errorf("NextExpiry = %v, want 0 (no timed entries)", d)
+	}
+}
+
+func TestNextExpiry_SingleTimed(t *testing.T) {
+	r := NewRegistry(nil)
+	r.SetTimed(Info, "done", 3*time.Second)
+	d := r.NextExpiry()
+	if d <= 0 || d > 3*time.Second {
+		t.Errorf("NextExpiry = %v, want 0 < d <= 3s", d)
+	}
+}
+
+func TestNextExpiry_AlreadyExpired(t *testing.T) {
+	r := NewRegistry(nil)
+	r.SetTimed(Info, "old", 1*time.Millisecond)
+	time.Sleep(2 * time.Millisecond)
+	d := r.NextExpiry()
+	if d != time.Millisecond {
+		t.Errorf("NextExpiry = %v, want 1ms (immediate)", d)
+	}
+}
+
+func TestNextExpiry_MultipleTimed(t *testing.T) {
+	r := NewRegistry(nil)
+	r.SetTimed(Info, "soon", 1*time.Second)
+	r.SetTimed(BgComments, "later", 5*time.Second)
+	d := r.NextExpiry()
+	if d <= 0 || d > 1*time.Second {
+		t.Errorf("NextExpiry = %v, want <= 1s (soonest)", d)
+	}
+}
+
+func TestNextExpiry_Empty(t *testing.T) {
+	r := NewRegistry(nil)
+	if d := r.NextExpiry(); d != 0 {
+		t.Errorf("NextExpiry = %v, want 0 (empty registry)", d)
+	}
+}
+
 func TestRegistry_Concurrent(t *testing.T) {
 	r := NewRegistry(nil)
 	var wg sync.WaitGroup

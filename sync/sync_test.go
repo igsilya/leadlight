@@ -937,7 +937,7 @@ func TestFetchCommentsForPatch(t *testing.T) {
 	s, d := setupSyncer(t, handler)
 	savePatch(d, 100, "test", "2026-03-10", "new")
 
-	s.fetchCommentsForPatch(context.Background(), 100)
+	s.fetchCommentsForPatch(context.Background(), 100, 50, status.BgComments)
 	if !apiCalled {
 		t.Error("API should be called when comments_fetched = 0")
 	}
@@ -949,7 +949,7 @@ func TestFetchCommentsForPatch(t *testing.T) {
 
 	// Second call should not hit API (already fetched)
 	apiCalled = false
-	s.fetchCommentsForPatch(context.Background(), 100)
+	s.fetchCommentsForPatch(context.Background(), 100, 50, status.BgComments)
 	if apiCalled {
 		t.Error("API should NOT be called when comments_fetched = 1")
 	}
@@ -984,7 +984,7 @@ func TestFetchCommentsForCover(t *testing.T) {
 		Date: "2026-03-10T12:00:00",
 	})
 
-	s.fetchCommentsForCover(context.Background(), 99)
+	s.fetchCommentsForCover(context.Background(), 99, 50, status.BgCoverComments)
 	if !apiCalled {
 		t.Error("API should be called when comments_fetched = 0")
 	}
@@ -996,7 +996,7 @@ func TestFetchCommentsForCover(t *testing.T) {
 
 	// Second call should not hit API
 	apiCalled = false
-	s.fetchCommentsForCover(context.Background(), 99)
+	s.fetchCommentsForCover(context.Background(), 99, 50, status.BgCoverComments)
 	if apiCalled {
 		t.Error("API should NOT be called when comments_fetched = 1")
 	}
@@ -1298,7 +1298,7 @@ func TestUpdatePatchTagsFromComments_SavesTags(t *testing.T) {
 		Date: "2026-03-10", State: "new", Submitter: "Lorem",
 	})
 
-	s.fetchCommentsForPatch(context.Background(), 100)
+	s.fetchCommentsForPatch(context.Background(), 100, 50, status.BgComments)
 
 	tags := d.GetTagsForSeries(50)
 	if len(tags) != 2 {
@@ -1348,7 +1348,7 @@ func TestUpdateCoverTagsFromComments(t *testing.T) {
 		Name: "cover", Date: "2026-03-10",
 	})
 
-	s.fetchCommentsForCover(context.Background(), 99)
+	s.fetchCommentsForCover(context.Background(), 99, 50, status.BgCoverComments)
 
 	tags := d.GetTagsForSeries(50)
 	if len(tags) != 1 {
@@ -2707,6 +2707,337 @@ func TestProcessEvent_CheckCreated_WithDescription_KeepsFlag(t *testing.T) {
 	}
 }
 
+func TestFetchAllForPatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			path := r.URL.Path
+			if strings.Contains(path, "/checks/") {
+				w.Write([]byte(`[{"id":1,"state":"success",` +
+					`"context":"ci/build","description":"ok",` +
+					`"date":"2026-03-10"}]`))
+			} else if strings.Contains(path, "/comments/") {
+				w.Write([]byte(`[{"id":10,"date":"2026-03-10",` +
+					`"subject":"Re: test","submitter":` +
+					`{"name":"Lorem","email":"l@ex"},` +
+					`"content":"looks good","msgid":"<c@ex>",` +
+					`"headers":{}}]`))
+			} else if strings.Contains(path, "/patches/") {
+				w.Write([]byte(`{"id":100,"name":"test",` +
+					`"date":"2026-03-10","state":"new",` +
+					`"submitter":{"name":"Ipsum","email":"i@ex"},` +
+					`"content":"body","diff":"---",` +
+					`"headers":{},"prefixes":[],"web_url":"",` +
+					`"msgid":"<p@ex>","mbox":"","commit_ref":null,` +
+					`"archived":false,"series":[]}`))
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.fetchAllForPatch(context.Background(), 100)
+
+	row, _ := d.GetPatch(100)
+	if !row.DetailFetched {
+		t.Error("detail should be fetched")
+	}
+	if d.NeedsPatchComments(100) {
+		t.Error("comments should be fetched")
+	}
+	if d.NeedsPatchChecks(100) {
+		t.Error("checks should be fetched")
+	}
+	checks := d.GetChecksForPatch(100)
+	if len(checks) != 1 {
+		t.Errorf("got %d checks, want 1", len(checks))
+	}
+}
+
+func TestFetchAllForPatch_AlreadyFetched(t *testing.T) {
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte("{}"))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.UpdatePatchDetail(100, "body", "---", "{}", "[]")
+	d.MarkCommentsFetched(100)
+	d.MarkChecksFetched(100)
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.fetchAllForPatch(context.Background(), 100)
+
+	if requestCount != 0 {
+		t.Errorf("expected 0 requests (all fetched), got %d",
+			requestCount)
+	}
+}
+
+func TestFetchAllForSeries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			path := r.URL.Path
+			if strings.Contains(path, "/checks/") {
+				w.Write([]byte("[]"))
+			} else if strings.Contains(path, "/comments/") {
+				w.Write([]byte("[]"))
+			} else if strings.Contains(path, "/covers/") {
+				w.Write([]byte(`{"id":99,"name":"cover",` +
+					`"date":"2026-03-10","content":"body",` +
+					`"headers":{}}`))
+			} else if strings.Contains(path, "/patches/") {
+				w.Write([]byte(`{"id":100,"name":"test",` +
+					`"date":"2026-03-10","state":"new",` +
+					`"submitter":{"name":"Ipsum","email":"i@ex"},` +
+					`"content":"body","diff":"---",` +
+					`"headers":{},"prefixes":[],"web_url":"",` +
+					`"msgid":"<p@ex>","mbox":"","commit_ref":null,` +
+					`"archived":false,"series":[]}`))
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SaveSeriesSummary(50, "test series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "patch 1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 101, SeriesID: 50, Name: "patch 2",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50, Name: "cover",
+		Date: "2026-03-10",
+	})
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.fetchAllForSeries(context.Background(), 50)
+
+	// Patches should be fully fetched
+	row, _ := d.GetPatch(100)
+	if !row.DetailFetched {
+		t.Error("patch 100 detail not fetched")
+	}
+	row, _ = d.GetPatch(101)
+	if !row.DetailFetched {
+		t.Error("patch 101 detail not fetched")
+	}
+	if d.NeedsPatchComments(100) {
+		t.Error("patch 100 comments not fetched")
+	}
+	if d.NeedsPatchComments(101) {
+		t.Error("patch 101 comments not fetched")
+	}
+	if d.NeedsPatchChecks(100) {
+		t.Error("patch 100 checks not fetched")
+	}
+	if d.NeedsPatchChecks(101) {
+		t.Error("patch 101 checks not fetched")
+	}
+
+	// Cover should be fetched
+	cover, _ := d.GetCover(50)
+	if !cover.DetailFetched {
+		t.Error("cover detail not fetched")
+	}
+	if d.NeedsCoverComments(99) {
+		t.Error("cover comments not fetched")
+	}
+}
+
+func TestFetchAllForSeries_PartiallyFetched(t *testing.T) {
+	requestPaths := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			requestPaths = append(requestPaths, r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			path := r.URL.Path
+			if strings.Contains(path, "/checks/") {
+				w.Write([]byte("[]"))
+			} else if strings.Contains(path, "/comments/") {
+				w.Write([]byte("[]"))
+			} else if strings.Contains(path, "/patches/") {
+				w.Write([]byte(`{"id":101,"name":"test",` +
+					`"date":"2026-03-10","state":"new",` +
+					`"submitter":{"name":"Ipsum","email":"i@ex"},` +
+					`"content":"body","diff":"---",` +
+					`"headers":{},"prefixes":[],"web_url":"",` +
+					`"msgid":"<p@ex>","mbox":"","commit_ref":null,` +
+					`"archived":false,"series":[]}`))
+			}
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SaveSeriesSummary(50, "test series", "2026-03-10", 1)
+	// Patch 100: fully fetched
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "patch 1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.UpdatePatchDetail(100, "body", "---", "{}", "[]")
+	d.MarkCommentsFetched(100)
+	d.MarkChecksFetched(100)
+	// Patch 101: not fetched
+	d.SavePatch(db.PatchRow{
+		ID: 101, SeriesID: 50, Name: "patch 2",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.fetchAllForSeries(context.Background(), 50)
+
+	// Should only have fetched for patch 101 (100 already done)
+	has100 := false
+	for _, p := range requestPaths {
+		if strings.Contains(p, "/100/") {
+			has100 = true
+		}
+	}
+	if has100 {
+		t.Error("should not fetch for patch 100 (already complete)")
+	}
+	if d.NeedsPatchChecks(101) {
+		t.Error("patch 101 checks should be fetched")
+	}
+}
+
+func TestFetchDetailForPatch_Extracted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":100,"name":"test",` +
+				`"date":"2026-03-10","state":"new",` +
+				`"submitter":{"name":"Lorem","email":"l@ex"},` +
+				`"content":"Reviewed-by: Ipsum <i@ex>",` +
+				`"diff":"---","headers":{},"prefixes":[],` +
+				`"web_url":"","msgid":"<p@ex>","mbox":"",` +
+				`"commit_ref":null,"archived":false,"series":[]}`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	err := s.fetchDetailForPatch(context.Background(), 100, 50, status.Detail)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	row, _ := d.GetPatch(100)
+	if !row.DetailFetched {
+		t.Error("detail not marked as fetched")
+	}
+}
+
+func TestFetchDetailForCover_Extracted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":99,"name":"cover",` +
+				`"date":"2026-03-10","content":"overview",` +
+				`"headers":{}}`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50, Name: "cover",
+		Date: "2026-03-10",
+	})
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	err := s.fetchDetailForCover(context.Background(), 99, 50, status.Detail)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cover, _ := d.GetCover(50)
+	if !cover.DetailFetched {
+		t.Error("cover detail not marked as fetched")
+	}
+}
+
 func TestBackfillHistory_Disabled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -2856,7 +3187,7 @@ func TestFetchChecksForPatch_OnDemand(t *testing.T) {
 	s := NewSyncer(client, d, cfg, func() {},
 		status.NewRegistry(nil))
 
-	s.fetchChecksForPatch(context.Background(), 100)
+	s.fetchChecksForPatch(context.Background(), 100, 50, status.BgChecks)
 
 	if d.NeedsPatchChecks(100) {
 		t.Error("should not need checks after on-demand fetch")
