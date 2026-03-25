@@ -282,26 +282,6 @@ func TestUpdatePatchChecks(t *testing.T) {
 	}
 }
 
-func TestUpdatePatchMbox(t *testing.T) {
-	d := openTestDB(t)
-
-	d.SavePatch(PatchRow{
-		ID: 100, Name: "test",
-		Date: "2026-03-10T12:00:00", State: "new",
-		Submitter: "Lorem",
-	})
-
-	mbox := "From: Lorem <lorem@ipsum.example>\nSubject: [PATCH] Lorem ipsum\n\nlorem ipsum content"
-	if err := d.UpdatePatchMbox(100, mbox); err != nil {
-		t.Fatal(err)
-	}
-
-	row, _ := d.GetPatch(100)
-	if row.MboxContent != mbox {
-		t.Errorf("MboxContent = %q", row.MboxContent)
-	}
-}
-
 func TestSaveCheck_InsertAndUpsert(t *testing.T) {
 	d := openTestDB(t)
 
@@ -1872,6 +1852,37 @@ func TestStartupReset_ChecksWithDescriptions_NoReset(t *testing.T) {
 	}
 }
 
+func TestNeedsPatchDetail(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "test", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	if !d.NeedsPatchDetail(100) {
+		t.Error("should need detail initially")
+	}
+	d.UpdatePatchDetail(100, "body", "---", "{}", "[]")
+	if d.NeedsPatchDetail(100) {
+		t.Error("should not need detail after update")
+	}
+}
+
+func TestNeedsCoverDetail(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "cover",
+		Date: "2026-03-10",
+	})
+	if !d.NeedsCoverDetail(99) {
+		t.Error("should need detail initially")
+	}
+	d.UpdateCoverDetail(99, "body", "{}")
+	if d.NeedsCoverDetail(99) {
+		t.Error("should not need detail after update")
+	}
+}
+
 func TestNeedsPatchChecks(t *testing.T) {
 	d := openTestDB(t)
 	d.SavePatch(PatchRow{
@@ -2347,25 +2358,6 @@ func TestGetAllSeries(t *testing.T) {
 	all := d.GetAllSeries()
 	if len(all) != 2 {
 		t.Errorf("all = %d, want 2", len(all))
-	}
-}
-
-func TestUpdateCoverMbox(t *testing.T) {
-	d := openTestDB(t)
-	d.SaveCover(CoverRow{
-		ID: 99, SeriesID: 50,
-		Name: "Lorem cover", Date: "2026-03-10",
-		MboxURL: "https://pw.example.com/cover/99/mbox/",
-	})
-
-	d.UpdateCoverMbox(99, "From lorem cover mbox content")
-
-	cover, err := d.GetCover(50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cover.MboxContent != "From lorem cover mbox content" {
-		t.Errorf("MboxContent = %q", cover.MboxContent)
 	}
 }
 

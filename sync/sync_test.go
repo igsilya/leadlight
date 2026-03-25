@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	gosync "sync"
 	"testing"
 	"time"
 
@@ -262,117 +261,6 @@ func TestExtractReviewTags_Fixes(t *testing.T) {
 	tags := extractReviewTags(content)
 	if len(tags["fixes"]) != 1 {
 		t.Errorf("fixes = %d", len(tags["fixes"]))
-	}
-}
-
-func TestFetchMbox_Cached(t *testing.T) {
-	s, d := setupSyncer(t, http.NotFoundHandler())
-	savePatch(d, 100, "test", "2026-03-10", "new")
-	d.UpdatePatchMbox(100, "cached mbox content")
-
-	result := s.fetchMbox(context.Background(), 100)
-	if result.Err != nil {
-		t.Fatal(result.Err)
-	}
-	if result.Content != "cached mbox content" {
-		t.Errorf("Content = %q", result.Content)
-	}
-}
-
-const testMboxContent = "From patchwork Mon Mar 10 12:00:00 2026\n" +
-	"Subject: [PATCH] Lorem ipsum\n" +
-	"From: Lorem <lorem@ipsum.example>\n" +
-	"\nLorem ipsum dolor sit amet.\n"
-
-func TestFetchMbox_FromLore(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/lorem-001@ipsum.example/raw" {
-				w.Write([]byte(testMboxContent))
-				return
-			}
-			w.WriteHeader(404)
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test",
-		LoreURL: srv.URL + "/",
-	}
-
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-
-	d.SavePatch(db.PatchRow{
-		ID: 100, Name: "test",
-		Date:      "2026-03-10",
-		State:     "new",
-		MsgID:     "<lorem-001@ipsum.example>",
-		Submitter: "Lorem",
-	})
-
-	result := s.fetchMbox(context.Background(), 100)
-	if result.Err != nil {
-		t.Fatal(result.Err)
-	}
-	if result.Content != testMboxContent {
-		t.Errorf("Content = %q", result.Content)
-	}
-
-	row, _ := d.GetPatch(100)
-	if row.MboxContent != testMboxContent {
-		t.Errorf("cached = %q", row.MboxContent)
-	}
-}
-
-func TestFetchMbox_FromPatchwork(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/patch/100/mbox/" {
-				w.Write([]byte(testMboxContent))
-				return
-			}
-			w.WriteHeader(404)
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test",
-	}
-
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-
-	d.SavePatch(db.PatchRow{
-		ID: 100, Name: "test",
-		Date:      "2026-03-10",
-		State:     "new",
-		MboxURL:   srv.URL + "/patch/100/mbox/",
-		Submitter: "Lorem",
-	})
-
-	result := s.fetchMbox(context.Background(), 100)
-	if result.Err != nil {
-		t.Fatal(result.Err)
-	}
-	if result.Content != testMboxContent {
-		t.Errorf("Content = %q", result.Content)
 	}
 }
 
@@ -1976,141 +1864,6 @@ func TestNeedsArchiveMonitoring(t *testing.T) {
 	}
 }
 
-func TestIsValidMbox(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    bool
-	}{
-		{"mbox envelope",
-			"From patchwork Sun Nov 30 15:49:21 2025\n" +
-				"Content-Type: text/plain\n", true},
-		{"email headers",
-			"Subject: [PATCH] Lorem ipsum\n\nbody\n", true},
-		{"content type header",
-			"Content-Type: text/plain; charset=utf-8\n" +
-				"Subject: test\n", true},
-		{"message id header",
-			"Message-ID: <lorem@ipsum.example>\n" +
-				"Subject: test\n", true},
-		{"received header",
-			"Received: from smtp.example.com\n" +
-				"Subject: test\n", true},
-		{"return path header",
-			"Return-Path: <lorem@ipsum.example>\n", true},
-		{"dkim header",
-			"DKIM-Signature: v=1; a=rsa-sha256\n", true},
-		{"bot challenge page",
-			`<!doctype html><html><head>` +
-				`<title>Making sure you're not a bot!</title>` +
-				`</head></html>`, false},
-		{"html page",
-			`<html><body>Oh noes!</body></html>`, false},
-		{"301 redirect",
-			`<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">` +
-				`<html><body>301 Moved</body></html>`, false},
-		{"empty string", "", false},
-		{"random garbage", "asdfghjkl", false},
-	}
-	for _, tt := range tests {
-		got := isValidMbox(tt.content)
-		if got != tt.want {
-			t.Errorf("%s: isValidMbox = %v, want %v",
-				tt.name, got, tt.want)
-		}
-	}
-}
-
-func TestFetchMbox_DoesNotCacheBotChallenge(t *testing.T) {
-	challengeHTML := `<!doctype html><html><head>` +
-		`<title>Making sure you're not a bot!</title>` +
-		`</head><body>challenge</body></html>`
-
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(challengeHTML))
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	d.SavePatch(db.PatchRow{
-		ID: 100, Name: "Lorem patch",
-		Date: "2026-03-10", State: "new",
-		MboxURL:   srv.URL + "/patch/100/mbox/",
-		Submitter: "Lorem",
-	})
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test",
-	}
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-	result := s.fetchMbox(context.Background(), 100)
-
-	if result.Err == nil {
-		t.Error("expected error for bot challenge response")
-	}
-
-	row, _ := d.GetPatch(100)
-	if row.MboxContent != "" {
-		t.Errorf("mbox_content = %q, want empty (should not cache)",
-			row.MboxContent[:min(40, len(row.MboxContent))])
-	}
-}
-
-func TestUserRequestLoop_HandlesMbox(t *testing.T) {
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	d.SavePatch(db.PatchRow{
-		ID: 100, Name: "Lorem patch",
-		Date: "2026-03-10", State: "new",
-		MboxURL:   "http://example.com/mbox/",
-		Submitter: "Lorem",
-	})
-	d.UpdatePatchMbox(100, "cached mbox content")
-
-	cfg := &config.Config{
-		Server:  "https://example.com",
-		Project: "test",
-		States:  []string{"new"},
-	}
-	client := api.NewClientForTest(
-		"https://example.com", "test", nil,
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var wg gosync.WaitGroup
-	wg.Add(1)
-	go s.runUserRequests(ctx, &wg)
-
-	resultC := make(chan MboxResult, 1)
-	s.mboxC <- MboxRequest{
-		PatchID: 100,
-		ResultC: resultC,
-	}
-
-	result := <-resultC
-	if result.Content != "cached mbox content" {
-		t.Errorf("content = %q", result.Content)
-	}
-
-	cancel()
-	wg.Wait()
-}
-
 func TestFixIncompletePatches_FixesOrphan(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -2412,103 +2165,6 @@ func TestFetchMissingSeries_StopsWhenStuck(t *testing.T) {
 	if reqCount != 1 {
 		t.Errorf("reqCount = %d, want 1 (should stop when no progress)",
 			reqCount)
-	}
-}
-
-func TestFetchCoverMbox(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/cover/99/mbox/" {
-				w.Write([]byte(testMboxContent))
-				return
-			}
-			w.WriteHeader(404)
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	d.SaveCover(db.CoverRow{
-		ID: 99, SeriesID: 50,
-		Name:    "Lorem cover",
-		Date:    "2026-03-10",
-		MboxURL: srv.URL + "/cover/99/mbox/",
-	})
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test",
-	}
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-	result := s.fetchCoverMbox(context.Background(), 50)
-
-	if result.Err != nil {
-		t.Fatal(result.Err)
-	}
-	if result.Content != testMboxContent {
-		t.Errorf("Content = %q", result.Content)
-	}
-
-	cover, _ := d.GetCover(50)
-	if cover.MboxContent != testMboxContent {
-		t.Error("cover mbox not cached in DB")
-	}
-}
-
-func TestFetchCoverMbox_Cached(t *testing.T) {
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	d.SaveCover(db.CoverRow{
-		ID: 99, SeriesID: 50,
-		Name: "Lorem cover", Date: "2026-03-10",
-	})
-	d.UpdateCoverMbox(99, "cached cover content")
-
-	cfg := &config.Config{
-		Server:  "https://pw.example.com",
-		Project: "test",
-	}
-	client := api.NewClientForTest(
-		"https://pw.example.com", "test", nil,
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-	result := s.fetchCoverMbox(context.Background(), 50)
-
-	if result.Err != nil {
-		t.Fatal(result.Err)
-	}
-	if result.Content != "cached cover content" {
-		t.Errorf("Content = %q", result.Content)
-	}
-}
-
-func TestFetchCoverMbox_NotFound(t *testing.T) {
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	cfg := &config.Config{
-		Server:  "https://pw.example.com",
-		Project: "test",
-	}
-	client := api.NewClientForTest(
-		"https://pw.example.com", "test", nil,
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-	result := s.fetchCoverMbox(context.Background(), 999)
-
-	if result.Err == nil {
-		t.Error("expected error for non-existent cover")
 	}
 }
 
@@ -2997,6 +2653,91 @@ func TestFetchDetailForPatch_Extracted(t *testing.T) {
 	row, _ := d.GetPatch(100)
 	if !row.DetailFetched {
 		t.Error("detail not marked as fetched")
+	}
+}
+
+func TestRequestDetail_Patch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":100,"name":"test",` +
+				`"date":"2026-03-10","state":"new",` +
+				`"submitter":{"name":"Lorem","email":"l@ex"},` +
+				`"content":"body","diff":"---",` +
+				`"headers":{"To":"dev@ex"},"prefixes":[],` +
+				`"web_url":"","msgid":"","mbox":"",` +
+				`"commit_ref":null,"archived":false,"series":[]}`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50, Name: "test",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	if !d.NeedsPatchDetail(100) {
+		t.Fatal("should need detail before fetch")
+	}
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.fetchDetailForPatch(context.Background(), 100, 50,
+		status.Detail)
+
+	if d.NeedsPatchDetail(100) {
+		t.Error("should not need detail after fetch")
+	}
+	row, _ := d.GetPatch(100)
+	if row.Content != "body" {
+		t.Errorf("content = %q", row.Content)
+	}
+}
+
+func TestRequestDetail_Cover(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":99,"name":"cover",` +
+				`"date":"2026-03-10","content":"overview",` +
+				`"headers":{"To":"dev@ex"}}`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SaveSeriesSummary(50, "series", "2026-03-10", 1)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50, Name: "cover",
+		Date: "2026-03-10",
+	})
+	if !d.NeedsCoverDetail(99) {
+		t.Fatal("should need detail before fetch")
+	}
+
+	cfg := &config.Config{
+		Server: srv.URL, Project: "test",
+		States: []string{"new"},
+	}
+	client := api.NewClientForTest(
+		srv.URL, "test", srv.Client(),
+		10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {},
+		status.NewRegistry(nil))
+
+	s.fetchDetailForCover(context.Background(), 99, 50,
+		status.Detail)
+
+	if d.NeedsCoverDetail(99) {
+		t.Error("should not need detail after fetch")
 	}
 }
 

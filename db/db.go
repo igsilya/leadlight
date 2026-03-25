@@ -73,7 +73,6 @@ type PatchRow struct {
 	Diff           string
 	Headers        string
 	Prefixes       string
-	MboxContent    string
 	DetailFetched  bool
 	UpdatedAt      string
 }
@@ -115,7 +114,6 @@ type CoverRow struct {
 	MboxURL        string
 	Content        string
 	Headers        string
-	MboxContent    string
 	DetailFetched  bool
 }
 
@@ -291,15 +289,6 @@ func (d *DB) UpdatePatchChecks(
 		SET checks_pass = ?, checks_fail = ?, checks_warn = ?
 		WHERE id = ?`,
 		pass, fail, warn, patchID)
-	return err
-}
-
-func (d *DB) UpdatePatchMbox(patchID int, content string) error {
-	d.writeMu.Lock()
-	defer d.writeMu.Unlock()
-	_, err := d.conn.Exec(
-		`UPDATE patches SET mbox_content = ? WHERE id = ?`,
-		content, patchID)
 	return err
 }
 
@@ -499,15 +488,6 @@ func (d *DB) UpdateCoverDetail(coverID int, content, headers string) error {
 	return err
 }
 
-func (d *DB) UpdateCoverMbox(coverID int, content string) error {
-	d.writeMu.Lock()
-	defer d.writeMu.Unlock()
-	_, err := d.conn.Exec(
-		"UPDATE covers SET mbox_content = ? WHERE id = ?",
-		content, coverID)
-	return err
-}
-
 func (d *DB) SaveMaintainers(maintainers []MaintainerRow) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -699,7 +679,6 @@ const patchSelectSQL = `
 		COALESCE(diff, ''),
 		COALESCE(headers, ''),
 		COALESCE(prefixes, ''),
-		COALESCE(mbox_content, ''),
 		COALESCE(detail_fetched, 0),
 		COALESCE(updated_at, '')
 	FROM patches`
@@ -716,7 +695,7 @@ func scanPatchRow(
 		&r.Archived, &r.ChecksPass, &r.ChecksFail,
 		&r.ChecksWarn,
 		&r.Content, &r.Diff, &r.Headers, &r.Prefixes,
-		&r.MboxContent, &r.DetailFetched, &r.UpdatedAt)
+		&r.DetailFetched, &r.UpdatedAt)
 }
 
 func scanPatches(rows *sql.Rows) []PatchRow {
@@ -1504,6 +1483,22 @@ func (d *DB) ResetCoverCommentsFetched(coverID int) error {
 	return err
 }
 
+func (d *DB) NeedsPatchDetail(patchID int) bool {
+	var fetched int
+	err := d.conn.QueryRow(
+		"SELECT COALESCE(detail_fetched, 0) FROM patches WHERE id = ?",
+		patchID).Scan(&fetched)
+	return err == nil && fetched == 0
+}
+
+func (d *DB) NeedsCoverDetail(coverID int) bool {
+	var fetched int
+	err := d.conn.QueryRow(
+		"SELECT COALESCE(detail_fetched, 0) FROM covers WHERE id = ?",
+		coverID).Scan(&fetched)
+	return err == nil && fetched == 0
+}
+
 func (d *DB) NeedsPatchChecks(patchID int) bool {
 	var fetched int
 	err := d.conn.QueryRow(
@@ -1533,14 +1528,14 @@ func (d *DB) GetCover(seriesID int) (*CoverRow, error) {
 		SELECT id, series_id, name, date,
 			submitter, submitter_email, msgid,
 			web_url, mbox_url, content, headers,
-			mbox_content, detail_fetched
+			detail_fetched
 		FROM covers WHERE series_id = ?`, seriesID)
 	var r CoverRow
 	err := row.Scan(
 		&r.ID, &r.SeriesID, &r.Name, &r.Date,
 		&r.Submitter, &r.SubmitterEmail, &r.MsgID,
 		&r.WebURL, &r.MboxURL, &r.Content, &r.Headers,
-		&r.MboxContent, &r.DetailFetched)
+		&r.DetailFetched)
 	if err != nil {
 		return nil, err
 	}

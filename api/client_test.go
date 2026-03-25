@@ -531,29 +531,6 @@ func TestPatchUpdate_MarshalJSON(t *testing.T) {
 	}
 }
 
-func TestGetMbox(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("From: lorem@ipsum.example\n" +
-				"Subject: Lorem\n\nlorem ipsum"))
-		}))
-	t.Cleanup(srv.Close)
-
-	c := &Client{
-		httpClient: srv.Client(),
-		minDelay:   10 * time.Millisecond,
-	}
-
-	content, err := c.GetMbox(
-		context.Background(), srv.URL+"/mbox/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if content == "" {
-		t.Error("content is empty")
-	}
-}
-
 func TestContextCancellation(t *testing.T) {
 	c := testClient(t, http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {

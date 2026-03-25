@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -80,11 +79,6 @@ func (m *Model) isRowFetching(item visibleItem) bool {
 type SyncUpdateMsg struct{}
 type StatusUpdateMsg struct{}
 type patchUpdateResultMsg struct{ err error }
-type mboxResultMsg struct {
-	patchID int
-	content string
-	err     error
-}
 
 type highlightAnimTickMsg struct{}
 type spinnerTickMsg time.Time
@@ -175,13 +169,13 @@ type Model struct {
 	logAnchor      int // absolute log entry the viewport bottom is pinned to
 	logLastCount   int
 
-	RequestMbox        func(patchID int)
-	RequestCoverMbox   func(seriesID int)
 	FetchSeriesCover   func(seriesID int)
 	RequestSync        func()
 	FetchPatchComments func(patchID int)
 	FetchCoverComments func(coverID int)
 	FetchPatchChecks   func(patchID int)
+	FetchPatchDetail   func(patchID int)
+	FetchCoverDetail   func(coverID int)
 	RequestFetchAll    func(seriesID, patchID int)
 	RequestPatchUpdate func(
 		patchID int, state *string,
@@ -444,15 +438,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case patchUpdateResultMsg:
 		return m, nil
 
-	case mboxResultMsg:
-		log.Printf("TUI: mboxResultMsg patchID=%d err=%v",
-			msg.patchID, msg.err)
-		if msg.err != nil {
-			m.viewportLines = []string{
-				FormatMboxError("patch", msg.err)}
-		}
-		return m, nil
-
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -475,28 +460,23 @@ func (m *Model) refreshViewport() {
 	}
 	if m.viewingCoverID != 0 {
 		cover, err := m.db.GetCover(m.viewingCoverID)
-		if err != nil || cover == nil || cover.MboxContent == "" {
+		if err != nil || cover == nil || !cover.DetailFetched {
 			return
 		}
-		log.Printf("TUI: refreshViewport: cover %q got %d bytes",
-			cover.Name, len(cover.MboxContent))
-		m.buildViewportContent(cover.MboxContent, nil)
+		parsed := BuildParsedMboxFromCover(*cover)
+		m.buildViewportContent(parsed, nil)
 		return
 	}
 	if m.viewingPatchID == 0 {
 		return
 	}
 	row, err := m.db.GetPatch(m.viewingPatchID)
-	if err != nil {
+	if err != nil || !row.DetailFetched {
 		return
 	}
-	if row.MboxContent == "" {
-		return
-	}
-	log.Printf("TUI: refreshViewport: %q got %d bytes",
-		row.Name, len(row.MboxContent))
+	parsed := BuildParsedMboxFromPatch(*row)
 	checks := GetChecksForPatch(m.db, m.viewingPatchID)
-	m.buildViewportContent(row.MboxContent, checks)
+	m.buildViewportContent(parsed, checks)
 }
 
 func (m *Model) refreshViewportComments() {

@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"mime"
 	"strings"
 	"time"
+
+	"leadlight/db"
 )
 
 type ParsedMbox struct {
@@ -17,17 +20,103 @@ type ParsedMbox struct {
 	Diff    string
 }
 
-func ParseMbox(raw string) ParsedMbox {
-	headers, body := splitHeadersBody(raw)
-	p := ParsedMbox{
-		Subject: decodeHeader(extractHeader(headers, "Subject")),
-		From:    decodeHeader(extractHeader(headers, "From")),
-		To:      decodeHeader(extractHeader(headers, "To")),
-		Cc:      decodeHeader(extractHeader(headers, "Cc")),
-		Date:    extractHeader(headers, "Date"),
+// parseJSONHeaders parses the JSON-encoded headers string from the DB
+// into a map. Returns an empty map on error.
+func parseJSONHeaders(headersJSON string) map[string]interface{} {
+	if headersJSON == "" || headersJSON == "{}" {
+		return nil
 	}
-	p.Body, p.Diff = splitBodyDiff(body)
-	return p
+	var m map[string]interface{}
+	json.Unmarshal([]byte(headersJSON), &m)
+	return m
+}
+
+// headerString extracts a string value from a JSON headers map.
+// Handles both string and []interface{} (returns first element).
+func headerString(headers map[string]interface{}, key string) string {
+	v, ok := headers[key]
+	if !ok {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case []interface{}:
+		if len(val) > 0 {
+			if s, ok := val[0].(string); ok {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// fromHeader returns the sender from email headers. Prefers Reply-To
+// (avoids mailing list mangling like "Name via dev <list@example>")
+// and falls back to From. Values are MIME-decoded for non-ASCII names.
+func fromHeader(headers map[string]interface{}) string {
+	if replyTo := headerString(headers, "Reply-To"); replyTo != "" {
+		return decodeHeader(replyTo)
+	}
+	return decodeHeader(headerString(headers, "From"))
+}
+
+// BuildParsedMboxFromPatch constructs a ParsedMbox from patch detail
+// data, eliminating the need for a separate mbox HTTP fetch.
+func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
+	headers := parseJSONHeaders(row.Headers)
+	if headers == nil {
+		// Fallback when no headers available
+		from := row.Submitter
+		if row.SubmitterEmail != "" {
+			from += " <" + row.SubmitterEmail + ">"
+		}
+		return ParsedMbox{
+			Subject: row.Name,
+			From:    from,
+			Date:    row.Date,
+			Body:    row.Content,
+			Diff:    row.Diff,
+		}
+	}
+	date := headerString(headers, "Date")
+	if date == "" {
+		date = row.Date
+	}
+	return ParsedMbox{
+		Subject: row.Name,
+		From:    fromHeader(headers),
+		To:      decodeHeader(headerString(headers, "To")),
+		Cc:      decodeHeader(headerString(headers, "Cc")),
+		Date:    date,
+		Body:    row.Content,
+		Diff:    row.Diff,
+	}
+}
+
+// BuildParsedMboxFromCover constructs a ParsedMbox from cover letter
+// detail data.
+func BuildParsedMboxFromCover(row db.CoverRow) ParsedMbox {
+	headers := parseJSONHeaders(row.Headers)
+	if headers == nil {
+		return ParsedMbox{
+			Subject: row.Name,
+			Date:    row.Date,
+			Body:    row.Content,
+		}
+	}
+	date := headerString(headers, "Date")
+	if date == "" {
+		date = row.Date
+	}
+	return ParsedMbox{
+		Subject: row.Name,
+		From:    fromHeader(headers),
+		To:      decodeHeader(headerString(headers, "To")),
+		Cc:      decodeHeader(headerString(headers, "Cc")),
+		Date:    date,
+		Body:    row.Content,
+	}
 }
 
 func decodeHeader(s string) string {
@@ -64,19 +153,6 @@ func extractHeader(headers, name string) string {
 		}
 	}
 	return strings.Join(result, " ")
-}
-
-func splitBodyDiff(body string) (string, string) {
-	// Try markers from most specific to least: "diff --git" (git format),
-	// "--- a/" (non-git unified diff), "---\n" (mbox commit/diff separator).
-	markers := []string{"\ndiff --git ", "\n--- a/", "\n---\n"}
-	for _, m := range markers {
-		if idx := strings.Index(body, m); idx >= 0 {
-			return strings.TrimSpace(body[:idx]),
-				strings.TrimRight(body[idx+1:], "\n")
-		}
-	}
-	return strings.TrimSpace(body), ""
 }
 
 func FormatMbox(p ParsedMbox, width int) string {
@@ -523,11 +599,4 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 	}
 
 	return b.String()
-}
-
-func FormatMboxError(patchName string, err error) string {
-	return fmt.Sprintf(
-		"%s\n\n%s",
-		mboxHeaderLabel.Render("Error fetching: "+patchName),
-		err.Error())
 }

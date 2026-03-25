@@ -902,14 +902,13 @@ func TestToggleShowAll(t *testing.T) {
 func TestOpenSeriesView_CoverLetter(t *testing.T) {
 	m, d := testModelWithDB(t)
 
-	// Add a cover letter for series 50 with cached content
+	// Add a cover letter for series 50 with detail fetched
 	d.SaveCover(db.CoverRow{
 		ID: 99, SeriesID: 50,
-		Name:        "Lorem cover letter",
-		Date:        "2026-03-10",
-		MboxURL:     "https://pw.example.com/cover/99/mbox/",
-		MboxContent: "From cover\nSubject: Lorem cover\n\nCover body",
+		Name: "Lorem cover letter",
+		Date: "2026-03-10",
 	})
+	d.UpdateCoverDetail(99, "Cover body", `{"To":"dev@ex"}`)
 
 	// Press enter on the parent row (series 50)
 	m = pressSpecialKey(m, tea.KeyEnter)
@@ -940,8 +939,8 @@ func TestOpenSeriesView_NoCover_SinglePatch(t *testing.T) {
 		ID: 300, SeriesID: 60,
 		Name: "Only patch", State: "new",
 		Date: date, Submitter: "Lorem",
-		MboxContent: "From patch\nSubject: Only\n\nBody",
 	})
+	d.UpdatePatchDetail(300, "Body", "---", `{"To":"dev@ex"}`, "[]")
 
 	m := NewModel(d, []string{"new"}, "test-token")
 	m.width = 120

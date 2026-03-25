@@ -182,6 +182,10 @@ var alterStatements = []string{
 	`ALTER TABLE patches RENAME COLUMN checks_pending TO checks_warn`,
 	`ALTER TABLE checks ADD COLUMN description TEXT DEFAULT ''`,
 	`ALTER TABLE patches ADD COLUMN checks_fetched INTEGER DEFAULT 0`,
+	// Requires SQLite 3.35+ (2021). Frees space from cached mbox
+	// content now that the mbox view is built from detail API data.
+	`ALTER TABLE patches DROP COLUMN mbox_content`,
+	`ALTER TABLE covers DROP COLUMN mbox_content`,
 }
 
 func migrate(db *sql.DB) error {

@@ -71,21 +71,6 @@ func main() {
 			p.Send(tui.SyncUpdateMsg{})
 		}, statusReg)
 
-	m.RequestMbox = func(patchID int) {
-		log.Printf("MAIN: RequestMbox callback called, patchID=%d",
-			patchID)
-		go func() {
-			log.Printf("MAIN: RequestMbox goroutine started, patchID=%d",
-				patchID)
-			result := syncer.RequestMbox(patchID)
-			log.Printf("MAIN: RequestMbox goroutine done, "+
-				"patchID=%d err=%v contentLen=%d",
-				patchID, result.Err, len(result.Content))
-			p.Send(tui.SyncUpdateMsg{})
-			log.Printf("MAIN: SyncUpdateMsg sent after mbox fetch")
-		}()
-	}
-
 	m.FetchSeriesCover = func(seriesID int) {
 		log.Printf("MAIN: FetchSeriesCover series=%d", seriesID)
 		series, err := client.GetSeries(ctx, seriesID)
@@ -132,22 +117,14 @@ func main() {
 	m.FetchPatchChecks = func(patchID int) {
 		go syncer.RequestChecks(patchID)
 	}
+	m.FetchPatchDetail = func(patchID int) {
+		go syncer.RequestDetail(patchID, false)
+	}
+	m.FetchCoverDetail = func(coverID int) {
+		go syncer.RequestDetail(coverID, true)
+	}
 	m.RequestFetchAll = func(seriesID, patchID int) {
 		syncer.RequestFetchAll(seriesID, patchID)
-	}
-
-	m.RequestCoverMbox = func(seriesID int) {
-		log.Printf("MAIN: RequestCoverMbox series=%d", seriesID)
-		go func() {
-			resultC := make(chan appSync.MboxResult, 1)
-			syncer.SendMboxRequest(appSync.MboxRequest{
-				PatchID: seriesID,
-				IsCover: true,
-				ResultC: resultC,
-			})
-			<-resultC
-			p.Send(tui.SyncUpdateMsg{})
-		}()
 	}
 
 	m.RequestPatchUpdate = func(

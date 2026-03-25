@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"leadlight/db"
 )
 
 const testMbox = `From: Lorem Ipsum <lorem@ipsum.example>
@@ -31,102 +33,15 @@ index abc123..def456 100644
 +    new_code();
 `
 
-func TestParseMbox_Headers(t *testing.T) {
-	p := ParseMbox(testMbox)
-	if p.From != "Lorem Ipsum <lorem@ipsum.example>" {
-		t.Errorf("From = %q", p.From)
-	}
-	if p.Subject != "[PATCH v2 1/3] Fix race condition in ovsdb" {
-		t.Errorf("Subject = %q", p.Subject)
-	}
-	if p.Date != "Mon, 10 Mar 2026 12:00:00 +0000" {
-		t.Errorf("Date = %q", p.Date)
-	}
-}
-
-func TestParseMbox_CcMultiline(t *testing.T) {
-	p := ParseMbox(testMbox)
-	if !strings.Contains(p.Cc, "dolor@amet.example") {
-		t.Errorf("Cc = %q, missing dolor", p.Cc)
-	}
-	if !strings.Contains(p.Cc, "sit@amet.example") {
-		t.Errorf("Cc = %q, missing sit", p.Cc)
-	}
-}
-
-func TestParseMbox_Body(t *testing.T) {
-	p := ParseMbox(testMbox)
-	if !strings.Contains(p.Body, "race condition") {
-		t.Errorf("Body missing content: %q", p.Body)
-	}
-	if !strings.Contains(p.Body, "Signed-off-by") {
-		t.Errorf("Body missing Signed-off-by: %q", p.Body)
-	}
-}
-
-func TestParseMbox_Diff(t *testing.T) {
-	p := ParseMbox(testMbox)
-	if !strings.Contains(p.Diff, "diff --git") {
-		t.Errorf("Diff missing header: %q", p.Diff)
-	}
-	if !strings.Contains(p.Diff, "+    new_code()") {
-		t.Errorf("Diff missing + line: %q", p.Diff)
-	}
-	if !strings.Contains(p.Diff, "-    old_code()") {
-		t.Errorf("Diff missing - line: %q", p.Diff)
-	}
-}
-
-func TestParseMbox_NoBody(t *testing.T) {
-	raw := "From: lorem@ipsum.example\n" +
-		"Subject: empty\n\n"
-	p := ParseMbox(raw)
-	if p.Body != "" {
-		t.Errorf("Body = %q, want empty", p.Body)
-	}
-}
-
-func TestParseMbox_NoDiff(t *testing.T) {
-	raw := "Subject: no diff\n\nJust a message body.\n"
-	p := ParseMbox(raw)
-	if p.Body != "Just a message body." {
-		t.Errorf("Body = %q", p.Body)
-	}
-	if p.Diff != "" {
-		t.Errorf("Diff = %q, want empty", p.Diff)
-	}
-}
-
-func TestParseMbox_EncodedHeaders(t *testing.T) {
-	raw := "From: =?utf-8?q?Lor=C3=A9m_Ips=C3=BAm?= <lorem@ipsum.example>\n" +
-		"Subject: =?utf-8?q?[PATCH]_Dol=C3=B3r_amet?=\n" +
-		"Cc: =?utf-8?b?Q29uc8OpY3TDqXR1cg==?= <consect@ipsum.example>\n\n"
-	p := ParseMbox(raw)
-	if !strings.Contains(p.From, "Lorém") {
-		t.Errorf("From = %q, want decoded", p.From)
-	}
-	if !strings.Contains(p.Subject, "Dolór") {
-		t.Errorf("Subject = %q, want decoded", p.Subject)
-	}
-	if !strings.Contains(p.Cc, "Conséctétur") {
-		t.Errorf("Cc = %q, want decoded", p.Cc)
-	}
-}
-
-func TestParseMbox_PlainHeaders(t *testing.T) {
-	raw := "From: Lorem <lorem@ipsum.example>\n" +
-		"Subject: [PATCH] Plain ASCII\n\n"
-	p := ParseMbox(raw)
-	if p.From != "Lorem <lorem@ipsum.example>" {
-		t.Errorf("From = %q", p.From)
-	}
-	if p.Subject != "[PATCH] Plain ASCII" {
-		t.Errorf("Subject = %q", p.Subject)
-	}
-}
-
 func TestFormatMbox_NotEmpty(t *testing.T) {
-	p := ParseMbox(testMbox)
+	p := ParsedMbox{
+		Subject: "[PATCH v2 1/3] Fix race condition in ovsdb",
+		From:    "Lorem Ipsum <lorem@ipsum.example>",
+		To:      "dev@openvswitch.org",
+		Date:    "Mon, 10 Mar 2026 12:00:00 +0000",
+		Body:    "This fixes a race condition.\n\nThe issue occurs when...",
+		Diff:    "diff --git a/lib/ovsdb.c b/lib/ovsdb.c\n--- a/lib/ovsdb.c\n+++ b/lib/ovsdb.c\n@@ -100,6 +100,7 @@\n some_function();\n+fix_race();\n other_function();",
+	}
 	formatted := FormatMbox(p, 120)
 	if formatted == "" {
 		t.Error("formatted is empty")
@@ -179,11 +94,11 @@ func TestReplaceControlChars(t *testing.T) {
 }
 
 func TestFormatMbox_FormFeed(t *testing.T) {
-	raw := "Subject: test\n\n" +
-		"body line\n" +
-		"diff --git a/f b/f\n" +
-		" }\n \f\n+new code\n"
-	p := ParseMbox(raw)
+	p := ParsedMbox{
+		Subject: "test",
+		Body:    "body line",
+		Diff:    "diff --git a/f b/f\n }\n \f\n+new code",
+	}
 	result := FormatMbox(p, 80)
 	if !strings.Contains(result, "^L") {
 		t.Error("form feed should render as ^L")
@@ -306,9 +221,8 @@ func TestWrapLine_Empty(t *testing.T) {
 }
 
 func TestFormatMbox_WrapsLongBodyLine(t *testing.T) {
-	longLine := strings.Repeat("lorem ", 30) // 180 chars
-	raw := "Subject: test\n\n" + longLine
-	p := ParseMbox(raw)
+	longLine := strings.Repeat("lorem ", 30)
+	p := ParsedMbox{Subject: "test", Body: longLine}
 	result := FormatMbox(p, 80)
 	if strings.Contains(result, "…") {
 		t.Error("body should wrap, not truncate")
@@ -701,14 +615,12 @@ func TestFormatComment_DecodesHeaderMIME(t *testing.T) {
 }
 
 func TestFormatMbox_ToHeader(t *testing.T) {
-	raw := "Subject: Lorem ipsum\n" +
-		"From: Lorem <lorem@ipsum.example>\n" +
-		"To: dolor@amet.example, sit@amet.example\n" +
-		"Date: Wed, 18 Mar 2026 14:41:13 +0100\n\n" +
-		"Body text here."
-	p := ParseMbox(raw)
-	if p.To == "" {
-		t.Fatal("ParseMbox should extract To header")
+	p := ParsedMbox{
+		Subject: "Lorem ipsum",
+		From:    "Lorem <lorem@ipsum.example>",
+		To:      "dolor@amet.example, sit@amet.example",
+		Date:    "Wed, 18 Mar 2026 14:41:13 +0100",
+		Body:    "Body text here.",
 	}
 	result := FormatMbox(p, 120)
 	if !strings.Contains(result, "dolor@amet.example") {
@@ -729,6 +641,164 @@ func TestFormatDiff_Colors(t *testing.T) {
 	}
 	if !strings.Contains(result, "new") {
 		t.Error("missing new line")
+	}
+}
+
+func TestHeaderString_String(t *testing.T) {
+	headers := map[string]interface{}{"To": "dev@example.org"}
+	got := headerString(headers, "To")
+	if got != "dev@example.org" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestHeaderString_Array(t *testing.T) {
+	headers := map[string]interface{}{
+		"Received": []interface{}{"first", "second"},
+	}
+	got := headerString(headers, "Received")
+	if got != "first" {
+		t.Errorf("got %q, want first element", got)
+	}
+}
+
+func TestHeaderString_Missing(t *testing.T) {
+	headers := map[string]interface{}{}
+	got := headerString(headers, "To")
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestFromHeader_ReplyTo(t *testing.T) {
+	headers := map[string]interface{}{
+		"From":     "Lorem via dev <list@example.org>",
+		"Reply-To": "Lorem Ipsum <lorem@example.com>",
+	}
+	got := fromHeader(headers)
+	if got != "Lorem Ipsum <lorem@example.com>" {
+		t.Errorf("got %q, want Reply-To value", got)
+	}
+}
+
+func TestFromHeader_NoReplyTo(t *testing.T) {
+	headers := map[string]interface{}{
+		"From": "Lorem Ipsum <lorem@example.com>",
+	}
+	got := fromHeader(headers)
+	if got != "Lorem Ipsum <lorem@example.com>" {
+		t.Errorf("got %q, want From value", got)
+	}
+}
+
+func TestFromHeader_MIMEEncoded(t *testing.T) {
+	headers := map[string]interface{}{
+		"Reply-To": "=?utf-8?q?Toke_H=C3=B8iland-J=C3=B8rgensen?= <toke@example.com>",
+	}
+	got := fromHeader(headers)
+	if !strings.Contains(got, "Høiland") {
+		t.Errorf("got %q, want decoded non-ASCII name", got)
+	}
+	if !strings.Contains(got, "toke@example.com") {
+		t.Errorf("got %q, want email preserved", got)
+	}
+}
+
+func TestBuildParsedMboxFromPatch(t *testing.T) {
+	headers := `{
+		"Reply-To": "Lorem Ipsum <lorem@example.com>",
+		"To": "dev@example.org",
+		"Cc": "other@example.org",
+		"Date": "Mon, 13 Oct 2025 13:39:44 +0300"
+	}`
+	row := db.PatchRow{
+		Name:    "[dev] Fix the widget",
+		Content: "This fixes the widget.\n\nSigned-off-by: Lorem",
+		Diff:    "--- a/widget.c\n+++ b/widget.c\n@@ -1 +1 @@",
+		Headers: headers,
+	}
+	p := BuildParsedMboxFromPatch(row)
+	if p.Subject != "[dev] Fix the widget" {
+		t.Errorf("Subject = %q", p.Subject)
+	}
+	if p.From != "Lorem Ipsum <lorem@example.com>" {
+		t.Errorf("From = %q", p.From)
+	}
+	if p.To != "dev@example.org" {
+		t.Errorf("To = %q", p.To)
+	}
+	if p.Cc != "other@example.org" {
+		t.Errorf("Cc = %q", p.Cc)
+	}
+	if !strings.Contains(p.Date, "13 Oct 2025") {
+		t.Errorf("Date = %q", p.Date)
+	}
+	if p.Body != row.Content {
+		t.Errorf("Body = %q", p.Body)
+	}
+	if p.Diff != row.Diff {
+		t.Errorf("Diff = %q", p.Diff)
+	}
+}
+
+func TestBuildParsedMboxFromPatch_NoHeaders(t *testing.T) {
+	row := db.PatchRow{
+		Name:           "[dev] Fix the widget",
+		Submitter:      "Lorem Ipsum",
+		SubmitterEmail: "lorem@example.com",
+		Date:           "2025-10-13T13:39:44",
+		Content:        "body text",
+	}
+	p := BuildParsedMboxFromPatch(row)
+	if p.Subject != "[dev] Fix the widget" {
+		t.Errorf("Subject = %q", p.Subject)
+	}
+	// Fallback to submitter fields when no headers
+	if p.From != "Lorem Ipsum <lorem@example.com>" {
+		t.Errorf("From = %q, want fallback to submitter", p.From)
+	}
+	if p.Date != "2025-10-13T13:39:44" {
+		t.Errorf("Date = %q, want fallback to row.Date", p.Date)
+	}
+}
+
+func TestBuildParsedMboxFromPatch_ListMangled(t *testing.T) {
+	headers := `{
+		"From": "Lorem via dev <ovs-dev@openvswitch.org>",
+		"Reply-To": "Lorem Ipsum <lorem@real.com>"
+	}`
+	row := db.PatchRow{
+		Name:    "test",
+		Headers: headers,
+	}
+	p := BuildParsedMboxFromPatch(row)
+	if !strings.Contains(p.From, "lorem@real.com") {
+		t.Errorf("From = %q, should use Reply-To not mangled From",
+			p.From)
+	}
+}
+
+func TestBuildParsedMboxFromCover(t *testing.T) {
+	headers := `{
+		"Reply-To": "Lorem Ipsum <lorem@example.com>",
+		"To": "dev@example.org",
+		"Cc": "other@example.org",
+		"Date": "Mon, 13 Oct 2025 13:39:44 +0300"
+	}`
+	row := db.CoverRow{
+		Name:    "[dev] Cover letter",
+		Content: "Overview of the series.",
+		Headers: headers,
+	}
+	p := BuildParsedMboxFromCover(row)
+	if p.Subject != "[dev] Cover letter" {
+		t.Errorf("Subject = %q", p.Subject)
+	}
+	if p.From != "Lorem Ipsum <lorem@example.com>" {
+		t.Errorf("From = %q", p.From)
+	}
+	if p.Body != "Overview of the series." {
+		t.Errorf("Body = %q", p.Body)
 	}
 }
 

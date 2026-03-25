@@ -546,9 +546,8 @@ func (m *Model) viewportScrollToEnd() {
 }
 
 func (m *Model) buildViewportContent(
-	mboxContent string, checks []CheckInfo,
+	parsed ParsedMbox, checks []CheckInfo,
 ) {
-	parsed := ParseMbox(mboxContent)
 	formatted := FormatMbox(parsed, m.width)
 	checksSection := FormatChecks(checks, m.width)
 	if checksSection != "" {
@@ -589,14 +588,16 @@ func (m *Model) switchToComment() {
 		}
 		if m.viewingCoverID != 0 {
 			cover, _ := m.db.GetCover(m.viewingCoverID)
-			if cover != nil && cover.MboxContent != "" {
-				m.buildViewportContent(cover.MboxContent, nil)
+			if cover != nil && cover.DetailFetched {
+				parsed := BuildParsedMboxFromCover(*cover)
+				m.buildViewportContent(parsed, nil)
 			}
 		} else if m.viewingPatchID != 0 {
 			row, _ := m.db.GetPatch(m.viewingPatchID)
-			if row != nil && row.MboxContent != "" {
+			if row != nil && row.DetailFetched {
+				parsed := BuildParsedMboxFromPatch(*row)
 				checks := GetChecksForPatch(m.db, m.viewingPatchID)
-				m.buildViewportContent(row.MboxContent, checks)
+				m.buildViewportContent(parsed, checks)
 			}
 		}
 		return
@@ -637,12 +638,13 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 			m.FetchCoverComments(cover.ID)
 		}
 
-		if cover.MboxContent != "" {
-			m.buildViewportContent(cover.MboxContent, nil)
+		if cover.DetailFetched {
+			parsed := BuildParsedMboxFromCover(*cover)
+			m.buildViewportContent(parsed, nil)
 		} else {
-			m.viewportLines = []string{"Fetching cover letter..."}
-			if m.RequestCoverMbox != nil {
-				m.RequestCoverMbox(seriesID)
+			m.viewportLines = []string{"Fetching..."}
+			if m.FetchCoverDetail != nil {
+				m.FetchCoverDetail(cover.ID)
 			}
 		}
 		return nil
@@ -699,22 +701,18 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 		m.FetchPatchChecks(patchID)
 	}
 
-	if row.MboxContent != "" {
-		log.Printf("TUI: mbox cached (%d bytes) for %q",
-			len(row.MboxContent), row.Name)
+	if row.DetailFetched {
+		log.Printf("TUI: detail available for patch %d %q",
+			patchID, row.Name)
+		parsed := BuildParsedMboxFromPatch(*row)
 		checks := GetChecksForPatch(m.db, patchID)
-		m.buildViewportContent(row.MboxContent, checks)
+		m.buildViewportContent(parsed, checks)
 	} else {
-		log.Printf("TUI: mbox not cached for %q, "+
-			"mboxURL=%q msgID=%q",
-			row.Name, row.MboxURL, row.MsgID)
+		log.Printf("TUI: detail not fetched for patch %d %q",
+			patchID, row.Name)
 		m.viewportLines = []string{"Fetching..."}
-		if m.RequestMbox != nil {
-			log.Printf("TUI: calling RequestMbox(%d) for %q",
-				patchID, row.Name)
-			m.RequestMbox(patchID)
-		} else {
-			log.Println("TUI: RequestMbox callback is nil!")
+		if m.FetchPatchDetail != nil {
+			m.FetchPatchDetail(patchID)
 		}
 	}
 

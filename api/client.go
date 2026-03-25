@@ -615,19 +615,3 @@ func (c *Client) LookupUserID(
 	}
 	return 0, fmt.Errorf("user %q not found", username)
 }
-
-func (c *Client) GetMbox(ctx context.Context, rawURL string) (string, error) {
-	resp, err := c.doExternalRequest(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
