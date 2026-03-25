@@ -22,24 +22,30 @@ import (
 const commentSkipCooldown = 30 * time.Minute
 
 type Syncer struct {
-	client      *api.Client
-	db          *db.DB
-	cfg         *config.Config
-	notify      func()
-	mboxC       chan MboxRequest
-	updateC     chan PatchUpdateRequest
-	commentC    chan CommentRequest
-	checkC      chan int
-	fetchAllC   chan FetchAllRequest
-	syncNowC    chan context.Context
-	commentSkip map[int]time.Time // last failure time per item; retried after cooldown
+	client *api.Client
+	db     *db.DB
+	cfg    *config.Config
+	notify func()
+	status *status.Registry
+
+	// Channels for user-initiated requests, handled by runUserRequests.
+	mboxC     chan MboxRequest
+	updateC   chan PatchUpdateRequest
+	commentC  chan CommentRequest
+	checkC    chan int
+	fetchAllC chan FetchAllRequest
+	syncNowC  chan context.Context
+
+	// Error cooldown: skip retrying failed fetches for 30 minutes.
+	commentSkip map[int]time.Time
 	detailSkip  map[int]time.Time
 	checkSkip   map[int]time.Time
 
-	lastTerminalComment time.Time // cooldown for terminal-state comment fetches
-	lastTerminalDetail  time.Time
-	lastTerminalCheck   time.Time
-	status              *status.Registry
+	// Terminal-state fetch cooldown: one fetch per 60 seconds per loop.
+	lastTerminalComment      time.Time
+	lastTerminalCoverComment time.Time
+	lastTerminalDetail       time.Time
+	lastTerminalCheck        time.Time
 }
 
 type MboxRequest struct {
@@ -206,13 +212,14 @@ func (s *Syncer) Run(ctx context.Context) {
 	s.backfillHistory(ctx)
 
 	var wg gosync.WaitGroup
-	wg.Add(6)
+	wg.Add(7)
 	go s.runUserRequests(ctx, &wg)
 	go s.runSyncLoop(ctx, &wg)
-	go s.runCommentLoop(ctx, &wg)
+	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextComments)
+	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextCoverComments)
+	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextDetail)
+	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextChecks)
 	go s.runArchiveLoop(ctx, &wg)
-	go s.runDetailLoop(ctx, &wg)
-	go s.runCheckLoop(ctx, &wg)
 	wg.Wait()
 }
 
@@ -318,26 +325,27 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	}
 }
 
-// runCommentLoop fetches comments one item per cycle. Polls every 5s.
-// Terminal-state items are throttled via a per-loop cooldown.
-func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
+// runBgLoop runs a background fetch function on a fixed interval.
+// The fetch function returns true if work was done. When true,
+// notify() is called to update the TUI.
+func (s *Syncer) runBgLoop(
+	ctx context.Context, wg *gosync.WaitGroup,
+	interval time.Duration,
+	fetch func(context.Context) bool,
+) {
 	defer wg.Done()
-	s.runCommentCycle(ctx)
+	if fetch(ctx) {
+		s.notify()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(activeInterval):
-			s.runCommentCycle(ctx)
+		case <-time.After(interval):
+			if fetch(ctx) {
+				s.notify()
+			}
 		}
-	}
-}
-
-func (s *Syncer) runCommentCycle(ctx context.Context) {
-	r1 := s.fetchNextComments(ctx)
-	r2 := s.fetchNextCoverComments(ctx)
-	if r1 || r2 {
-		s.notify()
 	}
 }
 
@@ -774,7 +782,7 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 			continue
 		}
 		if !ref.IsActive &&
-			time.Since(s.lastTerminalComment) < terminalInterval {
+			time.Since(s.lastTerminalCoverComment) < terminalInterval {
 			break
 		}
 		if !s.fetchCommentsForCover(ctx, ref.ID, ref.SeriesID,
@@ -787,7 +795,7 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 			fmt.Sprintf("Cover comments fetched (%d remaining)",
 				len(refs)-i-1), 3*time.Second)
 		if !ref.IsActive {
-			s.lastTerminalComment = time.Now()
+			s.lastTerminalCoverComment = time.Now()
 		}
 		return true
 	}
@@ -917,25 +925,6 @@ func (s *Syncer) checkArchiveMonth(
 		}
 	}
 	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
-}
-
-// runDetailLoop fetches patch/cover details one item per cycle.
-// Polls every 5s. Terminal items throttled via cooldown.
-func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
-	defer wg.Done()
-	if s.fetchNextDetail(ctx) {
-		s.notify()
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(activeInterval):
-			if s.fetchNextDetail(ctx) {
-				s.notify()
-			}
-		}
-	}
 }
 
 func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
@@ -1104,25 +1093,6 @@ func (s *Syncer) backfillPaginatedSeries(
 		}
 		s.notify()
 		pageURL = page.NextURL
-	}
-}
-
-// runCheckLoop fetches CI check results one patch per cycle.
-// Polls every 5s. Terminal items throttled via cooldown.
-func (s *Syncer) runCheckLoop(ctx context.Context, wg *gosync.WaitGroup) {
-	defer wg.Done()
-	if s.fetchNextChecks(ctx) {
-		s.notify()
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(activeInterval):
-			if s.fetchNextChecks(ctx) {
-				s.notify()
-			}
-		}
 	}
 }
 
