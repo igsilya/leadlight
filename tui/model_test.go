@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1048,5 +1049,263 @@ func TestCommentNavigation_LoadsOnOpen(t *testing.T) {
 	}
 	if m.viewCommentIdx != -1 {
 		t.Errorf("viewCommentIdx = %d, want -1", m.viewCommentIdx)
+	}
+}
+
+// --- Log anchor tests ---
+
+func setupLogModel(t *testing.T, lineCount int) *Model {
+	t.Helper()
+	m := testModel()
+	m.LogBuf = NewLogBuffer()
+	for i := 0; i < lineCount; i++ {
+		m.LogBuf.Write([]byte(fmt.Sprintf("line %d\n", i)))
+	}
+	m = pressKey(m, "`")
+	m = pressKey(m, "tab")
+	m.View()
+	return m
+}
+
+func setupLogModelWrapped(t *testing.T, lineCount int) *Model {
+	t.Helper()
+	m := testModel()
+	m.LogBuf = NewLogBuffer()
+	long := strings.Repeat("x", 200)
+	for i := 0; i < lineCount; i++ {
+		m.LogBuf.Write([]byte(fmt.Sprintf("%d %s\n", i, long)))
+	}
+	m = pressKey(m, "`")
+	m = pressKey(m, "tab")
+	m.View()
+	return m
+}
+
+func addLogLines(m *Model, n int) {
+	for i := 0; i < n; i++ {
+		m.LogBuf.Write([]byte(fmt.Sprintf("new %d\n", i)))
+	}
+}
+
+func logVisibleLines(m *Model) int {
+	return m.height - m.renderHeight() - 2
+}
+
+func logAnchorIdx(m *Model) int {
+	lines := m.LogBuf.Lines()
+	currentCount := m.LogBuf.Count()
+	return len(lines) - 1 - (currentCount - m.logAnchor)
+}
+
+func countVisualLines(m *Model, anchorIdx int) int {
+	lines := m.LogBuf.Lines()
+	total := 0
+	for i := 0; i <= anchorIdx && i < len(lines); i++ {
+		total += len(wrapLogLine(lines[i], m.width))
+	}
+	return total
+}
+
+func TestLogAnchor_AutoScroll(t *testing.T) {
+	m := setupLogModel(t, 30)
+	if m.logLastSeen != m.logAnchor {
+		t.Errorf("want equal: lastSeen=%d anchor=%d",
+			m.logLastSeen, m.logAnchor)
+	}
+	addLogLines(m, 5)
+	m.View()
+	if m.logLastSeen != m.LogBuf.Count() {
+		t.Errorf("lastSeen=%d, want %d",
+			m.logLastSeen, m.LogBuf.Count())
+	}
+	if m.logLastSeen != m.logAnchor {
+		t.Errorf("auto-scroll broken: lastSeen=%d anchor=%d",
+			m.logLastSeen, m.logAnchor)
+	}
+}
+
+func TestLogAnchor_ScrollUpFreezes(t *testing.T) {
+	m := setupLogModel(t, 20)
+	m = pressKey(m, "k")
+	anchor := m.logAnchor
+	addLogLines(m, 5)
+	m.View()
+	if m.logAnchor != anchor {
+		t.Errorf("anchor moved: was %d, now %d", anchor, m.logAnchor)
+	}
+	if m.logLastSeen != m.LogBuf.Count() {
+		t.Errorf("lastSeen=%d, want %d",
+			m.logLastSeen, m.LogBuf.Count())
+	}
+}
+
+func TestLogAnchor_ScrollDownToBottom(t *testing.T) {
+	m := setupLogModel(t, 20)
+	m = pressKey(m, "k")
+	m = pressKey(m, "k")
+	m = pressKey(m, "k")
+	m = pressKey(m, "j")
+	m = pressKey(m, "j")
+	m = pressKey(m, "j")
+	m.View()
+	if m.logLastSeen != m.logAnchor {
+		t.Errorf("not auto-scrolling: lastSeen=%d anchor=%d",
+			m.logLastSeen, m.logAnchor)
+	}
+}
+
+func TestLogAnchor_GJumpsToLatest(t *testing.T) {
+	m := setupLogModel(t, 20)
+	m = pressKey(m, "k")
+	addLogLines(m, 5)
+	m.View()
+	if m.logAnchor >= m.logLastSeen {
+		t.Fatal("should be anchored away from latest")
+	}
+	m = pressKey(m, "G")
+	m.View()
+	if m.logLastSeen != m.logAnchor {
+		t.Errorf("after G: lastSeen=%d anchor=%d",
+			m.logLastSeen, m.logAnchor)
+	}
+}
+
+func TestLogAnchor_NewMessagesCount(t *testing.T) {
+	m := setupLogModel(t, 30)
+	m = pressKey(m, "k")
+	addLogLines(m, 3)
+	m.View()
+	want := 4 // 1 (from up) + 3 (new messages)
+	got := m.logLastSeen - m.logAnchor
+	if got != want {
+		t.Errorf("new count = %d, want %d", got, want)
+	}
+}
+
+func TestLogAnchor_DownClampedAtLastSeen(t *testing.T) {
+	m := setupLogModel(t, 5)
+	m = pressKey(m, "j")
+	if m.logAnchor > m.logLastSeen {
+		t.Errorf("anchor %d > lastSeen %d",
+			m.logAnchor, m.logLastSeen)
+	}
+}
+
+func TestLogAnchor_ExpiredEntriesFillLoop(t *testing.T) {
+	m := setupLogModel(t, logBufMaxLines)
+	m = pressKey(m, "g") // home
+	m.View()
+	anchorBefore := m.logAnchor
+
+	addLogLines(m, 50)
+	m.View()
+
+	if m.logAnchor <= anchorBefore {
+		t.Errorf("anchor should advance: was %d, now %d",
+			anchorBefore, m.logAnchor)
+	}
+	idx := logAnchorIdx(m)
+	vis := logVisibleLines(m)
+	if idx+1 < vis {
+		t.Errorf("viewport not full: %d entries, need %d",
+			idx+1, vis)
+	}
+}
+
+func TestLogAnchor_AllEntriesExpired(t *testing.T) {
+	m := setupLogModel(t, 20)
+	m = pressKey(m, "k")
+	m.View()
+
+	addLogLines(m, logBufMaxLines+100)
+	m.View()
+
+	currentCount := m.LogBuf.Count()
+	firstAvailable := currentCount - len(m.LogBuf.Lines())
+	if m.logAnchor <= firstAvailable {
+		t.Errorf("anchor %d <= firstAvailable %d",
+			m.logAnchor, firstAvailable)
+	}
+	if m.logAnchor == m.logLastSeen {
+		t.Error("should still be anchored, not auto-scrolling")
+	}
+	idx := logAnchorIdx(m)
+	vis := logVisibleLines(m)
+	if idx+1 < vis {
+		t.Errorf("viewport not full: %d entries, need %d",
+			idx+1, vis)
+	}
+}
+
+func TestLogAnchor_ExpiredButFewEntries(t *testing.T) {
+	m := setupLogModel(t, 5)
+	m = pressKey(m, "g")
+	m.View()
+	if m.logAnchor > m.logLastSeen {
+		t.Errorf("anchor %d > lastSeen %d",
+			m.logAnchor, m.logLastSeen)
+	}
+}
+
+func TestLogAnchor_WrappedLinesFillViewport(t *testing.T) {
+	m := setupLogModelWrapped(t, logBufMaxLines)
+	m = pressKey(m, "g") // home
+	m.View()
+
+	addLogLines(m, 50)
+	m.View()
+
+	idx := logAnchorIdx(m)
+	vis := logVisibleLines(m)
+	total := countVisualLines(m, idx)
+	if total < vis {
+		t.Errorf("viewport not full with wrapped lines: "+
+			"%d visual lines, need %d", total, vis)
+	}
+}
+
+func TestLogAnchor_WrappedLinesScrollByWholeEntry(t *testing.T) {
+	m := testModel()
+	m.LogBuf = NewLogBuffer()
+	long := strings.Repeat("L", 300)
+	for i := 0; i < 20; i++ {
+		if i%3 == 0 {
+			m.LogBuf.Write([]byte(
+				fmt.Sprintf("%d %s\n", i, long)))
+		} else {
+			m.LogBuf.Write([]byte(
+				fmt.Sprintf("short %d\n", i)))
+		}
+	}
+	m = pressKey(m, "`")
+	m = pressKey(m, "tab")
+	m.View()
+
+	a0 := m.logAnchor
+	m = pressKey(m, "k")
+	if m.logAnchor != a0-1 {
+		t.Errorf("after up: anchor=%d, want %d",
+			m.logAnchor, a0-1)
+	}
+	m = pressKey(m, "k")
+	if m.logAnchor != a0-2 {
+		t.Errorf("after 2 up: anchor=%d, want %d",
+			m.logAnchor, a0-2)
+	}
+	m = pressKey(m, "j")
+	if m.logAnchor != a0-1 {
+		t.Errorf("after down: anchor=%d, want %d",
+			m.logAnchor, a0-1)
+	}
+}
+
+func TestLogAnchor_WrappedLinesPageUp(t *testing.T) {
+	m := setupLogModelWrapped(t, 50)
+	a0 := m.logAnchor
+	delta := max(logVisibleLines(m)/2, 1)
+	m = pressSpecialKey(m, tea.KeyPgUp)
+	if m.logAnchor != a0-delta {
+		t.Errorf("after pgup: anchor=%d, want %d (delta %d)",
+			m.logAnchor, a0-delta, delta)
 	}
 }

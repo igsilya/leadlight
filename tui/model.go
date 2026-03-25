@@ -171,7 +171,8 @@ type Model struct {
 	logConsole     bool
 	logFocused     bool
 	LogBuf         *LogBuffer
-	logOffset      int
+	logLastSeen    int // LogBuf.Count() as of last render
+	logAnchor      int // absolute log entry the viewport bottom is pinned to
 	logLastCount   int
 
 	RequestMbox        func(patchID int)

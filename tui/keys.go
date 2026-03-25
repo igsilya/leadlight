@@ -19,7 +19,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "`" {
 		m.logConsole = !m.logConsole
 		m.logFocused = false
-		m.logOffset = 0
+		if m.logConsole && m.LogBuf != nil {
+			count := m.LogBuf.Count()
+			m.logLastSeen = count
+			m.logAnchor = count
+		}
 		m.invalidateRowCache()
 		return m, nil
 	}
@@ -318,26 +322,35 @@ func (m *Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	consoleLines := m.height - m.renderHeight() - 2
 	switch msg.String() {
 	case "up", "k":
-		m.logOffset++
+		m.logAnchor--
+		if m.logAnchor < 1 {
+			m.logAnchor = 1
+		}
 	case "down", "j":
-		m.logOffset--
+		m.logAnchor++
+		if m.logAnchor > m.logLastSeen {
+			m.logAnchor = m.logLastSeen
+		}
 	case "pgup", "ctrl+u":
-		m.logOffset += consoleLines / 2
+		m.logAnchor -= max(consoleLines/2, 1)
+		if m.logAnchor < 1 {
+			m.logAnchor = 1
+		}
 	case "pgdown", "ctrl+d":
-		m.logOffset -= consoleLines / 2
+		m.logAnchor += max(consoleLines/2, 1)
+		if m.logAnchor > m.logLastSeen {
+			m.logAnchor = m.logLastSeen
+		}
 	case "home", "g":
-		m.logOffset = logBufMaxLines * 3
+		m.logAnchor = 1
 	case "end", "G":
-		m.logOffset = 0
+		m.logAnchor = m.logLastSeen
 	case "w":
 		if m.LogBuf != nil {
 			m.LogBuf.SaveToFile("leadlight.log")
 			m.Status.SetTimed(status.Info,
 				"Wrote leadlight.log", 3*time.Second)
 		}
-	}
-	if m.logOffset < 0 {
-		m.logOffset = 0
 	}
 	return m, nil
 }

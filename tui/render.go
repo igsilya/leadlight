@@ -883,38 +883,58 @@ func (m *Model) renderLogConsole(height int) string {
 	}
 
 	lines := m.LogBuf.Lines()
-	need := visibleLines + m.logOffset
+	currentCount := m.LogBuf.Count()
 
-	var visual []string
-	for i := len(lines) - 1; i >= 0 && len(visual) < need; i-- {
-		wrapped := wrapLogLine(lines[i], m.width)
-		for j := len(wrapped) - 1; j >= 0; j-- {
-			visual = append(visual, wrapped[j])
-		}
+	// Auto-scroll: when anchor tracks lastSeen, both advance
+	if m.logLastSeen == m.logAnchor {
+		m.logAnchor = currentCount
 	}
+	m.logLastSeen = currentCount
+
+	// Clamp anchor if entries expired from the ring buffer
+	firstAvailable := currentCount - len(lines)
+	if m.logAnchor <= firstAvailable {
+		m.logAnchor = firstAvailable + 1
+	}
+
+	// Collect visual lines from anchor backward. If the viewport
+	// can't be filled (entries expired), push anchor forward until
+	// it fills or we reach logLastSeen.
+	var visual []string
+	for m.logAnchor <= m.logLastSeen {
+		visual = visual[:0]
+		anchorIdx := len(lines) - 1 - (currentCount - m.logAnchor)
+		if anchorIdx < 0 {
+			anchorIdx = 0
+		}
+		for i := anchorIdx; i >= 0; i-- {
+			wrapped := wrapLogLine(lines[i], m.width)
+			for j := len(wrapped) - 1; j >= 0; j-- {
+				visual = append(visual, wrapped[j])
+			}
+			if len(visual) >= visibleLines {
+				break
+			}
+		}
+		if len(visual) >= visibleLines || m.logAnchor >= m.logLastSeen {
+			break
+		}
+		m.logAnchor++
+	}
+
+	// Reverse to chronological order and take the last visibleLines
 	for i, j := 0, len(visual)-1; i < j; i, j = i+1, j-1 {
 		visual[i], visual[j] = visual[j], visual[i]
 	}
-
-	maxOff := len(visual) - visibleLines
-	if maxOff < 0 {
-		maxOff = 0
-	}
-	if m.logOffset > maxOff {
-		m.logOffset = maxOff
+	if len(visual) > visibleLines {
+		visual = visual[len(visual)-visibleLines:]
 	}
 
-	end := len(visual) - m.logOffset
-	start := end - visibleLines
-	if start < 0 {
-		start = 0
-	}
-
-	for _, vl := range visual[start:end] {
+	for _, vl := range visual {
 		out.WriteString(logLineStyle.Render(vl))
 		out.WriteByte('\n')
 	}
-	for i := end - start; i < visibleLines; i++ {
+	for i := len(visual); i < visibleLines; i++ {
 		out.WriteByte('\n')
 	}
 
@@ -927,6 +947,12 @@ func (m *Model) renderLogConsole(height int) string {
 		hs.Render(" ") + hb.Render("pgup/dn"))
 	out.WriteString(helpSepStr(hs))
 	out.WriteString(helpKey(hb, hd, "w", "write"))
+	if m.logAnchor < m.logLastSeen {
+		newCount := m.logLastSeen - m.logAnchor
+		out.WriteString(helpSepStr(hs))
+		out.WriteString(hd.Render(
+			fmt.Sprintf("↓ %d new", newCount)))
+	}
 	return out.String()
 }
 
