@@ -35,7 +35,11 @@ type Syncer struct {
 	commentSkip map[int]time.Time // last failure time per item; retried after cooldown
 	detailSkip  map[int]time.Time
 	checkSkip   map[int]time.Time
-	status      *status.Registry
+
+	lastTerminalComment time.Time // cooldown for terminal-state comment fetches
+	lastTerminalDetail  time.Time
+	lastTerminalCheck   time.Time
+	status              *status.Registry
 }
 
 type MboxRequest struct {
@@ -179,21 +183,10 @@ func (s *Syncer) RequestSync() {
 	}
 }
 
-// fetchResult indicates what type of item was fetched. The comment and
-// detail loops use this to select the polling interval: active items
-// poll every 5s, terminal items every 60s to reduce server load.
-type fetchResult int
-
-const (
-	fetchNone     fetchResult = iota // nothing to fetch
-	fetchActive                      // fetched an item in active state
-	fetchTerminal                    // fetched an item in terminal state
-)
-
 const (
 	syncInterval      = 5 * time.Minute  // check for new events
-	activeInterval    = 5 * time.Second  // fetch interval for active-state items
-	terminalInterval  = 60 * time.Second // fetch interval for terminal-state items
+	activeInterval    = 5 * time.Second  // poll interval for all background loops
+	terminalInterval  = 60 * time.Second // cooldown between terminal-state fetches
 	archiveInterval   = 5 * time.Minute  // poll mail archive (only for Patchwork < 1.3)
 	maintainerRefresh = 24 * time.Hour   // re-fetch project maintainer list
 )
@@ -325,40 +318,27 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	}
 }
 
-// runCommentLoop fetches comments one item per cycle. Polls every 5s
-// while active-state items remain, slows to 60s for terminal items.
+// runCommentLoop fetches comments one item per cycle. Polls every 5s.
+// Terminal-state items are throttled via a per-loop cooldown.
 func (s *Syncer) runCommentLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
-
-	result := s.runCommentCycle(ctx)
+	s.runCommentCycle(ctx)
 	for {
-		interval := activeInterval
-		if result == fetchTerminal {
-			interval = terminalInterval
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(interval):
-			result = s.runCommentCycle(ctx)
+		case <-time.After(activeInterval):
+			s.runCommentCycle(ctx)
 		}
 	}
 }
 
-// runCommentCycle fetches one patch comment and one cover comment.
-// Returns the most urgent result (active > terminal > none).
-func (s *Syncer) runCommentCycle(ctx context.Context) fetchResult {
+func (s *Syncer) runCommentCycle(ctx context.Context) {
 	r1 := s.fetchNextComments(ctx)
 	r2 := s.fetchNextCoverComments(ctx)
-	if r1 == fetchActive || r2 == fetchActive {
+	if r1 || r2 {
 		s.notify()
-		return fetchActive
 	}
-	if r1 == fetchTerminal || r2 == fetchTerminal {
-		s.notify()
-		return fetchTerminal
-	}
-	return fetchNone
 }
 
 func (s *Syncer) runArchiveLoop(ctx context.Context, wg *gosync.WaitGroup) {
@@ -758,52 +738,60 @@ func (s *Syncer) fixIncompletePatches(ctx context.Context) {
 	}
 }
 
-func (s *Syncer) fetchNextComments(ctx context.Context) fetchResult {
+func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 	refs := s.db.GetPatchesNeedingComments(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
+		if !ref.IsActive &&
+			time.Since(s.lastTerminalComment) < terminalInterval {
+			break
+		}
 		if !s.fetchCommentsForPatch(ctx, ref.ID, ref.SeriesID,
 			status.BgComments) {
 			s.commentSkip[ref.ID] = time.Now()
-			return fetchNone
+			return false
 		}
 		delete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgComments,
 			fmt.Sprintf("Comments fetched (%d remaining)",
 				len(refs)-i-1), 3*time.Second)
-		if ref.IsActive {
-			return fetchActive
+		if !ref.IsActive {
+			s.lastTerminalComment = time.Now()
 		}
-		return fetchTerminal
+		return true
 	}
-	return fetchNone
+	return false
 }
 
-func (s *Syncer) fetchNextCoverComments(ctx context.Context) fetchResult {
+func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 	refs := s.db.GetCoversNeedingComments(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
+		if !ref.IsActive &&
+			time.Since(s.lastTerminalComment) < terminalInterval {
+			break
+		}
 		if !s.fetchCommentsForCover(ctx, ref.ID, ref.SeriesID,
 			status.BgCoverComments) {
 			s.commentSkip[ref.ID] = time.Now()
-			return fetchNone
+			return false
 		}
 		delete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgCoverComments,
 			fmt.Sprintf("Cover comments fetched (%d remaining)",
 				len(refs)-i-1), 3*time.Second)
-		if ref.IsActive {
-			return fetchActive
+		if !ref.IsActive {
+			s.lastTerminalComment = time.Now()
 		}
-		return fetchTerminal
+		return true
 	}
-	return fetchNone
+	return false
 }
 
 func (s *Syncer) fetchCommentsForPatch(
@@ -931,60 +919,52 @@ func (s *Syncer) checkArchiveMonth(
 	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
 }
 
-// runDetailLoop fetches patch/cover details one item per cycle. Polls
-// every 5s while active-state items remain, slows to 60s for terminal.
+// runDetailLoop fetches patch/cover details one item per cycle.
+// Polls every 5s. Terminal items throttled via cooldown.
 func (s *Syncer) runDetailLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
-
-	result := s.fetchNextDetail(ctx)
-	if result != fetchNone {
+	if s.fetchNextDetail(ctx) {
 		s.notify()
 	}
-
 	for {
-		interval := activeInterval
-		if result == fetchTerminal {
-			interval = terminalInterval
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(interval):
-			result = s.fetchNextDetail(ctx)
-			if result != fetchNone {
+		case <-time.After(activeInterval):
+			if s.fetchNextDetail(ctx) {
 				s.notify()
 			}
 		}
 	}
 }
 
-func (s *Syncer) fetchNextDetail(ctx context.Context) fetchResult {
+func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 	patchRefs := s.db.GetPatchesNeedingDetail(s.cfg.States)
 	coverRefs := s.db.GetCoversNeedingDetail(s.cfg.States)
 	total := len(patchRefs) + len(coverRefs)
-	if total == 0 {
-		s.status.Clear(status.Detail)
-		return fetchNone
-	}
 
 	for i, ref := range patchRefs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
+		if !ref.IsActive &&
+			time.Since(s.lastTerminalDetail) < terminalInterval {
+			break
+		}
 		if err := s.fetchDetailForPatch(ctx, ref.ID,
 			ref.SeriesID, status.Detail); err != nil {
 			s.detailSkip[ref.ID] = time.Now()
-			return fetchNone
+			return false
 		}
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
 			fmt.Sprintf("Details fetched (%d remaining)",
 				total-i-1), 3*time.Second)
-		if ref.IsActive {
-			return fetchActive
+		if !ref.IsActive {
+			s.lastTerminalDetail = time.Now()
 		}
-		return fetchTerminal
+		return true
 	}
 
 	for i, ref := range coverRefs {
@@ -992,21 +972,25 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) fetchResult {
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
+		if !ref.IsActive &&
+			time.Since(s.lastTerminalDetail) < terminalInterval {
+			break
+		}
 		if err := s.fetchDetailForCover(ctx, ref.ID,
 			ref.SeriesID, status.Detail); err != nil {
 			s.detailSkip[ref.ID] = time.Now()
-			return fetchNone
+			return false
 		}
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
 			fmt.Sprintf("Details fetched (%d remaining)",
 				total-len(patchRefs)-i-1), 3*time.Second)
-		if ref.IsActive {
-			return fetchActive
+		if !ref.IsActive {
+			s.lastTerminalDetail = time.Now()
 		}
-		return fetchTerminal
+		return true
 	}
-	return fetchNone
+	return false
 }
 
 // backfillHistory fetches historical patches and series going back
@@ -1123,57 +1107,52 @@ func (s *Syncer) backfillPaginatedSeries(
 	}
 }
 
-// runCheckLoop fetches CI check results one patch per cycle. Polls
-// every 5s while active-state items remain, slows to 60s for terminal.
+// runCheckLoop fetches CI check results one patch per cycle.
+// Polls every 5s. Terminal items throttled via cooldown.
 func (s *Syncer) runCheckLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
-
-	result := s.fetchNextChecks(ctx)
-	if result != fetchNone {
+	if s.fetchNextChecks(ctx) {
 		s.notify()
 	}
-
 	for {
-		interval := activeInterval
-		if result == fetchTerminal {
-			interval = terminalInterval
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(interval):
-			result = s.fetchNextChecks(ctx)
-			if result != fetchNone {
+		case <-time.After(activeInterval):
+			if s.fetchNextChecks(ctx) {
 				s.notify()
 			}
 		}
 	}
 }
 
-func (s *Syncer) fetchNextChecks(ctx context.Context) fetchResult {
+func (s *Syncer) fetchNextChecks(ctx context.Context) bool {
 	refs := s.db.GetPatchesNeedingChecks(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.checkSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
+		if !ref.IsActive &&
+			time.Since(s.lastTerminalCheck) < terminalInterval {
+			break
+		}
 		s.fetchChecksForPatch(ctx, ref.ID, ref.SeriesID,
 			status.BgChecks)
 		if s.db.NeedsPatchChecks(ref.ID) {
-			// Fetch failed — the shared function logged the error
 			s.checkSkip[ref.ID] = time.Now()
-			return fetchNone
+			return false
 		}
 		delete(s.checkSkip, ref.ID)
 		s.status.SetTimed(status.BgChecks,
 			fmt.Sprintf("Checks fetched (%d remaining)",
 				len(refs)-i-1), 3*time.Second)
-		if ref.IsActive {
-			return fetchActive
+		if !ref.IsActive {
+			s.lastTerminalCheck = time.Now()
 		}
-		return fetchTerminal
+		return true
 	}
-	return fetchNone
+	return false
 }
 
 // fetchAllForSeries fetches all data for a series: cover detail +

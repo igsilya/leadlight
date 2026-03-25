@@ -2547,8 +2547,8 @@ func TestFetchNextChecks(t *testing.T) {
 		status.NewRegistry(nil))
 
 	result := s.fetchNextChecks(context.Background())
-	if result != fetchActive {
-		t.Errorf("result = %d, want fetchActive", result)
+	if !result {
+		t.Error("expected true (work done)")
 	}
 
 	checks := d.GetChecksForPatch(100)
@@ -2605,8 +2605,8 @@ func TestFetchNextChecks_Error(t *testing.T) {
 		status.NewRegistry(nil))
 
 	result := s.fetchNextChecks(context.Background())
-	if result != fetchNone {
-		t.Errorf("result = %d, want fetchNone on error", result)
+	if result {
+		t.Error("expected false (error)")
 	}
 
 	// Should be in skip set
@@ -3232,7 +3232,13 @@ func TestFetchNextChecks_Terminal(t *testing.T) {
 		status.NewRegistry(nil))
 
 	result := s.fetchNextChecks(context.Background())
-	if result != fetchTerminal {
-		t.Errorf("result = %d, want fetchTerminal", result)
+	if !result {
+		t.Error("expected true (terminal work done)")
+	}
+
+	// Second call within cooldown should skip terminal work
+	result = s.fetchNextChecks(context.Background())
+	if result {
+		t.Error("expected false (terminal cooldown active)")
 	}
 }
