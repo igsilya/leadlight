@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"leadlight/db"
 )
 
@@ -37,7 +39,7 @@ func TestFormatMbox_NotEmpty(t *testing.T) {
 	p := ParsedMbox{
 		Subject: "[PATCH v2 1/3] Fix race condition in ovsdb",
 		From:    "Lorem Ipsum <lorem@ipsum.example>",
-		To:      "dev@openvswitch.org",
+		To:      "dev@lorem.example",
 		Date:    "Mon, 10 Mar 2026 12:00:00 +0000",
 		Body:    "This fixes a race condition.\n\nThe issue occurs when...",
 		Diff:    "diff --git a/lib/ovsdb.c b/lib/ovsdb.c\n--- a/lib/ovsdb.c\n+++ b/lib/ovsdb.c\n@@ -100,6 +100,7 @@\n some_function();\n+fix_race();\n other_function();",
@@ -559,7 +561,7 @@ func TestFormatComment_HeaderFallback(t *testing.T) {
 	}
 }
 
-func TestFormatComment_FromUsesSubmitterEmail(t *testing.T) {
+func TestFormatComment_FromPrefersReplyTo(t *testing.T) {
 	c := CommentInfo{
 		Subject:        "Re: Lorem ipsum",
 		Submitter:      "Lorem Ipsum",
@@ -567,14 +569,63 @@ func TestFormatComment_FromUsesSubmitterEmail(t *testing.T) {
 		Date:           "2025-12-04T09:17:04",
 		Content:        "Looks good.",
 		Headers: "From: =?utf-8?q?Lorem_via_dev?= <dev@lorem.example>\n" +
+			"Reply-To: Lorem Ipsum <lorem@ipsum.example>\n" +
 			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
 	}
 	result := FormatComment(c, 120, false)
 	if !strings.Contains(result, "lorem@ipsum.example") {
-		t.Error("should use submitter email, not mangled headers.From")
+		t.Error("should use Reply-To email")
 	}
 	if strings.Contains(result, "dev@lorem.example") {
 		t.Error("should not use mangled list From")
+	}
+}
+
+func TestFormatComment_FromFallsBackToSubmitter(t *testing.T) {
+	// No Reply-To — API submitter preferred over raw From header
+	// (which is often mangled by mailing lists).
+	c := CommentInfo{
+		Subject:        "Re: Lorem ipsum",
+		Submitter:      "Lorem Ipsum",
+		SubmitterEmail: "lorem@ipsum.example",
+		Date:           "2025-12-04T09:17:04",
+		Content:        "Looks good.",
+		Headers: "From: Lorem Ipsum <lorem@real.example>\n" +
+			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
+	}
+	result := FormatComment(c, 120, false)
+	if !strings.Contains(result, "lorem@ipsum.example") {
+		t.Error("should use API submitter over raw From")
+	}
+}
+
+func TestFormatComment_FromLastResort(t *testing.T) {
+	// No Reply-To, no API submitter — From header is the last resort.
+	c := CommentInfo{
+		Subject: "Re: Lorem ipsum",
+		Date:    "2025-12-04T09:17:04",
+		Content: "Looks good.",
+		Headers: "From: Lorem Ipsum <lorem@last.example>\n" +
+			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
+	}
+	result := FormatComment(c, 120, false)
+	if !strings.Contains(result, "lorem@last.example") {
+		t.Error("should fall back to From header as last resort")
+	}
+}
+
+func TestFormatComment_SubjectCompacted(t *testing.T) {
+	c := CommentInfo{
+		Subject: "Re: [dev] [PATCH v2 04/19] Lorem ipsum\n dolor sit amet",
+		Date:    "2025-12-04T09:17:04",
+		Content: "Looks good.",
+	}
+	result := FormatComment(c, 120, false)
+	if strings.Contains(result, "\n dolor") {
+		t.Error("Subject should be compacted, fold not removed")
+	}
+	if !strings.Contains(result, "Lorem ipsum dolor sit amet") {
+		t.Error("Subject should contain compacted text")
 	}
 }
 
@@ -641,6 +692,136 @@ func TestFormatDiff_Colors(t *testing.T) {
 	}
 	if !strings.Contains(result, "new") {
 		t.Error("missing new line")
+	}
+}
+
+func TestCompactAndDecodeHeader_NoStrayNewlines(t *testing.T) {
+	// Large Cc with RFC 2822 folds and MIME encoding.
+	// After compact + decode, the result should have ZERO newlines.
+	cc := "Lorem Ipsum <lorem@ex>,\n" +
+		" list-a@lists.ex, \"Dolor S.\" <dolor@ex>,\n" +
+		" =?utf-8?q?Amet_S=C3=A1nchez?= <amet@ex>,\n" +
+		" \"Sit A.B. Consectetur\" <sit@ex>,\n" +
+		" Adipiscing Elit <adipiscing@ex>,\n" +
+		" =?utf-8?q?Sed_D=C3=B6?= <sed@ex>,\n" +
+		" \"Tempor Incididunt \\(Corp\\)\" <tempor@ex>,\n" +
+		" list-b@ex, \"Ut Enim\" <ut@ex>"
+
+	compacted := compactHeader(cc)
+	if strings.Contains(compacted, "\n") {
+		t.Fatal("compacted Cc still has newlines")
+	}
+
+	decoded := decodeHeader(compacted)
+	if strings.Contains(decoded, "\n") {
+		t.Fatal("decoded Cc has stray newlines")
+	}
+	if !strings.Contains(decoded, "Sánchez") {
+		t.Error("MIME-encoded name not decoded")
+	}
+	if !strings.Contains(decoded, "Dö") {
+		t.Error("MIME-encoded umlaut not decoded")
+	}
+}
+
+func TestFormatMbox_LineWidths(t *testing.T) {
+	// Large Cc to stress-test line width calculation at multiple
+	// terminal widths. If any line exceeds the target width,
+	// lipgloss.Render with Width() re-wraps it, losing indentation.
+	var addrs []string
+	for i := 0; i < 15; i++ {
+		addrs = append(addrs, fmt.Sprintf(
+			"Lorem Ipsum%d <lorem%d@ipsum.example>", i, i))
+	}
+	cc := strings.Join(addrs, ", ")
+
+	for _, width := range []int{80, 100, 120, 133, 150, 200} {
+		p := ParsedMbox{
+			Subject: "Lorem ipsum dolor sit amet",
+			From:    "Lorem <lorem@ipsum.example>",
+			To:      "dolor@ipsum.example",
+			Cc:      cc,
+			Date:    "Mon, 23 Mar 2026 12:00:19 -0400",
+			Body:    "Lorem ipsum dolor sit amet.",
+		}
+		result := FormatMbox(p, width)
+		lines := strings.Split(result, "\n")
+		for i, line := range lines {
+			vw := lipgloss.Width(line)
+			if vw > width {
+				t.Errorf("width=%d line %d visual width %d > %d",
+					width, i, vw, width)
+			}
+		}
+	}
+}
+
+func TestWrapHeaderValue_CommaTrailsCurrentLine(t *testing.T) {
+	value := "Lorem <lorem@ipsum.example>, Dolor <dolor@ipsum.example>, " +
+		"Amet <amet@ipsum.example>, Sit <sit@ipsum.example>"
+	lines := wrapHeaderValue(value, 60)
+	for i, line := range lines {
+		if strings.HasPrefix(line, ",") {
+			t.Errorf("line %d starts with comma: %q", i, line)
+		}
+		if i < len(lines)-1 && !strings.HasSuffix(line, ",") {
+			t.Errorf("line %d should end with comma: %q", i, line)
+		}
+	}
+	last := lines[len(lines)-1]
+	if strings.HasSuffix(last, ",") {
+		t.Errorf("last line should not end with comma: %q", last)
+	}
+}
+
+func TestWrapHeaderValue_NoLeadingSpaceAfterComma(t *testing.T) {
+	value := "Lorem <lorem@ex>, Ipsum <ipsum@ex>, " +
+		"Dolor <dolor@ex>, Amet <amet@ex>"
+	lines := wrapHeaderValue(value, 40)
+	for i, line := range lines {
+		if i > 0 && (strings.HasPrefix(line, " ") ||
+			strings.HasPrefix(line, "\t")) {
+			t.Errorf("line %d has leading whitespace: %q",
+				i, line)
+		}
+	}
+}
+
+func TestWrapHeaderValue_LongCcList(t *testing.T) {
+	var addrs []string
+	for i := 0; i < 30; i++ {
+		addrs = append(addrs,
+			fmt.Sprintf("Lorem%d <lorem%d@example.com>", i, i))
+	}
+	value := strings.Join(addrs, ", ")
+	lines := wrapHeaderValue(value, 111)
+	for i, line := range lines {
+		if i > 0 && strings.HasPrefix(line, " ") {
+			t.Errorf("line %d starts with space: %q", i, line)
+		}
+	}
+}
+
+func TestCompactHeader(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"LF fold", "a@ex,\n b@ex", "a@ex, b@ex"},
+		{"tab fold", "a@ex,\n\tb@ex", "a@ex, b@ex"},
+		{"CRLF fold", "a@ex,\r\n b@ex", "a@ex, b@ex"},
+		{"multi fold", "a@ex,\n b@ex,\n c@ex", "a@ex, b@ex, c@ex"},
+		{"no fold", "a@ex, b@ex", "a@ex, b@ex"},
+		{"empty", "", ""},
+		{"deep indent", "a@ex,\n         b@ex", "a@ex, b@ex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compactHeader(tt.in)
+			if got != tt.want {
+				t.Errorf("compactHeader(%q) = %q, want %q",
+					tt.in, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -764,7 +945,7 @@ func TestBuildParsedMboxFromPatch_NoHeaders(t *testing.T) {
 
 func TestBuildParsedMboxFromPatch_ListMangled(t *testing.T) {
 	headers := `{
-		"From": "Lorem via dev <ovs-dev@openvswitch.org>",
+		"From": "Lorem via dev <dev@lorem.example>",
 		"Reply-To": "Lorem Ipsum <lorem@real.com>"
 	}`
 	row := db.PatchRow{
@@ -799,6 +980,45 @@ func TestBuildParsedMboxFromCover(t *testing.T) {
 	}
 	if p.Body != "Overview of the series." {
 		t.Errorf("Body = %q", p.Body)
+	}
+}
+
+func TestBuildParsedMboxFromPatch_FoldedHeaders(t *testing.T) {
+	headers := `{
+		"Subject": "[dev] [PATCH v2]\n Fix the widget",
+		"Reply-To": "Lorem Ipsum <lorem@example.com>",
+		"To": "a@ex,\n b@ex,\n c@ex",
+		"Cc": "d@ex,\n\te@ex"
+	}`
+	row := db.PatchRow{
+		Name:    "[PATCH v2] Fix the widget",
+		Headers: headers,
+		Content: "body",
+	}
+	p := BuildParsedMboxFromPatch(row)
+	if strings.Contains(p.To, "\n") {
+		t.Errorf("To should be compacted, got %q", p.To)
+	}
+	if strings.Contains(p.Cc, "\n") {
+		t.Errorf("Cc should be compacted, got %q", p.Cc)
+	}
+	if strings.Contains(p.Subject, "\n") {
+		t.Errorf("Subject should be compacted, got %q", p.Subject)
+	}
+}
+
+func TestBuildParsedMboxFromPatch_SubjectFromHeaders(t *testing.T) {
+	headers := `{
+		"Subject": "[dev] [PATCH v2] Original subject"
+	}`
+	row := db.PatchRow{
+		Name:    "[PATCH v2] Original subject",
+		Headers: headers,
+		Content: "body",
+	}
+	p := BuildParsedMboxFromPatch(row)
+	if p.Subject != "[dev] [PATCH v2] Original subject" {
+		t.Errorf("Subject = %q, want headers version", p.Subject)
 	}
 }
 

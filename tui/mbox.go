@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime"
+	"regexp"
 	"strings"
 	"time"
 
@@ -31,6 +32,15 @@ func parseJSONHeaders(headersJSON string) map[string]interface{} {
 	return m
 }
 
+// headerFoldRe matches RFC 2822 header continuation: a newline
+// (optionally preceded by \r) followed by one or more spaces/tabs.
+var headerFoldRe = regexp.MustCompile(`\r?\n[ \t]+`)
+
+// compactHeader joins RFC 2822 folded header lines into a single line.
+func compactHeader(s string) string {
+	return strings.TrimSpace(headerFoldRe.ReplaceAllString(s, " "))
+}
+
 // headerString extracts a string value from a JSON headers map.
 // Handles both string and []interface{} (returns first element).
 func headerString(headers map[string]interface{}, key string) string {
@@ -56,9 +66,9 @@ func headerString(headers map[string]interface{}, key string) string {
 // and falls back to From. Values are MIME-decoded for non-ASCII names.
 func fromHeader(headers map[string]interface{}) string {
 	if replyTo := headerString(headers, "Reply-To"); replyTo != "" {
-		return decodeHeader(replyTo)
+		return decodeHeader(compactHeader(replyTo))
 	}
-	return decodeHeader(headerString(headers, "From"))
+	return decodeHeader(compactHeader(headerString(headers, "From")))
 }
 
 // BuildParsedMboxFromPatch constructs a ParsedMbox from patch detail
@@ -66,7 +76,6 @@ func fromHeader(headers map[string]interface{}) string {
 func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 	headers := parseJSONHeaders(row.Headers)
 	if headers == nil {
-		// Fallback when no headers available
 		from := row.Submitter
 		if row.SubmitterEmail != "" {
 			from += " <" + row.SubmitterEmail + ">"
@@ -79,18 +88,25 @@ func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 			Diff:    row.Diff,
 		}
 	}
-	date := headerString(headers, "Date")
+	subject := decodeHeader(compactHeader(
+		headerString(headers, "Subject")))
+	if subject == "" {
+		subject = compactHeader(row.Name)
+	}
+	date := compactHeader(headerString(headers, "Date"))
 	if date == "" {
 		date = row.Date
 	}
 	return ParsedMbox{
-		Subject: row.Name,
+		Subject: subject,
 		From:    fromHeader(headers),
-		To:      decodeHeader(headerString(headers, "To")),
-		Cc:      decodeHeader(headerString(headers, "Cc")),
-		Date:    date,
-		Body:    row.Content,
-		Diff:    row.Diff,
+		To: decodeHeader(compactHeader(
+			headerString(headers, "To"))),
+		Cc: decodeHeader(compactHeader(
+			headerString(headers, "Cc"))),
+		Date: date,
+		Body: row.Content,
+		Diff: row.Diff,
 	}
 }
 
@@ -105,17 +121,24 @@ func BuildParsedMboxFromCover(row db.CoverRow) ParsedMbox {
 			Body:    row.Content,
 		}
 	}
-	date := headerString(headers, "Date")
+	subject := decodeHeader(compactHeader(
+		headerString(headers, "Subject")))
+	if subject == "" {
+		subject = compactHeader(row.Name)
+	}
+	date := compactHeader(headerString(headers, "Date"))
 	if date == "" {
 		date = row.Date
 	}
 	return ParsedMbox{
-		Subject: row.Name,
+		Subject: subject,
 		From:    fromHeader(headers),
-		To:      decodeHeader(headerString(headers, "To")),
-		Cc:      decodeHeader(headerString(headers, "Cc")),
-		Date:    date,
-		Body:    row.Content,
+		To: decodeHeader(compactHeader(
+			headerString(headers, "To"))),
+		Cc: decodeHeader(compactHeader(
+			headerString(headers, "Cc"))),
+		Date: date,
+		Body: row.Content,
 	}
 }
 
@@ -235,31 +258,47 @@ func formatDiff(diff string, width int) string {
 	return b.String()
 }
 
+// wrapHeaderValue wraps a header value to fit within the given width.
+// Splits on commas first (natural delimiter for email lists), then
+// falls back to spaces for long segments without commas. Accumulates
+// chunks until adding the next one would exceed the width.
 func wrapHeaderValue(s string, width int) []string {
-	runes := []rune(s)
-	if len(runes) <= width {
+	if len(s) <= width {
 		return []string{s}
 	}
+	// Split on ", " to get natural chunks (email addresses)
+	parts := strings.Split(s, ", ")
 	var lines []string
-	for len(runes) > 0 {
-		end := width
-		if end > len(runes) {
-			end = len(runes)
+	var current string
+	for _, part := range parts {
+		if current == "" {
+			current = part
+		} else if len(current)+len(", ")+len(part) <= width-1 {
+			// -1 reserves space for trailing comma on flush
+			current += ", " + part
+		} else {
+			lines = append(lines, current+",")
+			current = part
 		}
-		// Try to break at a comma or space
-		if end < len(runes) {
-			lookback := end / 2
-			for i := end; i > end-lookback && i > 0; i-- {
-				if runes[i] == ',' || runes[i] == ' ' {
-					end = i + 1
-					break
-				}
-			}
-		}
-		lines = append(lines, string(runes[:end]))
-		runes = runes[end:]
 	}
-	return lines
+	if current != "" {
+		lines = append(lines, current)
+	}
+	// Handle individual lines that are still too long (single
+	// very long email address or non-comma-separated value)
+	var result []string
+	for _, line := range lines {
+		for len(line) > width {
+			cut := width
+			if idx := strings.LastIndex(line[:width], " "); idx > width/2 {
+				cut = idx
+			}
+			result = append(result, line[:cut])
+			line = strings.TrimSpace(line[cut:])
+		}
+		result = append(result, line)
+	}
+	return result
 }
 
 // replaceControlChars converts control characters to caret notation
@@ -544,29 +583,48 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		}
 	}
 
-	if c.Subject != "" {
-		writeHeader("Subject: ", c.Subject)
+	subject := decodeHeader(compactHeader(
+		extractHeader(c.Headers, "Subject")))
+	if subject == "" {
+		subject = compactHeader(c.Subject)
+	}
+	if subject != "" {
+		writeHeader("Subject: ", subject)
 	}
 
-	from := c.Submitter
-	if c.SubmitterEmail != "" {
-		from += " <" + c.SubmitterEmail + ">"
+	// Reply-To → API submitter → From. The raw From header is often
+	// mangled by mailing lists ("Name via dev <list@example>"), so
+	// API submitter (resolved by Patchwork) is preferred. From is
+	// the last resort when neither Reply-To nor submitter exist.
+	from := decodeHeader(compactHeader(
+		extractHeader(c.Headers, "Reply-To")))
+	if from == "" {
+		from = c.Submitter
+		if c.SubmitterEmail != "" {
+			from += " <" + c.SubmitterEmail + ">"
+		}
+	}
+	if from == "" {
+		from = decodeHeader(compactHeader(
+			extractHeader(c.Headers, "From")))
 	}
 	if from != "" {
 		writeHeader("From:    ", from)
 	}
 
-	to := decodeHeader(extractHeader(c.Headers, "To"))
+	to := decodeHeader(compactHeader(
+		extractHeader(c.Headers, "To")))
 	if to != "" {
 		writeHeader("To:      ", to)
 	}
 
-	cc := decodeHeader(extractHeader(c.Headers, "Cc"))
+	cc := decodeHeader(compactHeader(
+		extractHeader(c.Headers, "Cc")))
 	if cc != "" {
 		writeHeader("Cc:      ", cc)
 	}
 
-	date := extractHeader(c.Headers, "Date")
+	date := compactHeader(extractHeader(c.Headers, "Date"))
 	if date == "" {
 		date = formatDate(c.Date)
 	}
