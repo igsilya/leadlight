@@ -119,20 +119,23 @@ func (c *Client) shouldRateLimit(ctx context.Context) bool {
 	return !v
 }
 
+// waitForRateLimit waits until enough time has passed since the last
+// request, then reserves the next slot. The mutex is only held briefly
+// to check/set the timestamp — never during sleep. This prevents
+// blocking markRequestDone from other goroutines that have completed
+// their HTTP calls.
 func (c *Client) waitForRateLimit() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if !c.lastReq.IsZero() {
-		elapsed := time.Since(c.lastReq)
-		if elapsed < c.minDelay {
-			time.Sleep(c.minDelay - elapsed)
+	for {
+		c.mu.Lock()
+		if c.lastReq.IsZero() || time.Since(c.lastReq) >= c.minDelay {
+			c.lastReq = time.Now()
+			c.mu.Unlock()
+			return
 		}
+		delay := c.minDelay - time.Since(c.lastReq)
+		c.mu.Unlock()
+		time.Sleep(delay)
 	}
-	// Reserve this time slot so other goroutines wait. markRequestDone
-	// updates lastReq again when the request completes, so the next
-	// waiter accounts for the actual request duration.
-	c.lastReq = time.Now()
 }
 
 func (c *Client) markRequestDone() {
