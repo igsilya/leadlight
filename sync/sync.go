@@ -1004,6 +1004,10 @@ func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey s
 				Complete: sr.ReceivedAll, TotalPatches: sr.Total,
 				ReceivedPatches: sr.ReceivedTotal,
 			})
+			for _, ps := range sr.Patches {
+				s.db.SavePatchSummary(ps.ID, sr.ID,
+					ps.Name, ps.Date, ps.MsgID, ps.Mbox, ps.WebURL)
+			}
 			s.db.UpdateSeriesPatches(sr.ID, sr.Submitter.Name, sr.Submitter.Email)
 			if sr.CoverLetter != nil {
 				s.db.SaveCover(db.CoverRow{

@@ -2889,6 +2889,74 @@ func TestBackfillHistory_AlreadyComplete(t *testing.T) {
 	}
 }
 
+func TestFetchSeriesSince_SavesPatches(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/series/" {
+				json.NewEncoder(w).Encode([]api.Series{
+					{
+						ID: 50, Name: "Lorem series",
+						Date: "2026-03-09", Version: 1,
+						Total: 2, ReceivedTotal: 2, ReceivedAll: true,
+						Submitter: api.Person{
+							Name: "Lorem Ipsum", Email: "lorem@ipsum.example"},
+						Patches: []api.PatchSummary{
+							{ID: 100, Name: "p1", Date: "2026-03-09",
+								MsgID: "<100@ex>", Mbox: "https://pw.example/p/100/mbox/"},
+							{ID: 101, Name: "p2", Date: "2026-03-09",
+								MsgID: "<101@ex>", Mbox: "https://pw.example/p/101/mbox/"},
+						},
+					},
+				})
+				return
+			}
+			w.WriteHeader(404)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+
+	s.fetchSeriesSince(context.Background(), "2026-03-01", status.Sync)
+
+	// Series should exist with full data
+	allSeries := d.GetAllSeries()
+	if len(allSeries) != 1 || allSeries[0].ID != 50 {
+		t.Fatalf("GetAllSeries = %d series, want 1", len(allSeries))
+	}
+	if allSeries[0].Submitter != "Lorem Ipsum" {
+		t.Errorf("submitter = %q, want Lorem Ipsum", allSeries[0].Submitter)
+	}
+
+	// Patches should have been created from the series response
+	r1, _ := d.GetPatch(100)
+	if r1 == nil {
+		t.Fatal("patch 100 should exist")
+	}
+	if r1.SeriesID != 50 {
+		t.Errorf("patch 100 series_id = %d, want 50", r1.SeriesID)
+	}
+	if r1.Submitter != "Lorem Ipsum" {
+		t.Errorf("patch 100 submitter = %q, want Lorem Ipsum", r1.Submitter)
+	}
+
+	r2, _ := d.GetPatch(101)
+	if r2 == nil {
+		t.Fatal("patch 101 should exist")
+	}
+	if r2.SeriesID != 50 {
+		t.Errorf("patch 101 series_id = %d, want 50", r2.SeriesID)
+	}
+}
+
 func TestFetchChecksForPatch_OnDemand(t *testing.T) {
 	checksJSON := `[
 		{"id": 1, "state": "success", "context": "ci/build",
