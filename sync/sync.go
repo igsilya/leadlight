@@ -180,11 +180,11 @@ func (s *Syncer) RequestSync() {
 }
 
 const (
-	syncInterval      = 5 * time.Minute  // check for new events
-	activeInterval    = 5 * time.Second  // poll interval for all background loops
-	terminalInterval  = 60 * time.Second // cooldown between terminal-state fetches
-	archiveInterval   = 5 * time.Minute  // poll mail archive (only for Patchwork < 1.3)
-	maintainerRefresh = 24 * time.Hour   // re-fetch project maintainer list
+	syncInterval      = 5 * time.Minute // check for new events
+	activeInterval    = 5 * time.Second // poll interval for all background loops
+	terminalInterval  = 5 * time.Minute // cooldown between terminal-state fetches
+	archiveInterval   = 5 * time.Minute // poll mail archive (only for Patchwork < 1.3)
+	maintainerRefresh = 24 * time.Hour  // re-fetch project maintainer list
 )
 
 // Patchwork >= 1.3 emits comment events; older versions need mail
