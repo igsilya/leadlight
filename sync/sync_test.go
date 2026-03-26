@@ -1116,7 +1116,7 @@ func TestFetchNextComments_CooldownExpires(t *testing.T) {
 	}
 }
 
-func TestFetchNextDetail_Patch(t *testing.T) {
+func TestFetchNextPatchDetail(t *testing.T) {
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/patches/100/" {
@@ -1144,7 +1144,7 @@ func TestFetchNextDetail_Patch(t *testing.T) {
 		t.Fatalf("before: %v", ids)
 	}
 
-	s.fetchNextDetail(context.Background())
+	s.fetchNextPatchDetail(context.Background())
 
 	ids = d.GetPatchesNeedingDetail(nil)
 	if len(ids) != 0 {
@@ -1152,7 +1152,7 @@ func TestFetchNextDetail_Patch(t *testing.T) {
 	}
 }
 
-func TestFetchNextDetail_ErrorNoMark(t *testing.T) {
+func TestFetchNextPatchDetail_ErrorNoMark(t *testing.T) {
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(500)
@@ -1161,7 +1161,7 @@ func TestFetchNextDetail_ErrorNoMark(t *testing.T) {
 	s, d := setupSyncer(t, handler)
 	savePatch(d, 100, "Lorem ipsum", "2026-03-10", "new")
 
-	s.fetchNextDetail(context.Background())
+	s.fetchNextPatchDetail(context.Background())
 
 	ids := d.GetPatchesNeedingDetail(nil)
 	if len(ids) != 1 || ids[0].ID != 100 {
@@ -1169,7 +1169,7 @@ func TestFetchNextDetail_ErrorNoMark(t *testing.T) {
 	}
 }
 
-func TestFetchNextDetail_SkipsFailed(t *testing.T) {
+func TestFetchNextPatchDetail_SkipsFailed(t *testing.T) {
 	var called []string
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -1197,27 +1197,27 @@ func TestFetchNextDetail_SkipsFailed(t *testing.T) {
 	savePatch(d, 200, "p2", "2026-03-11", "new")
 
 	// First call hits 200 (higher ID, returned first), fails
-	s.fetchNextDetail(context.Background())
+	s.fetchNextPatchDetail(context.Background())
 	if len(called) != 1 || called[0] != "/patches/200/" {
 		t.Fatalf("first call: %v", called)
 	}
 
 	// Second call skips 200 (cooldown), fetches 100
 	called = nil
-	s.fetchNextDetail(context.Background())
+	s.fetchNextPatchDetail(context.Background())
 	if len(called) != 1 || called[0] != "/patches/100/" {
 		t.Errorf("second call should skip 200: %v", called)
 	}
 
 	// Third call: 200 still on cooldown, 100 already fetched
 	called = nil
-	s.fetchNextDetail(context.Background())
+	s.fetchNextPatchDetail(context.Background())
 	if len(called) != 0 {
 		t.Errorf("third call should do nothing: %v", called)
 	}
 }
 
-func TestFetchNextDetail_Cover(t *testing.T) {
+func TestFetchNextCoverDetail(t *testing.T) {
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/covers/99/" {
@@ -1246,7 +1246,7 @@ func TestFetchNextDetail_Cover(t *testing.T) {
 		t.Fatalf("before: %v", ids)
 	}
 
-	s.fetchNextDetail(context.Background())
+	s.fetchNextCoverDetail(context.Background())
 
 	ids = d.GetCoversNeedingDetail(nil)
 	if len(ids) != 0 {
@@ -1254,7 +1254,7 @@ func TestFetchNextDetail_Cover(t *testing.T) {
 	}
 }
 
-func TestFetchNextDetail_PatchThenCover(t *testing.T) {
+func TestFetchNextPatchDetail_ThenCover(t *testing.T) {
 	var called []string
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -1290,24 +1290,26 @@ func TestFetchNextDetail_PatchThenCover(t *testing.T) {
 		Name: "cover", Date: "2026-03-10",
 	})
 
-	// First call fetches the patch
-	s.fetchNextDetail(context.Background())
+	// Patch detail loop fetches the patch
+	s.fetchNextPatchDetail(context.Background())
 	if len(called) != 1 || called[0] != "/patches/100/" {
-		t.Fatalf("first call: %v", called)
+		t.Fatalf("patch detail: %v", called)
 	}
 
-	// Second call: patch done, fetches the cover
+	// Cover detail loop fetches the cover
 	called = nil
-	s.fetchNextDetail(context.Background())
+	s.fetchNextCoverDetail(context.Background())
 	if len(called) != 1 || called[0] != "/covers/99/" {
-		t.Errorf("second call should fetch cover: %v", called)
+		t.Errorf("cover detail: %v", called)
 	}
 
-	// Third call: nothing left
+	// Both done — nothing left
 	called = nil
-	s.fetchNextDetail(context.Background())
-	if len(called) != 0 {
-		t.Errorf("third call should do nothing: %v", called)
+	if s.fetchNextPatchDetail(context.Background()) {
+		t.Error("patch detail should return false")
+	}
+	if s.fetchNextCoverDetail(context.Background()) {
+		t.Error("cover detail should return false")
 	}
 }
 
@@ -1400,7 +1402,7 @@ func TestUpdateCoverTagsFromComments(t *testing.T) {
 	}
 }
 
-func TestFetchNextDetail_ExtractsOriginalTags(t *testing.T) {
+func TestFetchNextPatchDetail_ExtractsOriginalTags(t *testing.T) {
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/patches/100/" {
@@ -1427,7 +1429,7 @@ func TestFetchNextDetail_ExtractsOriginalTags(t *testing.T) {
 		Date: "2026-03-10", State: "new", Submitter: "Lorem",
 	})
 
-	s.fetchNextDetail(context.Background())
+	s.fetchNextPatchDetail(context.Background())
 
 	tags := d.GetTagsForSeries(50)
 	if len(tags) != 2 {
@@ -1443,7 +1445,7 @@ func TestFetchNextDetail_ExtractsOriginalTags(t *testing.T) {
 	}
 }
 
-func TestFetchNextDetail_CoverExtractsOriginalTags(t *testing.T) {
+func TestFetchNextCoverDetail_ExtractsOriginalTags(t *testing.T) {
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/covers/99/" {
@@ -1467,7 +1469,7 @@ func TestFetchNextDetail_CoverExtractsOriginalTags(t *testing.T) {
 		Name: "cover", Date: "2026-03-10",
 	})
 
-	s.fetchNextDetail(context.Background())
+	s.fetchNextCoverDetail(context.Background())
 
 	tags := d.GetTagsForSeries(50)
 	if len(tags) != 1 {
@@ -2017,53 +2019,38 @@ func TestNeedsArchiveMonitoring(t *testing.T) {
 	}
 }
 
-func TestFixIncompletePatches_FixesOrphan(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(
+func TestFetchNextPatchDetail_FixesOrphan(t *testing.T) {
+	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/patches/100/" {
 				json.NewEncoder(w).Encode(api.PatchDetail{
 					Patch: api.Patch{
-						ID:    100,
-						Name:  "Lorem orphan patch",
-						Date:  "2026-03-10",
-						State: "new",
-						Submitter: api.Person{
-							Name: "Lorem"},
+						ID: 100, Name: "Lorem orphan patch",
+						Date: "2026-03-10", State: "new",
+						Submitter: api.Person{Name: "Lorem"},
 						Series: []api.SeriesSummary{{
-							ID:      50,
-							Name:    "Lorem series",
-							Date:    "2026-03-10",
-							Version: 1,
+							ID: 50, Name: "Lorem series",
+							Date: "2026-03-10", Version: 1,
 						}},
 					},
+					Content:  "body",
+					Diff:     "diff",
+					Headers:  map[string]interface{}{},
+					Prefixes: []string{},
 				})
 				return
 			}
 			w.WriteHeader(404)
-		}))
-	defer srv.Close()
+		})
 
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
+	s, d := setupSyncer(t, handler)
 	d.SavePatch(db.PatchRow{
 		ID: 100, SeriesID: 0,
 		Name: "Lorem orphan patch", Date: "2026-03-10",
 		State: "new", Submitter: "",
 	})
 
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test",
-		States:  []string{"new"},
-	}
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-	s.fixIncompletePatches(context.Background())
+	s.fetchNextPatchDetail(context.Background())
 
 	row, _ := d.GetPatch(100)
 	if row.SeriesID != 50 {
@@ -2074,21 +2061,16 @@ func TestFixIncompletePatches_FixesOrphan(t *testing.T) {
 	}
 }
 
-func TestFixIncompletePatches_FixesViaSeries(t *testing.T) {
+func TestFetchNextSeriesDetail(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/series/50/" {
 				json.NewEncoder(w).Encode(api.Series{
-					ID:            50,
-					Name:          "Lorem series",
-					Date:          "2026-03-10",
-					Version:       1,
-					Total:         2,
-					ReceivedTotal: 2,
-					ReceivedAll:   true,
+					ID: 50, Name: "Lorem series",
+					Date: "2026-03-10", Version: 1,
+					Total: 2, ReceivedTotal: 2, ReceivedAll: true,
 					Submitter: api.Person{
-						Name:  "Lorem Ipsum",
-						Email: "lorem@ipsum.example"},
+						Name: "Lorem Ipsum", Email: "lorem@ipsum.example"},
 					Patches: []api.PatchSummary{
 						{ID: 100, Name: "p1"},
 						{ID: 101, Name: "p2"},
@@ -2120,15 +2102,14 @@ func TestFixIncompletePatches_FixesViaSeries(t *testing.T) {
 		Project: "test",
 		States:  []string{"new"},
 	}
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
+	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	notified := false
+	s := NewSyncer(client, d, cfg, func() { notified = true },
 		status.NewRegistry(nil))
-	s.fixIncompletePatches(context.Background())
+	s.fetchNextSeriesDetail(context.Background())
 
-	// Both patches should have submitter set
+	// Both patches should have submitter set via UpdateSeriesPatches
 	r1, _ := d.GetPatch(100)
 	if r1.Submitter != "Lorem Ipsum" {
 		t.Errorf("patch 100 Submitter = %q", r1.Submitter)
@@ -2138,106 +2119,10 @@ func TestFixIncompletePatches_FixesViaSeries(t *testing.T) {
 		t.Errorf("patch 101 Submitter = %q", r2.Submitter)
 	}
 
-	// No more incomplete patches
-	ids := d.GetIncompletePatches()
-	if len(ids) != 0 {
-		t.Errorf("still incomplete: %v", ids)
-	}
-}
-
-func TestFixIncompletePatches_NoneToFix(t *testing.T) {
-	s, d := setupSyncer(t, http.NotFoundHandler())
-	d.SavePatch(db.PatchRow{
-		ID: 100, SeriesID: 50,
-		Name: "Has series", Date: "2026-03-10",
-		State: "new", Submitter: "Lorem",
-	})
-
-	// Should not make any API calls or error
-	s.fixIncompletePatches(context.Background())
-}
-
-func TestFetchMissingSeries_BulkUpdate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/series/" {
-				w.WriteHeader(404)
-				return
-			}
-			since := r.URL.Query().Get("since")
-			if since == "2026-03-09" {
-				json.NewEncoder(w).Encode([]api.Series{
-					{
-						ID: 51, Name: "Dolor series",
-						Date: "2026-03-09", Version: 1,
-						Total: 1, ReceivedTotal: 1,
-						ReceivedAll: true,
-						Submitter: api.Person{
-							Name:  "Dolor Amet",
-							Email: "dolor@amet.example"},
-					},
-					{
-						ID: 50, Name: "Lorem series",
-						Date: "2026-03-10", Version: 1,
-						Total: 2, ReceivedTotal: 2,
-						ReceivedAll: true,
-						Submitter: api.Person{
-							Name:  "Lorem Ipsum",
-							Email: "lorem@ipsum.example"},
-					},
-				})
-			} else {
-				json.NewEncoder(w).Encode([]api.Series{})
-			}
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
-	d.SaveSeriesSummary(51, "Dolor series", "2026-03-09", 1)
-	d.SavePatch(db.PatchRow{
-		ID: 100, SeriesID: 50,
-		Name: "p1", Date: "2026-03-10",
-		State: "new", Submitter: "",
-	})
-	d.SavePatch(db.PatchRow{
-		ID: 101, SeriesID: 50,
-		Name: "p2", Date: "2026-03-10",
-		State: "new", Submitter: "",
-	})
-	d.SavePatch(db.PatchRow{
-		ID: 200, SeriesID: 51,
-		Name: "p3", Date: "2026-03-09",
-		State: "new", Submitter: "",
-	})
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test-project",
-		States:  []string{"new"},
-	}
-	client := api.NewClientForTest(
-		srv.URL, "test-project", srv.Client(),
-		10*time.Millisecond)
-
-	notified := false
-	s := NewSyncer(client, d, cfg, func() { notified = true },
-		status.NewRegistry(nil))
-	s.fetchMissingSeries(context.Background())
-
-	if d.GetOldestIncompleteSeriesDate() != "" {
-		t.Error("should have no missing series")
-	}
-
-	r1, _ := d.GetPatch(100)
-	if r1.Submitter != "Lorem Ipsum" {
-		t.Errorf("patch 100 submitter = %q", r1.Submitter)
-	}
-	r2, _ := d.GetPatch(200)
-	if r2.Submitter != "Dolor Amet" {
-		t.Errorf("patch 200 submitter = %q", r2.Submitter)
+	// Series should be marked as detail_fetched
+	refs := d.GetSeriesNeedingDetail(nil)
+	if len(refs) != 0 {
+		t.Errorf("series should be complete, got %d needing detail", len(refs))
 	}
 
 	if !notified {
@@ -2245,7 +2130,7 @@ func TestFetchMissingSeries_BulkUpdate(t *testing.T) {
 	}
 }
 
-func TestFetchMissingSeries_SkipsWhenComplete(t *testing.T) {
+func TestFetchNextSeriesDetail_SkipsComplete(t *testing.T) {
 	apiCalled := false
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -2258,9 +2143,8 @@ func TestFetchMissingSeries_SkipsWhenComplete(t *testing.T) {
 	defer d.Close()
 
 	d.SaveSeries(db.SeriesRow{
-		ID: 50, Name: "Lorem",
-		Date: "2026-03-10", Submitter: "Lorem Ipsum",
-		TotalPatches: 1,
+		ID: 50, Name: "Lorem", Date: "2026-03-10",
+		Submitter: "Lorem Ipsum", TotalPatches: 1,
 	})
 
 	cfg := &config.Config{
@@ -2268,56 +2152,14 @@ func TestFetchMissingSeries_SkipsWhenComplete(t *testing.T) {
 		Project: "test",
 		States:  []string{"new"},
 	}
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
+	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
 
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-	s.fetchMissingSeries(context.Background())
-
+	if s.fetchNextSeriesDetail(context.Background()) {
+		t.Error("should return false when no series need detail")
+	}
 	if apiCalled {
-		t.Error("should not call API when all have submitters")
-	}
-}
-
-func TestFetchMissingSeries_StopsWhenStuck(t *testing.T) {
-	reqCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			reqCount++
-			// Return series that don't match our missing ones
-			json.NewEncoder(w).Encode([]api.Series{
-				{
-					ID: 999, Name: "Unrelated",
-					Date: "2026-03-10", Version: 1,
-					Submitter: api.Person{Name: "Other"},
-				},
-			})
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	d.SaveSeriesSummary(50, "Missing", "2026-03-05", 1)
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test",
-		States:  []string{"new"},
-	}
-	client := api.NewClientForTest(
-		srv.URL, "test", srv.Client(),
-		10*time.Millisecond)
-
-	s := NewSyncer(client, d, cfg, func() {},
-		status.NewRegistry(nil))
-	s.fetchMissingSeries(context.Background())
-
-	if reqCount != 1 {
-		t.Errorf("reqCount = %d, want 1 (should stop when no progress)",
-			reqCount)
+		t.Error("should not call API when all series have detail")
 	}
 }
 

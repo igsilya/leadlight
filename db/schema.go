@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS series (
     complete          INTEGER DEFAULT 0,
     total_patches     INTEGER DEFAULT 0,
     received_patches  INTEGER DEFAULT 0,
+    detail_fetched    INTEGER DEFAULT 0,
     updated_at        TEXT
 );
 
@@ -186,6 +187,7 @@ var alterStatements = []string{
 	// content now that the mbox view is built from detail API data.
 	`ALTER TABLE patches DROP COLUMN mbox_content`,
 	`ALTER TABLE covers DROP COLUMN mbox_content`,
+	`ALTER TABLE series ADD COLUMN detail_fetched INTEGER DEFAULT 0`,
 }
 
 func migrate(db *sql.DB) error {

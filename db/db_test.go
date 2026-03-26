@@ -2164,53 +2164,6 @@ func TestNeedsCoverComments(t *testing.T) {
 	}
 }
 
-func TestGetIncompletePatches(t *testing.T) {
-	d := openTestDB(t)
-	d.SavePatch(PatchRow{
-		ID: 100, SeriesID: 50,
-		Name: "p1", Date: "2026-03-10",
-		State: "new", Submitter: "Lorem",
-	})
-	d.SavePatch(PatchRow{
-		ID: 101, SeriesID: 0,
-		Name: "p2", Date: "2026-03-10",
-		State: "new", Submitter: "Lorem",
-	})
-	d.SavePatch(PatchRow{
-		ID: 102, SeriesID: 0,
-		Name: "p3", Date: "2026-03-10",
-		State: "new", Submitter: "Lorem",
-	})
-
-	ids := d.GetIncompletePatches()
-	if len(ids) != 2 {
-		t.Fatalf("got %d, want 2", len(ids))
-	}
-	// Ordered by id DESC
-	if ids[0] != 102 || ids[1] != 101 {
-		t.Errorf("got %v, want [102, 101]", ids)
-	}
-}
-
-func TestGetIncompletePatches_EmptySubmitter(t *testing.T) {
-	d := openTestDB(t)
-	d.SavePatch(PatchRow{
-		ID: 100, SeriesID: 50,
-		Name: "p1", Date: "2026-03-10",
-		State: "new", Submitter: "Lorem",
-	})
-	d.SavePatch(PatchRow{
-		ID: 101, SeriesID: 50,
-		Name: "p2", Date: "2026-03-10",
-		State: "new", Submitter: "",
-	})
-
-	ids := d.GetIncompletePatches()
-	if len(ids) != 1 || ids[0] != 101 {
-		t.Errorf("got %v, want [101]", ids)
-	}
-}
-
 func TestUpdateSeriesPatches(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
@@ -2247,90 +2200,85 @@ func TestUpdateSeriesPatches(t *testing.T) {
 	}
 }
 
-func TestGetIncompletePatches_AllComplete(t *testing.T) {
+func TestGetSeriesNeedingDetail(t *testing.T) {
 	d := openTestDB(t)
+
+	// No series — empty result
+	refs := d.GetSeriesNeedingDetail(nil)
+	if len(refs) != 0 {
+		t.Errorf("want empty, got %d", len(refs))
+	}
+
+	// SaveSeriesSummary creates series with detail_fetched=0
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "Dolor series", "2026-03-09", 1)
+
+	refs = d.GetSeriesNeedingDetail(nil)
+	if len(refs) != 2 {
+		t.Fatalf("want 2, got %d", len(refs))
+	}
+
+	// SaveSeries sets detail_fetched=1
+	d.SaveSeries(SeriesRow{
+		ID: 50, Name: "Lorem series", Date: "2026-03-10",
+		Version: 1, Submitter: "Lorem", TotalPatches: 1,
+	})
+	refs = d.GetSeriesNeedingDetail(nil)
+	if len(refs) != 1 || refs[0].ID != 51 {
+		t.Errorf("want [51], got %v", refs)
+	}
+}
+
+func TestGetSeriesNeedingDetail_ActiveFirst(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "Active series", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "Terminal series", "2026-03-09", 1)
+
+	// Patch in active state for series 50
 	d.SavePatch(PatchRow{
 		ID: 100, SeriesID: 50,
 		Name: "p1", Date: "2026-03-10",
 		State: "new", Submitter: "Lorem",
 	})
+	// Patch in terminal state for series 51
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 51,
+		Name: "p2", Date: "2026-03-09",
+		State: "accepted", Submitter: "Dolor",
+	})
 
-	ids := d.GetIncompletePatches()
-	if len(ids) != 0 {
-		t.Errorf("got %v, want empty", ids)
+	refs := d.GetSeriesNeedingDetail([]string{"new", "under-review"})
+	if len(refs) != 2 {
+		t.Fatalf("want 2, got %d", len(refs))
+	}
+	if refs[0].ID != 50 || !refs[0].IsActive {
+		t.Errorf("first should be active series 50, got id=%d active=%v",
+			refs[0].ID, refs[0].IsActive)
+	}
+	if refs[1].ID != 51 || refs[1].IsActive {
+		t.Errorf("second should be terminal series 51, got id=%d active=%v",
+			refs[1].ID, refs[1].IsActive)
 	}
 }
 
-func TestGetOldestIncompleteSeriesDate(t *testing.T) {
+func TestSaveSeries_SetsDetailFetched(t *testing.T) {
 	d := openTestDB(t)
 
-	if d.GetOldestIncompleteSeriesDate() != "" {
-		t.Error("want empty when no series")
+	// SaveSeriesSummary — detail_fetched stays 0
+	d.SaveSeriesSummary(50, "Lorem", "2026-03-10", 1)
+	refs := d.GetSeriesNeedingDetail(nil)
+	if len(refs) != 1 {
+		t.Fatalf("summary should leave detail_fetched=0, got %d needing", len(refs))
 	}
 
+	// SaveSeries — sets detail_fetched=1
 	d.SaveSeries(SeriesRow{
-		ID: 50, Name: "Has submitter",
-		Date: "2026-03-10", Submitter: "Lorem",
-		TotalPatches: 1,
+		ID: 50, Name: "Lorem", Date: "2026-03-10",
+		Version: 1, Submitter: "Lorem Ipsum", TotalPatches: 2,
 	})
-	// Has submitter AND total_patches > 0 (fully fetched)
-	if d.GetOldestIncompleteSeriesDate() != "" {
-		t.Error("want empty when all complete")
-	}
-
-	// Missing submitter
-	d.SaveSeries(SeriesRow{
-		ID: 51, Name: "Newer missing",
-		Date: "2026-03-09",
-	})
-	// Never fully fetched (total_patches = 0), no cover
-	d.SaveSeriesSummary(52, "Older missing", "2026-01-15", 1)
-
-	got := d.GetOldestIncompleteSeriesDate()
-	if got != "2026-01-15" {
-		t.Errorf("got %q, want oldest incomplete date", got)
-	}
-
-	// Fix the older one (submitter + total_patches)
-	d.SaveSeries(SeriesRow{
-		ID: 52, Name: "Fixed",
-		Date: "2026-01-15", Submitter: "Dolor",
-		TotalPatches: 1,
-	})
-	got = d.GetOldestIncompleteSeriesDate()
-	if got != "2026-03-09" {
-		t.Errorf("got %q, want next oldest after fix", got)
-	}
-
-	// Fix the last missing submitter
-	d.SaveSeries(SeriesRow{
-		ID: 51, Name: "Also fixed",
-		Date: "2026-03-09", Submitter: "Lorem",
-		TotalPatches: 1,
-	})
-	got = d.GetOldestIncompleteSeriesDate()
-	if got != "" {
-		t.Errorf("got %q, want empty when all complete", got)
-	}
-
-	// Add an unlinked cover — should be detected
-	d.SaveCover(CoverRow{
-		ID: 99, SeriesID: 0,
-		Name: "Unlinked cover", Date: "2026-02-15",
-	})
-	got = d.GetOldestIncompleteSeriesDate()
-	if got != "2026-02-15" {
-		t.Errorf("got %q, want unlinked cover date", got)
-	}
-
-	// Link the cover — should clear
-	d.SaveCover(CoverRow{
-		ID: 99, SeriesID: 50,
-		Name: "Linked cover", Date: "2026-02-15",
-	})
-	got = d.GetOldestIncompleteSeriesDate()
-	if got != "" {
-		t.Errorf("got %q, want empty after linking cover", got)
+	refs = d.GetSeriesNeedingDetail(nil)
+	if len(refs) != 0 {
+		t.Errorf("SaveSeries should set detail_fetched=1, got %d needing", len(refs))
 	}
 }
 

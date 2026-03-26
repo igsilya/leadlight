@@ -40,11 +40,14 @@ type Syncer struct {
 	commentSkip map[int]time.Time
 	detailSkip  map[int]time.Time
 	checkSkip   map[int]time.Time
+	seriesSkip  map[int]time.Time
 
-	// Terminal-state fetch cooldown: one fetch per 60 seconds per loop.
+	// Terminal-state fetch cooldown per loop.
 	lastTerminalComment      time.Time
 	lastTerminalCoverComment time.Time
-	lastTerminalDetail       time.Time
+	lastTerminalPatchDetail  time.Time
+	lastTerminalCoverDetail  time.Time
+	lastTerminalSeriesDetail time.Time
 	lastTerminalCheck        time.Time
 }
 
@@ -113,6 +116,7 @@ func NewSyncer(
 		commentSkip: map[int]time.Time{},
 		detailSkip:  map[int]time.Time{},
 		checkSkip:   map[int]time.Time{},
+		seriesSkip:  map[int]time.Time{},
 	}
 }
 
@@ -202,13 +206,15 @@ func (s *Syncer) Run(ctx context.Context) {
 	s.backfillHistory(ctx)
 
 	var wg gosync.WaitGroup
-	wg.Add(7)
+	wg.Add(9)
 	go s.runUserRequests(ctx, &wg)
 	go s.runSyncLoop(ctx, &wg)
 	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextComments)
 	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextCoverComments)
-	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextDetail)
+	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextPatchDetail)
+	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextCoverDetail)
 	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextChecks)
+	go s.runBgLoop(ctx, &wg, activeInterval, s.fetchNextSeriesDetail)
 	go s.runArchiveLoop(ctx, &wg)
 	wg.Wait()
 }
@@ -283,8 +289,6 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 
 	s.status.Set(status.BgSync, "Checking events...", true)
 	s.incrementalSync(ctx)
-	s.fetchMissingSeries(ctx)
-	s.fixIncompletePatches(ctx)
 	s.status.Clear(status.BgSync)
 	s.notify()
 
@@ -295,7 +299,6 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	doSync := func(syncCtx context.Context) {
 		s.status.Set(status.BgSync, "Checking events...", true)
 		s.incrementalSync(syncCtx)
-		s.fixIncompletePatches(syncCtx)
 		s.status.Clear(status.BgSync)
 		s.status.Clear(status.Sync)
 		s.notify()
@@ -388,8 +391,6 @@ func (s *Syncer) initialSync(ctx context.Context) {
 		s.fetchSeriesSince(ctx, since, status.Sync)
 	}
 
-	s.status.Set(status.Sync, "Fetching series...", true)
-	s.fetchMissingSeries(ctx)
 	s.status.Set(status.Sync, "Fetching events...", true)
 	s.fetchInitialEvents(ctx)
 	s.status.Clear(status.Sync)
@@ -656,141 +657,6 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 	return nil
 }
 
-func (s *Syncer) fetchMissingSeries(ctx context.Context) {
-	for {
-		since := s.db.GetOldestIncompleteSeriesDate()
-		if since == "" {
-			return
-		}
-		s.status.Set(status.BgSync, "Fetching series...", true)
-		log.Printf("SYNC: fetching series since %s", since)
-
-		pageURL := s.client.BuildSeriesURL(api.SeriesListParams{
-			Project: s.cfg.Project,
-			Since:   since,
-		})
-		page, err := s.client.GetSeriesPage(ctx, pageURL)
-		if err != nil {
-			log.Printf("SYNC: fetchMissingSeries: %v", err)
-			return
-		}
-		if len(page.Items) == 0 {
-			return
-		}
-
-		for _, sr := range page.Items {
-			s.db.SaveSeries(db.SeriesRow{
-				ID:              sr.ID,
-				Name:            sr.Name,
-				Date:            sr.Date,
-				Version:         sr.Version,
-				Submitter:       sr.Submitter.Name,
-				SubmitterEmail:  sr.Submitter.Email,
-				WebURL:          sr.WebURL,
-				MboxURL:         sr.Mbox,
-				Complete:        sr.ReceivedAll,
-				TotalPatches:    sr.Total,
-				ReceivedPatches: sr.ReceivedTotal,
-			})
-			s.db.UpdateSeriesPatches(
-				sr.ID, sr.Submitter.Name, sr.Submitter.Email)
-			if sr.CoverLetter != nil {
-				s.db.SaveCover(db.CoverRow{
-					ID:       sr.CoverLetter.ID,
-					SeriesID: sr.ID,
-					Name:     sr.CoverLetter.Name,
-					Date:     sr.CoverLetter.Date,
-					MsgID:    sr.CoverLetter.MsgID,
-					MboxURL:  sr.CoverLetter.Mbox,
-					WebURL:   sr.CoverLetter.WebURL,
-				})
-			}
-		}
-
-		log.Printf("SYNC: processed %d series", len(page.Items))
-		s.notify()
-
-		newSince := s.db.GetOldestIncompleteSeriesDate()
-		if newSince == since {
-			log.Printf("SYNC: no progress, stopping")
-			return
-		}
-	}
-}
-
-func (s *Syncer) fixIncompletePatches(ctx context.Context) {
-	ids := s.db.GetIncompletePatches()
-	if len(ids) == 0 {
-		return
-	}
-	id := ids[0]
-	row, err := s.db.GetPatch(id)
-	if err != nil {
-		return
-	}
-
-	if row.SeriesID != 0 && row.Submitter == "" {
-		s.status.Set(status.BgSync,
-			fmt.Sprintf("Fetching series %d...", row.SeriesID), true)
-		series, err := s.client.GetSeries(ctx, row.SeriesID)
-		if err != nil {
-			log.Printf("SYNC: fixIncomplete series %d: %v",
-				row.SeriesID, err)
-			return
-		}
-		log.Printf("SYNC: fixIncomplete series %d %q, %d patches, submitter %q",
-			series.ID, series.Name, len(series.Patches),
-			series.Submitter.Name)
-		s.db.SaveSeries(db.SeriesRow{
-			ID:              series.ID,
-			Name:            series.Name,
-			Date:            series.Date,
-			Version:         series.Version,
-			Submitter:       series.Submitter.Name,
-			SubmitterEmail:  series.Submitter.Email,
-			WebURL:          series.WebURL,
-			MboxURL:         series.Mbox,
-			Complete:        series.ReceivedAll,
-			TotalPatches:    series.Total,
-			ReceivedPatches: series.ReceivedTotal,
-		})
-		s.db.UpdateSeriesPatches(
-			series.ID,
-			series.Submitter.Name,
-			series.Submitter.Email)
-		if series.CoverLetter != nil {
-			s.db.SaveCover(db.CoverRow{
-				ID:       series.CoverLetter.ID,
-				SeriesID: series.ID,
-				Name:     series.CoverLetter.Name,
-				Date:     series.CoverLetter.Date,
-				MsgID:    series.CoverLetter.MsgID,
-				MboxURL:  series.CoverLetter.Mbox,
-				WebURL:   series.CoverLetter.WebURL,
-			})
-		}
-		return
-	}
-
-	if row.SeriesID == 0 {
-		s.status.Set(status.BgSync,
-			fmt.Sprintf("Fetching patch %d...", id), true)
-		detail, err := s.client.GetPatch(ctx, id)
-		if err != nil {
-			log.Printf("SYNC: fixIncomplete patch %d: %v",
-				id, err)
-			return
-		}
-		log.Printf("SYNC: fixIncomplete patch %d %q -> series %v",
-			id, detail.Name, detail.Series)
-		s.db.SavePatch(patchToRow(detail.Patch))
-		for _, ss := range detail.Series {
-			s.db.SaveSeriesSummary(
-				ss.ID, ss.Name, ss.Date, ss.Version)
-		}
-	}
-}
-
 func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 	refs := s.db.GetPatchesNeedingComments(s.cfg.States)
 	for i, ref := range refs {
@@ -972,18 +838,15 @@ func (s *Syncer) checkArchiveMonth(
 	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
 }
 
-func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
-	patchRefs := s.db.GetPatchesNeedingDetail(s.cfg.States)
-	coverRefs := s.db.GetCoversNeedingDetail(s.cfg.States)
-	total := len(patchRefs) + len(coverRefs)
-
-	for i, ref := range patchRefs {
+func (s *Syncer) fetchNextPatchDetail(ctx context.Context) bool {
+	refs := s.db.GetPatchesNeedingDetail(s.cfg.States)
+	for i, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
 		if !ref.IsActive &&
-			time.Since(s.lastTerminalDetail) < terminalInterval {
+			time.Since(s.lastTerminalPatchDetail) < terminalInterval {
 			break
 		}
 		if err := s.fetchDetailForPatch(ctx, ref.ID,
@@ -993,21 +856,25 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 		}
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
-			fmt.Sprintf("Details fetched (%d remaining)",
-				total-i-1), 3*time.Second)
+			fmt.Sprintf("Patch details fetched (%d remaining)",
+				len(refs)-i-1), 3*time.Second)
 		if !ref.IsActive {
-			s.lastTerminalDetail = time.Now()
+			s.lastTerminalPatchDetail = time.Now()
 		}
 		return true
 	}
+	return false
+}
 
-	for i, ref := range coverRefs {
+func (s *Syncer) fetchNextCoverDetail(ctx context.Context) bool {
+	refs := s.db.GetCoversNeedingDetail(s.cfg.States)
+	for i, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
 		}
 		if !ref.IsActive &&
-			time.Since(s.lastTerminalDetail) < terminalInterval {
+			time.Since(s.lastTerminalCoverDetail) < terminalInterval {
 			break
 		}
 		if err := s.fetchDetailForCover(ctx, ref.ID,
@@ -1017,10 +884,10 @@ func (s *Syncer) fetchNextDetail(ctx context.Context) bool {
 		}
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
-			fmt.Sprintf("Details fetched (%d remaining)",
-				total-len(patchRefs)-i-1), 3*time.Second)
+			fmt.Sprintf("Cover details fetched (%d remaining)",
+				len(refs)-i-1), 3*time.Second)
 		if !ref.IsActive {
-			s.lastTerminalDetail = time.Now()
+			s.lastTerminalCoverDetail = time.Now()
 		}
 		return true
 	}
@@ -1153,6 +1020,59 @@ func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey s
 	s.db.SetSyncState("backfill_series_since", since)
 }
 
+func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) bool {
+	refs := s.db.GetSeriesNeedingDetail(s.cfg.States)
+	for i, ref := range refs {
+		if t, ok := s.seriesSkip[ref.ID]; ok &&
+			time.Since(t) < commentSkipCooldown {
+			continue
+		}
+		if !ref.IsActive &&
+			time.Since(s.lastTerminalSeriesDetail) < terminalInterval {
+			break
+		}
+		s.status.StartFetchAndSetStatus(ref.ID, ref.ID, status.BgSync,
+			fmt.Sprintf("Fetching series %d...", ref.ID))
+		series, err := s.client.GetSeries(ctx, ref.ID)
+		if err != nil {
+			log.Printf("SYNC [%s]: fetch series detail %d: %v",
+				fetchOrigin(ctx), ref.ID, err)
+			s.status.EndFetch(ref.ID)
+			s.seriesSkip[ref.ID] = time.Now()
+			return false
+		}
+		delete(s.seriesSkip, ref.ID)
+		s.db.SaveSeries(db.SeriesRow{
+			ID: series.ID, Name: series.Name, Date: series.Date, Version: series.Version,
+			Submitter: series.Submitter.Name, SubmitterEmail: series.Submitter.Email,
+			WebURL: series.WebURL, MboxURL: series.Mbox,
+			Complete: series.ReceivedAll, TotalPatches: series.Total,
+			ReceivedPatches: series.ReceivedTotal,
+		})
+		s.db.UpdateSeriesPatches(series.ID, series.Submitter.Name, series.Submitter.Email)
+		if series.CoverLetter != nil {
+			s.db.SaveCover(db.CoverRow{
+				ID: series.CoverLetter.ID, SeriesID: series.ID,
+				Name: series.CoverLetter.Name, Date: series.CoverLetter.Date,
+				MsgID: series.CoverLetter.MsgID, MboxURL: series.CoverLetter.Mbox,
+				WebURL: series.CoverLetter.WebURL,
+			})
+		}
+		s.status.EndFetch(ref.ID)
+		log.Printf("SYNC [%s]: fetched series detail %d %q (%d patches)",
+			fetchOrigin(ctx), series.ID, series.Name, series.Total)
+		s.status.SetTimed(status.BgSync,
+			fmt.Sprintf("Series details fetched (%d remaining)",
+				len(refs)-i-1), 3*time.Second)
+		s.notify()
+		if !ref.IsActive {
+			s.lastTerminalSeriesDetail = time.Now()
+		}
+		return true
+	}
+	return false
+}
+
 func (s *Syncer) fetchNextChecks(ctx context.Context) bool {
 	refs := s.db.GetPatchesNeedingChecks(s.cfg.States)
 	for i, ref := range refs {
@@ -1250,6 +1170,12 @@ func (s *Syncer) fetchDetailForPatch(
 		log.Printf("SYNC [%s]: fetch details %d: %v",
 			fetchOrigin(ctx), patchID, err)
 		return err
+	}
+	// Save full patch data (fixes series_id, submitter, delegate for
+	// patches that arrived via events with incomplete info).
+	s.db.SavePatch(patchToRow(detail.Patch))
+	for _, ss := range detail.Series {
+		s.db.SaveSeriesSummary(ss.ID, ss.Name, ss.Date, ss.Version)
 	}
 	prefixes, _ := json.Marshal(detail.Prefixes)
 	headers, _ := json.Marshal(detail.Headers)

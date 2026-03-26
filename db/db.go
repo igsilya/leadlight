@@ -132,8 +132,8 @@ func (d *DB) SaveSeries(s SeriesRow) error {
 		INSERT INTO series (id, name, date, version,
 			submitter, submitter_email,
 			web_url, mbox_url, complete,
-			total_patches, received_patches)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+			total_patches, received_patches, detail_fetched)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,1)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			date = excluded.date,
@@ -144,7 +144,8 @@ func (d *DB) SaveSeries(s SeriesRow) error {
 			mbox_url = excluded.mbox_url,
 			complete = excluded.complete,
 			total_patches = excluded.total_patches,
-			received_patches = excluded.received_patches`,
+			received_patches = excluded.received_patches,
+			detail_fetched = 1`,
 		s.ID, s.Name, s.Date, s.Version,
 		s.Submitter, s.SubmitterEmail,
 		s.WebURL, s.MboxURL, boolToInt(s.Complete),
@@ -587,20 +588,6 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	return result
 }
 
-func (d *DB) GetOldestIncompleteSeriesDate() string {
-	var date string
-	d.conn.QueryRow(`
-		SELECT COALESCE(MIN(date), '') FROM (
-			SELECT date FROM series
-			WHERE submitter IS NULL OR submitter = ''
-			UNION ALL
-			SELECT date FROM covers
-			WHERE series_id = 0
-		) t`,
-	).Scan(&date)
-	return date
-}
-
 func (d *DB) GetSeriesTotalPatches(seriesID int) int {
 	var total int
 	d.conn.QueryRow(
@@ -769,23 +756,6 @@ func (d *DB) GetDelegateDisplayNames() map[string]string {
 	return result
 }
 
-func (d *DB) GetIncompletePatches() []int {
-	rows, err := d.conn.Query(
-		"SELECT id FROM patches WHERE series_id = 0 OR submitter = '' ORDER BY id DESC LIMIT 10")
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var ids []int
-	for rows.Next() {
-		var id int
-		rows.Scan(&id)
-		ids = append(ids, id)
-	}
-	return ids
-}
-
 // FetchRef identifies an item that needs fetching, along with its
 // parent series. Used by the syncer to track which items are being
 // fetched and to show per-row spinners in the TUI.
@@ -862,6 +832,45 @@ func (d *DB) GetCoversNeedingDetail(
 			 WHERE p.series_id = cv.series_id),
 			cv.id DESC`,
 		stateCase, stateCase)
+	tripleArgs := append(append(args, args...), args...)
+	rows, err := d.conn.Query(query, tripleArgs...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var refs []FetchRef
+	for rows.Next() {
+		var ref FetchRef
+		var active int
+		rows.Scan(&ref.ID, &ref.SeriesID, &active)
+		ref.IsActive = active == 1
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func (d *DB) GetSeriesNeedingDetail(priorityStates []string) []FetchRef {
+	if len(priorityStates) == 0 {
+		priorityStates = []string{"new", "under-review"}
+	}
+	placeholders := make([]string, len(priorityStates))
+	args := make([]interface{}, len(priorityStates))
+	for i, s := range priorityStates {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	activeExists := fmt.Sprintf(
+		"EXISTS (SELECT 1 FROM patches p WHERE p.series_id = s.id AND p.state IN (%s))",
+		strings.Join(placeholders, ","))
+	query := fmt.Sprintf(`
+		SELECT s.id, s.id,
+			CASE WHEN %s THEN 1 ELSE 0 END
+		FROM series s
+		WHERE s.detail_fetched = 0
+		ORDER BY
+			CASE WHEN %s THEN 0 ELSE 1 END,
+			s.id DESC`,
+		activeExists, activeExists)
 	tripleArgs := append(append(args, args...), args...)
 	rows, err := d.conn.Query(query, tripleArgs...)
 	if err != nil {
