@@ -214,5 +214,13 @@ func validate(cfg *Config) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))
 	}
+	if cfg.APIVersion == "" || cfg.APIVersion < "1.2" {
+		return fmt.Errorf("unsupported API version %q (need >= 1.2);"+
+			" server URL should end with /api/1.2 or /api/1.3", cfg.APIVersion)
+	}
+	if cfg.APIVersion < "1.3" && cfg.MailArchive == "" {
+		return fmt.Errorf("API %s lacks comment events;"+
+			" set leadlight.mailarchive to enable comment tracking", cfg.APIVersion)
+	}
 	return nil
 }

@@ -79,14 +79,14 @@ func TestGitConfigGet_NotARepo(t *testing.T) {
 
 func TestPriority_PwOnly(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":  "https://pw.example.com/api/1.2",
+		"pw.server":  "https://pw.example.com/api/1.3",
 		"pw.project": "test",
 	})
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server != "https://pw.example.com/api/1.2" {
+	if cfg.Server != "https://pw.example.com/api/1.3" {
 		t.Errorf("Server = %q, want pw.server value", cfg.Server)
 	}
 }
@@ -122,7 +122,7 @@ func TestPriority_LeadlightOverridesPw(t *testing.T) {
 
 func TestPriority_MixedKeys(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":       "https://pw.example.com/api/1.2",
+		"pw.server":       "https://pw.example.com/api/1.3",
 		"pw.project":      "pw-project",
 		"leadlight.token": "ll-token",
 	})
@@ -130,7 +130,7 @@ func TestPriority_MixedKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server != "https://pw.example.com/api/1.2" {
+	if cfg.Server != "https://pw.example.com/api/1.3" {
 		t.Errorf("Server = %q, want pw.server (no leadlight override)", cfg.Server)
 	}
 	if cfg.Project != "pw-project" {
@@ -143,7 +143,7 @@ func TestPriority_MixedKeys(t *testing.T) {
 
 func TestDefaults_DBPath(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":  "https://example.com/api/1.2",
+		"pw.server":  "https://example.com/api/1.3",
 		"pw.project": "test",
 	})
 	cfg, err := Load(dir)
@@ -162,7 +162,7 @@ func TestDefaults_DBPath(t *testing.T) {
 
 func TestDefaults_DBPathCustom(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":    "https://example.com/api/1.2",
+		"pw.server":    "https://example.com/api/1.3",
 		"pw.project":   "test",
 		"leadlight.db": "/tmp/custom.db",
 	})
@@ -177,7 +177,7 @@ func TestDefaults_DBPathCustom(t *testing.T) {
 
 func TestDefaults_States(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":  "https://example.com/api/1.2",
+		"pw.server":  "https://example.com/api/1.3",
 		"pw.project": "test",
 	})
 	cfg, err := Load(dir)
@@ -197,7 +197,7 @@ func TestDefaults_States(t *testing.T) {
 
 func TestDefaults_StatesCustom(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":        "https://example.com/api/1.2",
+		"pw.server":        "https://example.com/api/1.3",
 		"pw.project":       "test",
 		"leadlight.states": "accepted,rejected,rfc",
 	})
@@ -218,7 +218,7 @@ func TestDefaults_StatesCustom(t *testing.T) {
 
 func TestDefaults_StatesWhitespace(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":        "https://example.com/api/1.2",
+		"pw.server":        "https://example.com/api/1.3",
 		"pw.project":       "test",
 		"leadlight.states": " new , under-review , rfc ",
 	})
@@ -295,7 +295,7 @@ func TestAPIVersion_NoAPI(t *testing.T) {
 
 func TestValidation_BothPresent(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":  "https://example.com/api/1.2",
+		"pw.server":  "https://example.com/api/1.3",
 		"pw.project": "test",
 	})
 	_, err := Load(dir)
@@ -316,7 +316,7 @@ func TestValidation_ServerMissing(t *testing.T) {
 
 func TestValidation_ProjectMissing(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server": "https://example.com/api/1.2",
+		"pw.server": "https://example.com/api/1.3",
 	})
 	_, err := Load(dir)
 	if err == nil {
@@ -332,16 +332,82 @@ func TestValidation_BothMissing(t *testing.T) {
 	}
 }
 
+func TestValidation_APIVersionEmpty(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"pw.server":  "https://example.com/patchwork",
+		"pw.project": "test",
+	})
+	_, err := Load(dir)
+	if err == nil {
+		t.Error("expected error for missing API version in URL")
+	}
+	if err != nil && !strings.Contains(err.Error(), "unsupported API version") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidation_APIVersionTooOld(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"pw.server":  "https://example.com/api/1.1",
+		"pw.project": "test",
+	})
+	_, err := Load(dir)
+	if err == nil {
+		t.Error("expected error for API version < 1.2")
+	}
+	if err != nil && !strings.Contains(err.Error(), "unsupported API version") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidation_API12_NoMailArchive(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"pw.server":  "https://example.com/api/1.2",
+		"pw.project": "test",
+	})
+	_, err := Load(dir)
+	if err == nil {
+		t.Error("expected error for API 1.2 without mailarchive")
+	}
+	if err != nil && !strings.Contains(err.Error(), "comment events") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidation_API12_WithMailArchive(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"pw.server":             "https://example.com/api/1.2",
+		"pw.project":            "test",
+		"leadlight.mailarchive": "https://mail.example.com/lorem-dev/",
+	})
+	_, err := Load(dir)
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestValidation_API13_NoMailArchive(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"pw.server":  "https://example.com/api/1.3",
+		"pw.project": "test",
+	})
+	_, err := Load(dir)
+	if err != nil {
+		t.Errorf("expected no error for API 1.3 without mailarchive, got %v", err)
+	}
+}
+
 func TestLoad_FullConfig(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":        "https://pw.example.com/api/1.2",
-		"pw.project":       "lorem-project",
-		"pw.token":         "abc123",
-		"pw.username":      "user",
-		"pw.password":      "pass",
-		"leadlight.db":     "/tmp/test.db",
-		"leadlight.states": "new,accepted",
-		"leadlight.lore":   "https://lore.example.com/lorem-dev/",
+		"pw.server":             "https://pw.example.com/api/1.2",
+		"pw.project":            "lorem-project",
+		"pw.token":              "abc123",
+		"pw.username":           "user",
+		"pw.password":           "pass",
+		"leadlight.db":          "/tmp/test.db",
+		"leadlight.states":      "new,accepted",
+		"leadlight.lore":        "https://lore.example.com/lorem-dev/",
+		"leadlight.mailarchive": "https://mail.example.com/lorem-dev/",
 	})
 	cfg, err := Load(dir)
 	if err != nil {
@@ -381,7 +447,7 @@ func TestLoad_FullConfig(t *testing.T) {
 
 func TestLoad_Theme(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":       "https://pw.example.com/api/1.2",
+		"pw.server":       "https://pw.example.com/api/1.3",
 		"pw.project":      "lorem",
 		"leadlight.theme": "light",
 	})
@@ -396,7 +462,7 @@ func TestLoad_Theme(t *testing.T) {
 
 func TestLoad_ThemeDefault(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
-		"pw.server":  "https://pw.example.com/api/1.2",
+		"pw.server":  "https://pw.example.com/api/1.3",
 		"pw.project": "lorem",
 	})
 	cfg, err := Load(dir)
