@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -432,13 +433,14 @@ func (c *Client) fixScheme(u string) string {
 	return u
 }
 
-func parseLinkNext(header string) string {
+func parseLinkRel(header, rel string) string {
 	if header == "" {
 		return ""
 	}
+	target := `rel="` + rel + `"`
 	for _, part := range strings.Split(header, ",") {
 		part = strings.TrimSpace(part)
-		if !strings.Contains(part, `rel="next"`) {
+		if !strings.Contains(part, target) {
 			continue
 		}
 		start := strings.Index(part, "<")
@@ -448,6 +450,27 @@ func parseLinkNext(header string) string {
 		}
 	}
 	return ""
+}
+
+func parseLinkNext(header string) string { return parseLinkRel(header, "next") }
+func parseLinkLast(header string) string { return parseLinkRel(header, "last") }
+
+// extractPageCount parses the page number from a "last" Link URL.
+// Returns 0 if the URL is empty or has no page parameter.
+func extractPageCount(lastURL string) int {
+	if lastURL == "" {
+		return 0
+	}
+	u, err := url.Parse(lastURL)
+	if err != nil {
+		return 0
+	}
+	p := u.Query().Get("page")
+	if p == "" {
+		return 0
+	}
+	n, _ := strconv.Atoi(p)
+	return n
 }
 
 func (c *Client) GetProject(
@@ -463,8 +486,9 @@ func (c *Client) GetProject(
 }
 
 type PageResult[T any] struct {
-	Items   []T
-	NextURL string
+	Items      []T
+	NextURL    string
+	TotalPages int // 0 if unknown (no rel="last" in Link header)
 }
 
 func getPage[T any](
@@ -485,8 +509,10 @@ func getPage[T any](
 	if err != nil {
 		return nil, err
 	}
-	next := c.fixScheme(parseLinkNext(resp.Header.Get("Link")))
-	return &PageResult[T]{Items: items, NextURL: next}, nil
+	link := resp.Header.Get("Link")
+	next := c.fixScheme(parseLinkNext(link))
+	total := extractPageCount(c.fixScheme(parseLinkLast(link)))
+	return &PageResult[T]{Items: items, NextURL: next, TotalPages: total}, nil
 }
 
 func (c *Client) GetPatchesPage(

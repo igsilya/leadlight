@@ -21,6 +21,13 @@ import (
 // for items whose endpoint is broken or rate-limited.
 const commentSkipCooldown = 30 * time.Minute
 
+func pageProgress(pageNum, totalPages int) string {
+	if totalPages > 0 {
+		return fmt.Sprintf("page %d/%d", pageNum, totalPages)
+	}
+	return fmt.Sprintf("page %d", pageNum)
+}
+
 type Syncer struct {
 	client *api.Client
 	db     *db.DB
@@ -467,14 +474,15 @@ func (s *Syncer) fetchAllPatches(ctx context.Context) {
 	pageNum := 0
 	for pageURL != "" {
 		pageNum++
-		if pageNum > 1 {
-			s.status.Set(status.Sync,
-				fmt.Sprintf("Fetching patches (page %d)...", pageNum), true)
-		}
 		page, err := s.client.GetPatchesPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("fetch patches: %v", err)
 			return
+		}
+		if pageNum > 1 {
+			s.status.Set(status.Sync,
+				fmt.Sprintf("Fetching patches (%s)...",
+					pageProgress(pageNum, page.TotalPages)), true)
 		}
 		for _, p := range page.Items {
 			s.db.SavePatch(patchToRow(p))
@@ -524,13 +532,15 @@ func (s *Syncer) fetchEventsSince(
 	pageNum := 0
 	for pageURL != "" {
 		pageNum++
-		if pageNum > 1 {
-			s.status.Set(statusKey, fmt.Sprintf("Fetching events (page %d)...", pageNum), true)
-		}
 		page, err := s.client.GetEventsPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("fetch events: %v", err)
 			return
+		}
+		if pageNum > 1 {
+			s.status.Set(statusKey,
+				fmt.Sprintf("Fetching events (%s)...",
+					pageProgress(pageNum, page.TotalPages)), true)
 		}
 		skipped := 0
 		for _, ev := range page.Items {
@@ -938,12 +948,14 @@ func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey 
 
 	for pageURL != "" {
 		pageNum++
-		s.status.Set(statusKey, fmt.Sprintf("Fetching all patches (page %d)...", pageNum), true)
 		page, err := s.client.GetPatchesPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("SYNC: fetchPatchesSince: %v", err)
 			return
 		}
+		s.status.Set(statusKey,
+			fmt.Sprintf("Fetching all patches (%s)...",
+				pageProgress(pageNum, page.TotalPages)), true)
 		if len(page.Items) == 0 {
 			return
 		}
@@ -987,12 +999,14 @@ func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey s
 
 	for pageURL != "" {
 		pageNum++
-		s.status.Set(statusKey, fmt.Sprintf("Fetching all series (page %d)...", pageNum), true)
 		page, err := s.client.GetSeriesPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("SYNC: fetchSeriesSince: %v", err)
 			return
 		}
+		s.status.Set(statusKey,
+			fmt.Sprintf("Fetching all series (%s)...",
+				pageProgress(pageNum, page.TotalPages)), true)
 		if len(page.Items) == 0 {
 			return
 		}

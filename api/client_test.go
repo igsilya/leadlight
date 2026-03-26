@@ -230,6 +230,55 @@ func TestParseLinkNext(t *testing.T) {
 	}
 }
 
+func TestParseLinkLast(t *testing.T) {
+	tests := []struct {
+		header string
+		want   string
+	}{
+		{
+			`<https://pw.example.com/?page=2>; rel="next", ` +
+				`<https://pw.example.com/?page=15>; rel="last"`,
+			"https://pw.example.com/?page=15",
+		},
+		{
+			`<https://pw.example.com/?page=2>; rel="next"`,
+			"",
+		},
+		{
+			`<https://pw.example.com/?page=1>; rel="first", ` +
+				`<https://pw.example.com/?page=3475>; rel="last"`,
+			"https://pw.example.com/?page=3475",
+		},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := parseLinkLast(tt.header)
+		if got != tt.want {
+			t.Errorf("parseLinkLast(%q) = %q, want %q",
+				tt.header, got, tt.want)
+		}
+	}
+}
+
+func TestExtractPageCount(t *testing.T) {
+	tests := []struct {
+		url  string
+		want int
+	}{
+		{"https://pw.example.com/api/1.3/series/?page=3475&per_page=10", 3475},
+		{"https://pw.example.com/api/1.3/patches/?page=15", 15},
+		{"https://pw.example.com/api/1.3/patches/", 0},
+		{"", 0},
+	}
+	for _, tt := range tests {
+		got := extractPageCount(tt.url)
+		if got != tt.want {
+			t.Errorf("extractPageCount(%q) = %d, want %d",
+				tt.url, got, tt.want)
+		}
+	}
+}
+
 func TestGetProject(t *testing.T) {
 	c := testClient(t, http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
