@@ -633,16 +633,16 @@ func TestFetchInitialEvents_CapsOldDate(t *testing.T) {
 	if gotSince == "" {
 		t.Fatal("expected events request, got none")
 	}
-	// since should be ~2 months ago, not 1 year ago
-	twoMonthsAgo := time.Now().AddDate(0, -2, 0)
+	// since should be ~1 week ago, not 1 year ago
+	oneWeekAgo := time.Now().AddDate(0, 0, -7)
 	sinceTime, err := time.Parse("2006-01-02T15:04:05", gotSince)
 	if err != nil {
 		t.Fatalf("bad since format: %q", gotSince)
 	}
-	diff := sinceTime.Sub(twoMonthsAgo)
+	diff := sinceTime.Sub(oneWeekAgo)
 	if diff < -time.Minute || diff > time.Minute {
-		t.Errorf("since = %q, want ~%s (2 months ago, not 1 year)",
-			gotSince, twoMonthsAgo.Format("2006-01-02T15:04:05"))
+		t.Errorf("since = %q, want ~%s (1 week ago, not 1 year)",
+			gotSince, oneWeekAgo.Format("2006-01-02T15:04:05"))
 	}
 }
 
@@ -662,8 +662,8 @@ func TestFetchInitialEvents_RecentNotCapped(t *testing.T) {
 	d, _ := db.Open(":memory:")
 	defer d.Close()
 
-	// Patch from 1 month ago — should not be capped
-	recentDate := time.Now().AddDate(0, -1, 0).Format("2006-01-02T15:04:05")
+	// Patch from 3 days ago — should not be capped
+	recentDate := time.Now().AddDate(0, 0, -3).Format("2006-01-02T15:04:05")
 	savePatch(d, 100, "recent patch", recentDate, "new")
 
 	cfg := &config.Config{
