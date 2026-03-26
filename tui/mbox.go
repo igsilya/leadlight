@@ -88,8 +88,7 @@ func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 			Diff:    row.Diff,
 		}
 	}
-	subject := decodeHeader(compactHeader(
-		headerString(headers, "Subject")))
+	subject := decodeHeader(compactHeader(headerString(headers, "Subject")))
 	if subject == "" {
 		subject = compactHeader(row.Name)
 	}
@@ -100,13 +99,11 @@ func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 	return ParsedMbox{
 		Subject: subject,
 		From:    fromHeader(headers),
-		To: decodeHeader(compactHeader(
-			headerString(headers, "To"))),
-		Cc: decodeHeader(compactHeader(
-			headerString(headers, "Cc"))),
-		Date: date,
-		Body: row.Content,
-		Diff: row.Diff,
+		To:      decodeHeader(compactHeader(headerString(headers, "To"))),
+		Cc:      decodeHeader(compactHeader(headerString(headers, "Cc"))),
+		Date:    date,
+		Body:    row.Content,
+		Diff:    row.Diff,
 	}
 }
 
@@ -121,8 +118,7 @@ func BuildParsedMboxFromCover(row db.CoverRow) ParsedMbox {
 			Body:    row.Content,
 		}
 	}
-	subject := decodeHeader(compactHeader(
-		headerString(headers, "Subject")))
+	subject := decodeHeader(compactHeader(headerString(headers, "Subject")))
 	if subject == "" {
 		subject = compactHeader(row.Name)
 	}
@@ -133,12 +129,10 @@ func BuildParsedMboxFromCover(row db.CoverRow) ParsedMbox {
 	return ParsedMbox{
 		Subject: subject,
 		From:    fromHeader(headers),
-		To: decodeHeader(compactHeader(
-			headerString(headers, "To"))),
-		Cc: decodeHeader(compactHeader(
-			headerString(headers, "Cc"))),
-		Date: date,
-		Body: row.Content,
+		To:      decodeHeader(compactHeader(headerString(headers, "To"))),
+		Cc:      decodeHeader(compactHeader(headerString(headers, "Cc"))),
+		Date:    date,
+		Body:    row.Content,
 	}
 }
 
@@ -166,8 +160,7 @@ func extractHeader(headers, name string) string {
 	for _, line := range strings.Split(headers, "\n") {
 		if strings.HasPrefix(line, prefix) {
 			found = true
-			result = append(result,
-				strings.TrimSpace(line[len(prefix):]))
+			result = append(result, strings.TrimSpace(line[len(prefix):]))
 		} else if found && len(line) > 0 &&
 			(line[0] == ' ' || line[0] == '\t') {
 			result = append(result, strings.TrimSpace(line))
@@ -178,7 +171,39 @@ func extractHeader(headers, name string) string {
 	return strings.Join(result, " ")
 }
 
-func FormatMbox(p ParsedMbox, width int, collapseHeaders bool) string {
+// writeHeader renders a labeled header value, optionally collapsing
+// long recipient lists to collapseHeaderMax lines with a count marker.
+func writeHeader(b *strings.Builder, label, value string, collapse bool, labelWidth, valWidth int) {
+	if value == "" {
+		return
+	}
+	b.WriteString(mboxHeaderLabel.Render(label))
+	lines := wrapHeaderValue(value, valWidth)
+	if collapse && len(lines) > collapseHeaderMax {
+		for i := 0; i < collapseHeaderMax; i++ {
+			if i > 0 {
+				b.WriteString(strings.Repeat(" ", labelWidth))
+			}
+			b.WriteString(mboxHeaderValue.Render(lines[i]))
+			b.WriteByte('\n')
+		}
+		total := strings.Count(value, ", ") + 1
+		marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
+		b.WriteString(strings.Repeat(" ", labelWidth))
+		b.WriteString(quotedLineStyle.Render(marker))
+		b.WriteByte('\n')
+		return
+	}
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteString(strings.Repeat(" ", labelWidth))
+		}
+		b.WriteString(mboxHeaderValue.Render(line))
+		b.WriteByte('\n')
+	}
+}
+
+func FormatMbox(p ParsedMbox, width int, collapse bool) string {
 	var b strings.Builder
 	labelWidth := 9 // "Subject: " length
 	valWidth := width - labelWidth
@@ -186,45 +211,11 @@ func FormatMbox(p ParsedMbox, width int, collapseHeaders bool) string {
 		valWidth = 20
 	}
 
-	writeHeader := func(label, value string, collapsible bool) {
-		b.WriteString(mboxHeaderLabel.Render(label))
-		lines := wrapHeaderValue(value, valWidth)
-		collapse := collapsible && collapseHeaders && len(lines) > collapseHeaderMax
-		show := len(lines)
-		if collapse {
-			show = collapseHeaderMax
-		}
-		for i := 0; i < show; i++ {
-			if i > 0 {
-				b.WriteString(strings.Repeat(" ", labelWidth))
-			}
-			b.WriteString(mboxHeaderValue.Render(lines[i]))
-			b.WriteByte('\n')
-		}
-		if collapse {
-			total := strings.Count(value, ", ") + 1
-			marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
-			b.WriteString(strings.Repeat(" ", labelWidth))
-			b.WriteString(quotedLineStyle.Render(marker))
-			b.WriteByte('\n')
-		}
-	}
-
-	if p.Subject != "" {
-		writeHeader("Subject: ", p.Subject, false)
-	}
-	if p.From != "" {
-		writeHeader("From:    ", p.From, false)
-	}
-	if p.To != "" {
-		writeHeader("To:      ", p.To, true)
-	}
-	if p.Cc != "" {
-		writeHeader("Cc:      ", p.Cc, true)
-	}
-	if p.Date != "" {
-		writeHeader("Date:    ", p.Date, false)
-	}
+	writeHeader(&b, "Subject: ", p.Subject, false, labelWidth, valWidth)
+	writeHeader(&b, "From:    ", p.From, false, labelWidth, valWidth)
+	writeHeader(&b, "To:      ", p.To, collapse, labelWidth, valWidth)
+	writeHeader(&b, "Cc:      ", p.Cc, collapse, labelWidth, valWidth)
+	writeHeader(&b, "Date:    ", p.Date, false, labelWidth, valWidth)
 
 	if p.Body != "" {
 		b.WriteByte('\n')
@@ -576,7 +567,7 @@ type CommentInfo struct {
 	ListArchiveURL string
 }
 
-func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
+func FormatComment(c CommentInfo, width int, collapse bool) string {
 	var b strings.Builder
 	labelWidth := 9
 	valWidth := width - labelWidth
@@ -584,45 +575,17 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		valWidth = 20
 	}
 
-	writeHeader := func(label, value string, collapsible bool) {
-		b.WriteString(mboxHeaderLabel.Render(label))
-		lines := wrapHeaderValue(value, valWidth)
-		collapse := collapsible && collapseQuotes && len(lines) > collapseHeaderMax
-		show := len(lines)
-		if collapse {
-			show = collapseHeaderMax
-		}
-		for i := 0; i < show; i++ {
-			if i > 0 {
-				b.WriteString(strings.Repeat(" ", labelWidth))
-			}
-			b.WriteString(mboxHeaderValue.Render(lines[i]))
-			b.WriteByte('\n')
-		}
-		if collapse {
-			total := strings.Count(value, ", ") + 1
-			marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
-			b.WriteString(strings.Repeat(" ", labelWidth))
-			b.WriteString(quotedLineStyle.Render(marker))
-			b.WriteByte('\n')
-		}
-	}
-
-	subject := decodeHeader(compactHeader(
-		extractHeader(c.Headers, "Subject")))
+	subject := decodeHeader(compactHeader(extractHeader(c.Headers, "Subject")))
 	if subject == "" {
 		subject = compactHeader(c.Subject)
 	}
-	if subject != "" {
-		writeHeader("Subject: ", subject, false)
-	}
+	writeHeader(&b, "Subject: ", subject, false, labelWidth, valWidth)
 
 	// Reply-To → API submitter → From. The raw From header is often
 	// mangled by mailing lists ("Name via dev <list@example>"), so
 	// API submitter (resolved by Patchwork) is preferred. From is
 	// the last resort when neither Reply-To nor submitter exist.
-	from := decodeHeader(compactHeader(
-		extractHeader(c.Headers, "Reply-To")))
+	from := decodeHeader(compactHeader(extractHeader(c.Headers, "Reply-To")))
 	if from == "" {
 		from = c.Submitter
 		if c.SubmitterEmail != "" {
@@ -630,46 +593,33 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		}
 	}
 	if from == "" {
-		from = decodeHeader(compactHeader(
-			extractHeader(c.Headers, "From")))
+		from = decodeHeader(compactHeader(extractHeader(c.Headers, "From")))
 	}
-	if from != "" {
-		writeHeader("From:    ", from, false)
-	}
+	writeHeader(&b, "From:    ", from, false, labelWidth, valWidth)
 
-	to := decodeHeader(compactHeader(
-		extractHeader(c.Headers, "To")))
-	if to != "" {
-		writeHeader("To:      ", to, true)
-	}
+	to := decodeHeader(compactHeader(extractHeader(c.Headers, "To")))
+	writeHeader(&b, "To:      ", to, collapse, labelWidth, valWidth)
 
-	cc := decodeHeader(compactHeader(
-		extractHeader(c.Headers, "Cc")))
-	if cc != "" {
-		writeHeader("Cc:      ", cc, true)
-	}
+	cc := decodeHeader(compactHeader(extractHeader(c.Headers, "Cc")))
+	writeHeader(&b, "Cc:      ", cc, collapse, labelWidth, valWidth)
 
 	date := compactHeader(extractHeader(c.Headers, "Date"))
 	if date == "" {
 		date = formatDate(c.Date)
 	}
-	if date != "" {
-		writeHeader("Date:    ", date, false)
-	}
+	writeHeader(&b, "Date:    ", date, false, labelWidth, valWidth)
 
 	url := c.ListArchiveURL
 	if url == "" {
 		url = c.WebURL
 	}
-	if url != "" {
-		writeHeader("URL:     ", url, false)
-	}
+	writeHeader(&b, "URL:     ", url, false, labelWidth, valWidth)
 
 	if c.Content != "" {
 		b.WriteByte('\n')
 		content := replaceControlChars(c.Content)
 		contentLines := strings.Split(content, "\n")
-		if collapseQuotes {
+		if collapse {
 			contentLines = collapseQuotedBlocks(contentLines)
 		}
 		for _, line := range contentLines {
