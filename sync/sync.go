@@ -506,11 +506,12 @@ func (s *Syncer) fetchEventsSince(
 			log.Printf("fetch events: %v", err)
 			return
 		}
+		log.Printf("SYNC: received %d events (page %d)", len(page.Items), pageNum)
 		for _, ev := range page.Items {
+			log.Printf("SYNC: event %s: %s", ev.Category, eventSummary(ev))
 			seriesID := seriesIDFromEvent(ev)
 			if err := s.processEvent(ev, seriesID); err != nil {
-				log.Printf("process event %d: %v",
-					ev.ID, err)
+				log.Printf("SYNC: process event %d: %v", ev.ID, err)
 			}
 			s.db.SetSyncState("last_event_date", ev.Date)
 		}
@@ -529,6 +530,36 @@ func seriesIDFromEvent(ev api.Event) int {
 		return p.Series.ID
 	}
 	return 0
+}
+
+func eventSummary(ev api.Event) string {
+	switch p := ev.Payload.(type) {
+	case *api.PatchCreatedPayload:
+		return fmt.Sprintf("patch %d %q", p.Patch.ID, p.Patch.Name)
+	case *api.PatchStateChangedPayload:
+		return fmt.Sprintf("patch %d %s → %s", p.Patch.ID, p.PreviousState, p.CurrentState)
+	case *api.PatchDelegatedPayload:
+		delegate := "(none)"
+		if p.CurrentDelegate != nil {
+			delegate = p.CurrentDelegate.Username
+		}
+		return fmt.Sprintf("patch %d → %s", p.Patch.ID, delegate)
+	case *api.CheckCreatedPayload:
+		return fmt.Sprintf("patch %d check %s %s", p.Patch.ID, p.Check.Context, p.Check.State)
+	case *api.PatchCompletedPayload:
+		return fmt.Sprintf("patch %d series %d", p.Patch.ID, p.Series.ID)
+	case *api.SeriesCreatedPayload:
+		return fmt.Sprintf("series %d %q", p.Series.ID, p.Series.Name)
+	case *api.SeriesCompletedPayload:
+		return fmt.Sprintf("series %d %q", p.Series.ID, p.Series.Name)
+	case *api.CoverCreatedPayload:
+		return fmt.Sprintf("cover %d %q", p.Cover.ID, p.Cover.Name)
+	case *api.PatchCommentCreatedPayload:
+		return fmt.Sprintf("patch %d", p.Patch.ID)
+	case *api.CoverCommentCreatedPayload:
+		return fmt.Sprintf("cover %d", p.Cover.ID)
+	}
+	return "(unknown)"
 }
 
 func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
