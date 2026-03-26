@@ -499,8 +499,7 @@ func (s *Syncer) fetchEventsSince(
 	for pageURL != "" {
 		pageNum++
 		if pageNum > 1 {
-			s.status.Set(statusKey,
-				fmt.Sprintf("Fetching events (page %d)...", pageNum), true)
+			s.status.Set(statusKey, fmt.Sprintf("Fetching events (page %d)...", pageNum), true)
 		}
 		page, err := s.client.GetEventsPage(ctx, pageURL)
 		if err != nil {
@@ -573,10 +572,8 @@ func eventSummary(ev api.Event) string {
 func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 	switch p := ev.Payload.(type) {
 	case *api.PatchCreatedPayload:
-		return s.db.SavePatchSummary(
-			p.Patch.ID, seriesID,
-			p.Patch.Name, p.Patch.Date,
-			p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
+		return s.db.SavePatchSummary(p.Patch.ID, seriesID,
+			p.Patch.Name, p.Patch.Date, p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
 	case *api.PatchStateChangedPayload:
 		return s.db.UpdatePatchState(p.Patch.ID, p.CurrentState)
 	case *api.PatchDelegatedPayload:
@@ -609,21 +606,13 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 		}
 		return s.db.RecountPatchChecks(p.Patch.ID)
 	case *api.SeriesCreatedPayload:
-		return s.db.SaveSeriesSummary(
-			p.Series.ID, p.Series.Name,
-			p.Series.Date, p.Series.Version)
+		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name, p.Series.Date, p.Series.Version)
 	case *api.SeriesCompletedPayload:
-		return s.db.SaveSeriesSummary(
-			p.Series.ID, p.Series.Name,
-			p.Series.Date, p.Series.Version)
+		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name, p.Series.Date, p.Series.Version)
 	case *api.PatchCompletedPayload:
-		s.db.SavePatchSummary(
-			p.Patch.ID, p.Series.ID,
-			p.Patch.Name, p.Patch.Date,
-			p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
-		return s.db.SaveSeriesSummary(
-			p.Series.ID, p.Series.Name,
-			p.Series.Date, p.Series.Version)
+		s.db.SavePatchSummary(p.Patch.ID, p.Series.ID,
+			p.Patch.Name, p.Patch.Date, p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
+		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name, p.Series.Date, p.Series.Version)
 	case *api.CoverCreatedPayload:
 		return s.db.SaveCover(db.CoverRow{
 			ID:       p.Cover.ID,
