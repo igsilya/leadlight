@@ -42,6 +42,13 @@ func displayState(state string) string {
 	return state
 }
 
+func displaySubmitter(name, email string) string {
+	if name != "" {
+		return name
+	}
+	return email
+}
+
 func capitalize(s string) string {
 	if s == "" {
 		return s
@@ -244,7 +251,7 @@ func seriesToRow(
 			ver,
 			cleaned,
 			aggregateState(patches),
-			s.Submitter,
+			displaySubmitter(s.Submitter, s.SubmitterEmail),
 			formatAge(s.Date),
 			formatCount(commentCount),
 			formatCommentCell(commentCount, commentNames, s.Submitter),
@@ -281,7 +288,7 @@ func patchToSubRow(
 		ver,
 		cleaned,
 		displayState(p.State),
-		p.Submitter,
+		displaySubmitter(p.Submitter, p.SubmitterEmail),
 		formatAge(p.Date),
 		formatCount(commentCount),
 		formatCommentCell(commentCount, commentNames, p.Submitter),

@@ -7,6 +7,18 @@ import (
 	"leadlight/db"
 )
 
+func TestDisplaySubmitter(t *testing.T) {
+	if got := displaySubmitter("Lorem", "lorem@ex"); got != "Lorem" {
+		t.Errorf("name should take priority, got %q", got)
+	}
+	if got := displaySubmitter("", "lorem@ex"); got != "lorem@ex" {
+		t.Errorf("should fall back to email, got %q", got)
+	}
+	if got := displaySubmitter("", ""); got != "" {
+		t.Errorf("both empty should return empty, got %q", got)
+	}
+}
+
 func TestFormatAge_Minutes(t *testing.T) {
 	d := time.Now().Add(-5 * time.Minute)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
