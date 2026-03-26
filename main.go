@@ -73,7 +73,7 @@ func main() {
 
 	m.FetchSeriesCover = func(seriesID int) {
 		log.Printf("MAIN: FetchSeriesCover series=%d", seriesID)
-		series, err := client.GetSeries(ctx, seriesID)
+		series, err := client.GetSeries(api.WithNoRateLimit(ctx), seriesID)
 		if err != nil {
 			log.Printf("MAIN: FetchSeriesCover error: %v", err)
 			return
