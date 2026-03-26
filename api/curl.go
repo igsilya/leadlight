@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-func execCurl(req *http.Request) (*http.Response, error) {
+// execCurl runs an HTTP request via the curl binary. When skipUA is
+// true, the User-Agent header is omitted so curl uses its own default
+// UA (curl/X.Y.Z), which is accepted by most bot protection systems.
+func execCurl(req *http.Request, skipUA bool) (*http.Response, error) {
 	args := []string{
 		"-s", // silent
 		"-i", // include response headers
@@ -19,6 +22,9 @@ func execCurl(req *http.Request) (*http.Response, error) {
 	}
 
 	for key, values := range req.Header {
+		if skipUA && strings.EqualFold(key, "User-Agent") {
+			continue
+		}
 		for _, v := range values {
 			args = append(args, "-H", key+": "+v)
 		}

@@ -124,7 +124,7 @@ func TestExecCurl_Integration(t *testing.T) {
 	req.Header.Set("User-Agent", "leadlight/1.0")
 	req.Header.Set("Accept", "*/*")
 
-	resp, err := execCurl(req)
+	resp, err := execCurl(req, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,5 +136,35 @@ func TestExecCurl_Integration(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "lorem") {
 		t.Errorf("body = %q", string(body))
+	}
+}
+
+func TestExecCurl_SkipUA(t *testing.T) {
+	if !curlAvailable() {
+		t.Skip("curl not installed")
+	}
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{}`))
+		}))
+	defer srv.Close()
+
+	req, _ := http.NewRequest("GET", srv.URL+"/test", nil)
+	req.Header.Set("User-Agent", "leadlight/1.0")
+
+	resp, err := execCurl(req, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if strings.Contains(gotUA, "leadlight") {
+		t.Errorf("User-Agent should not contain leadlight when skipUA=true, got %q", gotUA)
+	}
+	if gotUA == "" {
+		t.Error("curl should send its own default User-Agent")
 	}
 }

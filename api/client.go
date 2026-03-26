@@ -20,6 +20,14 @@ import (
 
 const defaultMinDelay = 5 * time.Second
 
+type transportMode int32
+
+const (
+	transportGo       transportMode = 0 // Go HTTP with leadlight UA
+	transportCurl     transportMode = 1 // curl with leadlight UA
+	transportCurlAnon transportMode = 2 // curl with default UA (avoids UA-based bot filters)
+)
+
 type Client struct {
 	baseURL    string
 	project    string
@@ -30,7 +38,7 @@ type Client struct {
 	minDelay   time.Duration
 	mu         sync.Mutex
 	lastReq    time.Time
-	useCurl    atomic.Bool // permanently switched to curl after bot detection
+	transport  atomic.Int32 // transportMode: set permanently after bot detection
 }
 
 func NewClient(cfg *config.Config) *Client {
@@ -151,8 +159,7 @@ func (c *Client) newRequest(
 	method, rawURL string,
 	body io.Reader,
 ) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(
-		ctx, method, rawURL, body)
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -169,28 +176,39 @@ func (c *Client) newRequest(
 	return req, nil
 }
 
-// isBotResponse returns true when the server returned an HTML page
-// instead of the expected JSON — a sign of bot/TLS fingerprint blocking.
 func isBotResponse(resp *http.Response) bool {
 	ct := resp.Header.Get("Content-Type")
 	return strings.Contains(ct, "text/html")
 }
 
 // doCurlRequest performs an HTTP request via the curl binary.
-// It does NOT apply rate limiting — the caller is responsible.
-func (c *Client) doCurlRequest(ctx context.Context, method, rawURL string, body io.Reader) (*http.Response, error) {
+// When skipUA is true, curl uses its own default User-Agent.
+// Does not apply rate limiting — the caller is responsible.
+func (c *Client) doCurlRequest(
+	ctx context.Context, method, rawURL string, body io.Reader, skipUA bool,
+) (*http.Response, error) {
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("HTTP %s (curl) %s", method, rawURL)
-	resp, err := execCurl(req)
+	via := "curl"
+	if skipUA {
+		via = "curl-anon"
+	}
+	log.Printf("HTTP %s (%s) %s", method, via, rawURL)
+	resp, err := execCurl(req, skipUA)
 	if err != nil {
-		log.Printf("HTTP %s (curl) -> error: %v %s", method, err, rawURL)
+		log.Printf("HTTP %s (%s) -> error: %v %s", method, via, err, rawURL)
 		return nil, err
 	}
-	log.Printf("HTTP %s (curl) -> %d %s", method, resp.StatusCode, rawURL)
+	log.Printf("HTTP %s (%s) -> %d %s", method, via, resp.StatusCode, rawURL)
 	return resp, nil
+}
+
+func resetBody(body io.Reader) {
+	if seeker, ok := body.(io.Seeker); ok {
+		seeker.Seek(0, io.SeekStart)
+	}
 }
 
 func (c *Client) doRequest(
@@ -207,10 +225,16 @@ func (c *Client) doRequest(
 		}
 	}()
 
-	if c.useCurl.Load() {
-		return c.doCurlRequest(ctx, method, rawURL, body)
+	// If a previous request already determined the best transport,
+	// use it directly without re-probing.
+	switch transportMode(c.transport.Load()) {
+	case transportCurl:
+		return c.doCurlRequest(ctx, method, rawURL, body, false)
+	case transportCurlAnon:
+		return c.doCurlRequest(ctx, method, rawURL, body, true)
 	}
 
+	// Tier 1: Go HTTP with leadlight UA
 	log.Printf("HTTP %s (go) %s", method, rawURL)
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
@@ -222,28 +246,38 @@ func (c *Client) doRequest(
 		return nil, err
 	}
 	log.Printf("HTTP %s (go) -> %d %s", method, resp.StatusCode, rawURL)
-
 	if !isBotResponse(resp) {
 		return resp, nil
 	}
 
-	// Bot protection detected — retry with curl
+	// Tier 2: curl with leadlight UA (different TLS fingerprint)
 	resp.Body.Close()
-	log.Printf("HTTP %s (go) -> bot protection detected, retrying with curl %s", method, rawURL)
-	if seeker, ok := body.(io.Seeker); ok {
-		seeker.Seek(0, io.SeekStart)
+	log.Printf("HTTP %s -> bot protection detected, retrying with curl %s", method, rawURL)
+	resetBody(body)
+	curlResp, curlErr := c.doCurlRequest(ctx, method, rawURL, body, false)
+	if curlErr == nil && !isBotResponse(curlResp) {
+		c.transport.Store(int32(transportCurl))
+		log.Printf("HTTP: permanently switched to curl for API requests")
+		return curlResp, nil
 	}
-	curlResp, curlErr := c.doCurlRequest(ctx, method, rawURL, body)
-	if curlErr != nil {
-		return nil, fmt.Errorf("bot protection: curl fallback failed: %w", curlErr)
-	}
-	if isBotResponse(curlResp) {
+	if curlResp != nil {
 		curlResp.Body.Close()
-		return nil, fmt.Errorf("bot protection: Go and curl both blocked for %s", rawURL)
 	}
-	c.useCurl.Store(true)
-	log.Printf("HTTP: permanently switched to curl for API requests")
-	return curlResp, nil
+
+	// Tier 3: curl with default UA (accepted by most bot filters)
+	log.Printf("HTTP %s -> curl also blocked, retrying with default UA %s", method, rawURL)
+	resetBody(body)
+	anonResp, anonErr := c.doCurlRequest(ctx, method, rawURL, body, true)
+	if anonErr == nil && !isBotResponse(anonResp) {
+		c.transport.Store(int32(transportCurlAnon))
+		log.Printf("HTTP: permanently switched to curl (default UA) for API requests")
+		return anonResp, nil
+	}
+	if anonResp != nil {
+		anonResp.Body.Close()
+	}
+
+	return nil, fmt.Errorf("bot protection: all transports blocked for %s", rawURL)
 }
 
 func (c *Client) doExternalRequest(
@@ -260,26 +294,23 @@ func (c *Client) doExternalRequest(
 	}
 	via := "curl"
 	log.Printf("HTTP %s (%s) %s", method, via, rawURL)
-	resp, err := execCurl(req)
+	resp, err := execCurl(req, false)
 	if c.shouldRateLimit(ctx) {
 		c.markRequestDone()
 	}
 	if err != nil {
 		via = "go-fallback"
-		log.Printf("HTTP %s -> curl failed: %v, falling back to Go %s",
-			method, err, rawURL)
+		log.Printf("HTTP %s -> curl failed: %v, falling back to Go %s", method, err, rawURL)
 		resp, err = c.httpClient.Do(req)
 		if c.shouldRateLimit(ctx) {
 			c.markRequestDone()
 		}
 	}
 	if err != nil {
-		log.Printf("HTTP %s (%s) -> error: %v %s",
-			method, via, err, rawURL)
+		log.Printf("HTTP %s (%s) -> error: %v %s", method, via, err, rawURL)
 		return nil, err
 	}
-	log.Printf("HTTP %s (%s) -> %d %s",
-		method, via, resp.StatusCode, rawURL)
+	log.Printf("HTTP %s (%s) -> %d %s", method, via, resp.StatusCode, rawURL)
 	return resp, nil
 }
 
@@ -309,8 +340,7 @@ func (c *Client) getJSON(
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf(
-			"HTTP %d: %s", resp.StatusCode, body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(dest)
@@ -328,8 +358,7 @@ func (c *Client) patchJSON(
 	}
 
 	u := c.baseURL + path
-	resp, err := c.doRequest(
-		ctx, http.MethodPatch, u, bytes.NewReader(data))
+	resp, err := c.doRequest(ctx, http.MethodPatch, u, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -337,8 +366,7 @@ func (c *Client) patchJSON(
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf(
-			"HTTP %d: %s", resp.StatusCode, respBody)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, respBody)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(dest)
@@ -358,8 +386,7 @@ func getAll[T any](
 	}
 
 	for u != "" {
-		resp, err := c.doRequest(
-			ctx, http.MethodGet, u, nil)
+		resp, err := c.doRequest(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			return all, err
 		}
@@ -367,8 +394,7 @@ func getAll[T any](
 		if resp.StatusCode >= 400 {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			return all, fmt.Errorf(
-				"HTTP %d: %s", resp.StatusCode, body)
+			return all, fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
 		}
 
 		var page []T
@@ -379,8 +405,7 @@ func getAll[T any](
 		}
 
 		all = append(all, page...)
-		u = c.fixScheme(
-			parseLinkNext(resp.Header.Get("Link")))
+		u = c.fixScheme(parseLinkNext(resp.Header.Get("Link")))
 	}
 
 	return all, nil
@@ -445,8 +470,7 @@ func getPage[T any](
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf(
-			"HTTP %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
 	}
 	var items []T
 	err = json.NewDecoder(resp.Body).Decode(&items)
@@ -454,8 +478,7 @@ func getPage[T any](
 	if err != nil {
 		return nil, err
 	}
-	next := c.fixScheme(
-		parseLinkNext(resp.Header.Get("Link")))
+	next := c.fixScheme(parseLinkNext(resp.Header.Get("Link")))
 	return &PageResult[T]{Items: items, NextURL: next}, nil
 }
 

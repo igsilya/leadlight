@@ -613,20 +613,62 @@ func TestIsBotResponse(t *testing.T) {
 	}
 }
 
-func TestDoRequest_BotDetection_FallbackToCurl(t *testing.T) {
+func TestDoRequest_BotDetection_Tier2_CurlWithUA(t *testing.T) {
 	if !curlAvailable() {
 		t.Skip("curl not installed")
 	}
+	// Server blocks Go (first request) but allows curl with same UA
+	// (tier 2: different TLS fingerprint is enough).
 	var reqCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			n := reqCount.Add(1)
-			ua := r.Header.Get("User-Agent")
-			// First request from Go HTTP — return HTML (bot page).
-			// Second request from curl — return JSON.
-			if n == 1 && !strings.Contains(ua, "curl") {
+			if n == 1 {
+				// First request (Go HTTP) — return bot page
 				w.Header().Set("Content-Type", "text/html")
-				w.Write([]byte("<html>not a bot</html>"))
+				w.Write([]byte("<html>challenge</html>"))
+				return
+			}
+			// Subsequent requests (curl) — return JSON
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":1}`))
+		}))
+	defer srv.Close()
+
+	c := &Client{
+		baseURL:    srv.URL,
+		project:    "test",
+		httpClient: srv.Client(),
+		minDelay:   10 * time.Millisecond,
+	}
+
+	resp, err := c.doRequest(context.Background(), "GET", srv.URL+"/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	if transportMode(c.transport.Load()) != transportCurl {
+		t.Errorf("transport = %d, want %d (transportCurl)",
+			c.transport.Load(), transportCurl)
+	}
+}
+
+func TestDoRequest_BotDetection_Tier3_CurlAnon(t *testing.T) {
+	if !curlAvailable() {
+		t.Skip("curl not installed")
+	}
+	// Server blocks any request with "leadlight" in the UA.
+	// Only curl with its default UA (tier 3) gets through.
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			ua := r.Header.Get("User-Agent")
+			if strings.Contains(ua, "leadlight") {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte("<html>challenge</html>"))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -650,16 +692,13 @@ func TestDoRequest_BotDetection_FallbackToCurl(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
-	ct := resp.Header.Get("Content-Type")
-	if !strings.Contains(ct, "application/json") {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	if !c.useCurl.Load() {
-		t.Error("useCurl should be true after bot detection fallback")
+	if transportMode(c.transport.Load()) != transportCurlAnon {
+		t.Errorf("transport = %d, want %d (transportCurlAnon)",
+			c.transport.Load(), transportCurlAnon)
 	}
 }
 
-func TestDoRequest_PermanentCurlSwitch(t *testing.T) {
+func TestDoRequest_PermanentTransport_Curl(t *testing.T) {
 	if !curlAvailable() {
 		t.Skip("curl not installed")
 	}
@@ -676,8 +715,7 @@ func TestDoRequest_PermanentCurlSwitch(t *testing.T) {
 		httpClient: srv.Client(),
 		minDelay:   10 * time.Millisecond,
 	}
-	// Pre-set useCurl as if bot detection already triggered
-	c.useCurl.Store(true)
+	c.transport.Store(int32(transportCurl))
 
 	resp, err := c.doRequest(context.Background(), "GET", srv.URL+"/test", nil)
 	if err != nil {
@@ -687,6 +725,38 @@ func TestDoRequest_PermanentCurlSwitch(t *testing.T) {
 
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDoRequest_PermanentTransport_CurlAnon(t *testing.T) {
+	if !curlAvailable() {
+		t.Skip("curl not installed")
+	}
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":1}`))
+		}))
+	defer srv.Close()
+
+	c := &Client{
+		baseURL:    srv.URL,
+		project:    "test",
+		httpClient: srv.Client(),
+		minDelay:   10 * time.Millisecond,
+	}
+	c.transport.Store(int32(transportCurlAnon))
+
+	resp, err := c.doRequest(context.Background(), "GET", srv.URL+"/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if strings.Contains(gotUA, "leadlight") {
+		t.Errorf("anon transport should not send leadlight UA, got %q", gotUA)
 	}
 }
 
@@ -711,7 +781,7 @@ func TestDoRequest_NormalResponse_NoCurlFallback(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if c.useCurl.Load() {
-		t.Error("useCurl should remain false for normal responses")
+	if c.transport.Load() != int32(transportGo) {
+		t.Error("transport should remain Go for normal responses")
 	}
 }
