@@ -474,7 +474,14 @@ func (s *Syncer) fetchInitialEvents(ctx context.Context) {
 	if oldest == "" {
 		return
 	}
-	s.fetchEventsSince(ctx, oldest, status.Sync)
+	// Cap to 2 months back — older events are redundant since
+	// patches were already fetched with their current state.
+	cap := time.Now().AddDate(0, -2, 0).Format("2006-01-02T15:04:05")
+	since := oldest
+	if since < cap {
+		since = cap
+	}
+	s.fetchEventsSince(ctx, since, status.Sync)
 }
 
 func (s *Syncer) incrementalSync(ctx context.Context) {

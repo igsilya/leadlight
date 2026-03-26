@@ -600,6 +600,87 @@ func TestFetchEvents_SkipsAlreadyProcessed(t *testing.T) {
 	}
 }
 
+func TestFetchInitialEvents_CapsOldDate(t *testing.T) {
+	var gotSince string
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/events/" {
+				gotSince = r.URL.Query().Get("since")
+				w.Write([]byte(`[]`))
+				return
+			}
+			w.WriteHeader(404)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	// Patch from 1 year ago
+	oldDate := time.Now().AddDate(-1, 0, 0).Format("2006-01-02T15:04:05")
+	savePatch(d, 100, "old patch", oldDate, "new")
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test-project",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+
+	s.fetchInitialEvents(context.Background())
+
+	if gotSince == "" {
+		t.Fatal("expected events request, got none")
+	}
+	// since should be ~2 months ago, not 1 year ago
+	twoMonthsAgo := time.Now().AddDate(0, -2, 0)
+	sinceTime, err := time.Parse("2006-01-02T15:04:05", gotSince)
+	if err != nil {
+		t.Fatalf("bad since format: %q", gotSince)
+	}
+	diff := sinceTime.Sub(twoMonthsAgo)
+	if diff < -time.Minute || diff > time.Minute {
+		t.Errorf("since = %q, want ~%s (2 months ago, not 1 year)",
+			gotSince, twoMonthsAgo.Format("2006-01-02T15:04:05"))
+	}
+}
+
+func TestFetchInitialEvents_RecentNotCapped(t *testing.T) {
+	var gotSince string
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/events/" {
+				gotSince = r.URL.Query().Get("since")
+				w.Write([]byte(`[]`))
+				return
+			}
+			w.WriteHeader(404)
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	// Patch from 1 month ago — should not be capped
+	recentDate := time.Now().AddDate(0, -1, 0).Format("2006-01-02T15:04:05")
+	savePatch(d, 100, "recent patch", recentDate, "new")
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test-project",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+
+	s.fetchInitialEvents(context.Background())
+
+	if gotSince != recentDate {
+		t.Errorf("since = %q, want %q (should not be capped)", gotSince, recentDate)
+	}
+}
+
 func TestFetchPatches_NotifiesPerPage(t *testing.T) {
 	pageNum := 0
 	var srvURL string
