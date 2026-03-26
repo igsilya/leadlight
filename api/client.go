@@ -20,6 +20,12 @@ import (
 
 const defaultMinDelay = 5 * time.Second
 
+var AllPatchStates = []string{
+	"new", "under-review", "accepted", "rejected", "rfc",
+	"not-applicable", "changes-requested", "superseded",
+	"awaiting-upstream", "deferred",
+}
+
 type transportMode int32
 
 const (
@@ -80,6 +86,7 @@ type PatchListParams struct {
 	Since   string
 	Before  string
 	Order   string
+	Archive string // "true", "false", "both", or "" (server default)
 }
 
 type SeriesListParams struct {
@@ -529,6 +536,9 @@ func (c *Client) BuildPatchesURL(
 	}
 	if params.Order != "" {
 		v.Set("order", params.Order)
+	}
+	if params.Archive != "" {
+		v.Set("archive", params.Archive)
 	}
 	return c.baseURL + "/patches/?" + v.Encode()
 }
