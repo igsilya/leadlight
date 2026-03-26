@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-const logBufMaxLines = 1024
+const logBufMaxLines = 16384
 
 type LogBuffer struct {
 	mu    sync.Mutex
