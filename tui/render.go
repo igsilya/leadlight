@@ -74,20 +74,19 @@ func (m *Model) renderPatchView() string {
 	bright, desc, sep := m.helpStyles()
 
 	var status string
+	expandKey := func(hb *strings.Builder) {
+		hb.WriteString(helpSepStr(sep))
+		if m.quotesExpanded {
+			hb.WriteString(helpKey(bright, desc, "e", "collapse"))
+		} else {
+			hb.WriteString(helpKey(bright, desc, "e", "expand"))
+		}
+	}
 	if len(m.viewComments) > 0 {
 		var hb strings.Builder
 		hb.WriteString(sep.Render(" "))
 		hb.WriteString(bright.Render("←/→"))
-		if m.viewCommentIdx >= 0 {
-			hb.WriteString(helpSepStr(sep))
-			if m.quotesExpanded {
-				hb.WriteString(helpKey(bright, desc,
-					"e", "collapse"))
-			} else {
-				hb.WriteString(helpKey(bright, desc,
-					"e", "expand"))
-			}
-		}
+		expandKey(&hb)
 		hb.WriteString(helpSepStr(sep))
 		hb.WriteString(bright.Render("↑/↓") +
 			sep.Render(" ") + bright.Render("pgup/dn"))
@@ -104,6 +103,8 @@ func (m *Model) renderPatchView() string {
 		status = commentBar + helpText
 	} else {
 		var hb strings.Builder
+		expandKey(&hb)
+		hb.WriteString(helpSepStr(sep))
 		hb.WriteString(bright.Render("↑/↓") +
 			sep.Render(" ") + bright.Render("pgup/dn"))
 		hb.WriteString(helpSepStr(sep))

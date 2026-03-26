@@ -44,7 +44,7 @@ func TestFormatMbox_NotEmpty(t *testing.T) {
 		Body:    "This fixes a race condition.\n\nThe issue occurs when...",
 		Diff:    "diff --git a/lib/ovsdb.c b/lib/ovsdb.c\n--- a/lib/ovsdb.c\n+++ b/lib/ovsdb.c\n@@ -100,6 +100,7 @@\n some_function();\n+fix_race();\n other_function();",
 	}
-	formatted := FormatMbox(p, 120)
+	formatted := FormatMbox(p, 120, false)
 	if formatted == "" {
 		t.Error("formatted is empty")
 	}
@@ -101,7 +101,7 @@ func TestFormatMbox_FormFeed(t *testing.T) {
 		Body:    "body line",
 		Diff:    "diff --git a/f b/f\n }\n \f\n+new code",
 	}
-	result := FormatMbox(p, 80)
+	result := FormatMbox(p, 80, false)
 	if !strings.Contains(result, "^L") {
 		t.Error("form feed should render as ^L")
 	}
@@ -225,7 +225,7 @@ func TestWrapLine_Empty(t *testing.T) {
 func TestFormatMbox_WrapsLongBodyLine(t *testing.T) {
 	longLine := strings.Repeat("lorem ", 30)
 	p := ParsedMbox{Subject: "test", Body: longLine}
-	result := FormatMbox(p, 80)
+	result := FormatMbox(p, 80, false)
 	if strings.Contains(result, "…") {
 		t.Error("body should wrap, not truncate")
 	}
@@ -673,7 +673,7 @@ func TestFormatMbox_ToHeader(t *testing.T) {
 		Date:    "Wed, 18 Mar 2026 14:41:13 +0100",
 		Body:    "Body text here.",
 	}
-	result := FormatMbox(p, 120)
+	result := FormatMbox(p, 120, false)
 	if !strings.Contains(result, "dolor@amet.example") {
 		t.Error("should display To header")
 	}
@@ -744,7 +744,7 @@ func TestFormatMbox_LineWidths(t *testing.T) {
 			Date:    "Mon, 23 Mar 2026 12:00:19 -0400",
 			Body:    "Lorem ipsum dolor sit amet.",
 		}
-		result := FormatMbox(p, width)
+		result := FormatMbox(p, width, false)
 		lines := strings.Split(result, "\n")
 		for i, line := range lines {
 			vw := lipgloss.Width(line)
@@ -753,6 +753,138 @@ func TestFormatMbox_LineWidths(t *testing.T) {
 					width, i, vw, width)
 			}
 		}
+	}
+}
+
+func TestFormatMbox_CollapseLongCc(t *testing.T) {
+	// Build a Cc with enough addresses to wrap to >3 lines at width 80
+	var addrs []string
+	for i := 0; i < 12; i++ {
+		addrs = append(addrs, fmt.Sprintf("Lorem Ipsum%d <lorem%d@ipsum.example>", i, i))
+	}
+	cc := strings.Join(addrs, ", ")
+
+	p := ParsedMbox{
+		Subject: "Lorem ipsum",
+		From:    "Lorem <lorem@ipsum.example>",
+		Cc:      cc,
+		Body:    "Body text.",
+	}
+
+	collapsed := FormatMbox(p, 80, true)
+	if !strings.Contains(collapsed, "total (e to expand) ···") {
+		t.Error("collapsed mbox should contain collapse marker")
+	}
+	// Only 3 Cc lines + 1 marker line, not all addresses
+	lines := strings.Split(collapsed, "\n")
+	ccLines := 0
+	for _, l := range lines {
+		if strings.Contains(l, "@ipsum.example") {
+			ccLines++
+		}
+	}
+	// 3 Cc lines + From line = 4 lines with the address pattern.
+	// The marker line should NOT contain an address.
+	if strings.Contains(collapsed, "lorem11@ipsum.example") {
+		t.Error("last address should be hidden in collapsed mode")
+	}
+
+	expanded := FormatMbox(p, 80, false)
+	if strings.Contains(expanded, "total (e to expand) ···") {
+		t.Error("expanded mbox should not contain collapse marker")
+	}
+	if !strings.Contains(expanded, "lorem11@ipsum.example") {
+		t.Error("all addresses should be visible in expanded mode")
+	}
+}
+
+func TestFormatMbox_ShortCcNotCollapsed(t *testing.T) {
+	// Cc that fits in <=3 lines should not be collapsed even when
+	// collapseHeaders is true
+	p := ParsedMbox{
+		Subject: "Lorem ipsum",
+		Cc:      "Lorem <lorem@ipsum.example>, Dolor <dolor@ipsum.example>",
+		Body:    "Body text.",
+	}
+	result := FormatMbox(p, 80, true)
+	if strings.Contains(result, "total (e to expand) ···") {
+		t.Error("short Cc should not be collapsed")
+	}
+}
+
+func TestFormatMbox_CollapseToHeader(t *testing.T) {
+	// To header should also collapse when long enough
+	var addrs []string
+	for i := 0; i < 12; i++ {
+		addrs = append(addrs, fmt.Sprintf("Dolor Amet%d <dolor%d@amet.example>", i, i))
+	}
+	to := strings.Join(addrs, ", ")
+
+	p := ParsedMbox{
+		Subject: "Lorem ipsum",
+		To:      to,
+		Body:    "Body text.",
+	}
+
+	collapsed := FormatMbox(p, 80, true)
+	if !strings.Contains(collapsed, "total (e to expand) ···") {
+		t.Error("collapsed To should contain collapse marker")
+	}
+	expanded := FormatMbox(p, 80, false)
+	if strings.Contains(expanded, "total (e to expand) ···") {
+		t.Error("expanded To should not contain collapse marker")
+	}
+}
+
+func TestFormatMbox_SubjectNeverCollapsed(t *testing.T) {
+	// Even a very long Subject should never be collapsed
+	p := ParsedMbox{
+		Subject: strings.Repeat("Lorem ipsum dolor sit amet ", 10),
+		Body:    "Body text.",
+	}
+	result := FormatMbox(p, 60, true)
+	if strings.Contains(result, "total (e to expand) ···") {
+		t.Error("Subject should never be collapsed")
+	}
+}
+
+func TestFormatComment_CollapseLongCc(t *testing.T) {
+	var addrs []string
+	for i := 0; i < 12; i++ {
+		addrs = append(addrs, fmt.Sprintf("Lorem%d <lorem%d@ipsum.example>", i, i))
+	}
+	cc := strings.Join(addrs, ", ")
+
+	c := CommentInfo{
+		Subject: "Re: Lorem ipsum",
+		Headers: "Subject: Re: Lorem ipsum\nCc: " + cc + "\n\n",
+		Content: "Looks good.",
+	}
+
+	collapsed := FormatComment(c, 80, true)
+	if !strings.Contains(collapsed, "total (e to expand) ···") {
+		t.Error("collapsed comment Cc should contain collapse marker")
+	}
+
+	expanded := FormatComment(c, 80, false)
+	if strings.Contains(expanded, "total (e to expand) ···") {
+		t.Error("expanded comment Cc should not contain collapse marker")
+	}
+}
+
+func TestFormatMbox_CollapseMarkerCount(t *testing.T) {
+	// Verify the marker reports the correct total recipient count
+	var addrs []string
+	for i := 0; i < 20; i++ {
+		addrs = append(addrs, fmt.Sprintf("Lorem Ipsum%d <lorem%d@ipsum.example>", i, i))
+	}
+	cc := strings.Join(addrs, ", ")
+
+	p := ParsedMbox{Cc: cc}
+	result := FormatMbox(p, 80, true)
+
+	if !strings.Contains(result, "20 total (e to expand) ···") {
+		t.Errorf("marker should say 20 total, got:\n%s", result)
 	}
 }
 

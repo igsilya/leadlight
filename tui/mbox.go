@@ -178,7 +178,7 @@ func extractHeader(headers, name string) string {
 	return strings.Join(result, " ")
 }
 
-func FormatMbox(p ParsedMbox, width int) string {
+func FormatMbox(p ParsedMbox, width int, collapseHeaders bool) string {
 	var b strings.Builder
 	labelWidth := 9 // "Subject: " length
 	valWidth := width - labelWidth
@@ -186,32 +186,44 @@ func FormatMbox(p ParsedMbox, width int) string {
 		valWidth = 20
 	}
 
-	writeHeader := func(label, value string) {
+	writeHeader := func(label, value string, collapsible bool) {
 		b.WriteString(mboxHeaderLabel.Render(label))
 		lines := wrapHeaderValue(value, valWidth)
-		for i, line := range lines {
+		collapse := collapsible && collapseHeaders && len(lines) > collapseHeaderMax
+		show := len(lines)
+		if collapse {
+			show = collapseHeaderMax
+		}
+		for i := 0; i < show; i++ {
 			if i > 0 {
 				b.WriteString(strings.Repeat(" ", labelWidth))
 			}
-			b.WriteString(mboxHeaderValue.Render(line))
+			b.WriteString(mboxHeaderValue.Render(lines[i]))
+			b.WriteByte('\n')
+		}
+		if collapse {
+			total := strings.Count(value, ", ") + 1
+			marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
+			b.WriteString(strings.Repeat(" ", labelWidth))
+			b.WriteString(quotedLineStyle.Render(marker))
 			b.WriteByte('\n')
 		}
 	}
 
 	if p.Subject != "" {
-		writeHeader("Subject: ", p.Subject)
+		writeHeader("Subject: ", p.Subject, false)
 	}
 	if p.From != "" {
-		writeHeader("From:    ", p.From)
+		writeHeader("From:    ", p.From, false)
 	}
 	if p.To != "" {
-		writeHeader("To:      ", p.To)
+		writeHeader("To:      ", p.To, true)
 	}
 	if p.Cc != "" {
-		writeHeader("Cc:      ", p.Cc)
+		writeHeader("Cc:      ", p.Cc, true)
 	}
 	if p.Date != "" {
-		writeHeader("Date:    ", p.Date)
+		writeHeader("Date:    ", p.Date, false)
 	}
 
 	if p.Body != "" {
@@ -346,9 +358,10 @@ func writeStyledLine(b *strings.Builder, line string, quoted bool) {
 }
 
 const (
-	collapseMinBlock = 8  // don't collapse quotes shorter than this
-	collapseHead     = 3  // show first N lines of a collapsed quote
-	collapseTailFall = 20 // tail lines shown when no @@ hunk header found
+	collapseMinBlock  = 8  // don't collapse quotes shorter than this
+	collapseHead      = 3  // show first N lines of a collapsed quote
+	collapseTailFall  = 20 // tail lines shown when no @@ hunk header found
+	collapseHeaderMax = 3  // max header lines before collapsing To/Cc
 )
 
 func collapseQuotedBlocks(lines []string) []string {
@@ -571,14 +584,26 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		valWidth = 20
 	}
 
-	writeHeader := func(label, value string) {
+	writeHeader := func(label, value string, collapsible bool) {
 		b.WriteString(mboxHeaderLabel.Render(label))
 		lines := wrapHeaderValue(value, valWidth)
-		for i, line := range lines {
+		collapse := collapsible && collapseQuotes && len(lines) > collapseHeaderMax
+		show := len(lines)
+		if collapse {
+			show = collapseHeaderMax
+		}
+		for i := 0; i < show; i++ {
 			if i > 0 {
 				b.WriteString(strings.Repeat(" ", labelWidth))
 			}
-			b.WriteString(mboxHeaderValue.Render(line))
+			b.WriteString(mboxHeaderValue.Render(lines[i]))
+			b.WriteByte('\n')
+		}
+		if collapse {
+			total := strings.Count(value, ", ") + 1
+			marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
+			b.WriteString(strings.Repeat(" ", labelWidth))
+			b.WriteString(quotedLineStyle.Render(marker))
 			b.WriteByte('\n')
 		}
 	}
@@ -589,7 +614,7 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		subject = compactHeader(c.Subject)
 	}
 	if subject != "" {
-		writeHeader("Subject: ", subject)
+		writeHeader("Subject: ", subject, false)
 	}
 
 	// Reply-To → API submitter → From. The raw From header is often
@@ -609,19 +634,19 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 			extractHeader(c.Headers, "From")))
 	}
 	if from != "" {
-		writeHeader("From:    ", from)
+		writeHeader("From:    ", from, false)
 	}
 
 	to := decodeHeader(compactHeader(
 		extractHeader(c.Headers, "To")))
 	if to != "" {
-		writeHeader("To:      ", to)
+		writeHeader("To:      ", to, true)
 	}
 
 	cc := decodeHeader(compactHeader(
 		extractHeader(c.Headers, "Cc")))
 	if cc != "" {
-		writeHeader("Cc:      ", cc)
+		writeHeader("Cc:      ", cc, true)
 	}
 
 	date := compactHeader(extractHeader(c.Headers, "Date"))
@@ -629,7 +654,7 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		date = formatDate(c.Date)
 	}
 	if date != "" {
-		writeHeader("Date:    ", date)
+		writeHeader("Date:    ", date, false)
 	}
 
 	url := c.ListArchiveURL
@@ -637,7 +662,7 @@ func FormatComment(c CommentInfo, width int, collapseQuotes bool) string {
 		url = c.WebURL
 	}
 	if url != "" {
-		writeHeader("URL:     ", url)
+		writeHeader("URL:     ", url, false)
 	}
 
 	if c.Content != "" {

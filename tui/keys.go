@@ -275,10 +275,8 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewportLines = nil
 		m.quotesExpanded = false
 	case "e":
-		if m.viewCommentIdx >= 0 {
-			m.quotesExpanded = !m.quotesExpanded
-			m.switchToComment()
-		}
+		m.quotesExpanded = !m.quotesExpanded
+		m.switchToComment()
 	case "up", "k":
 		m.viewportScroll(-1)
 	case "down", "j":
@@ -548,7 +546,7 @@ func (m *Model) viewportScrollToEnd() {
 func (m *Model) buildViewportContent(
 	parsed ParsedMbox, checks []CheckInfo,
 ) {
-	formatted := FormatMbox(parsed, m.width)
+	formatted := FormatMbox(parsed, m.width, !m.quotesExpanded)
 	checksSection := FormatChecks(checks, m.width)
 	if checksSection != "" {
 		formatted = checksSection + "\n" + formatted
