@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"leadlight/config"
@@ -29,6 +30,7 @@ type Client struct {
 	minDelay   time.Duration
 	mu         sync.Mutex
 	lastReq    time.Time
+	useCurl    atomic.Bool // permanently switched to curl after bot detection
 }
 
 func NewClient(cfg *config.Config) *Client {
@@ -167,6 +169,30 @@ func (c *Client) newRequest(
 	return req, nil
 }
 
+// isBotResponse returns true when the server returned an HTML page
+// instead of the expected JSON — a sign of bot/TLS fingerprint blocking.
+func isBotResponse(resp *http.Response) bool {
+	ct := resp.Header.Get("Content-Type")
+	return strings.Contains(ct, "text/html")
+}
+
+// doCurlRequest performs an HTTP request via the curl binary.
+// It does NOT apply rate limiting — the caller is responsible.
+func (c *Client) doCurlRequest(ctx context.Context, method, rawURL string, body io.Reader) (*http.Response, error) {
+	req, err := c.newRequest(ctx, method, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("HTTP %s (curl) %s", method, rawURL)
+	resp, err := execCurl(req)
+	if err != nil {
+		log.Printf("HTTP %s (curl) -> error: %v %s", method, err, rawURL)
+		return nil, err
+	}
+	log.Printf("HTTP %s (curl) -> %d %s", method, resp.StatusCode, rawURL)
+	return resp, nil
+}
+
 func (c *Client) doRequest(
 	ctx context.Context,
 	method, rawURL string,
@@ -175,23 +201,49 @@ func (c *Client) doRequest(
 	if c.shouldRateLimit(ctx) {
 		c.waitForRateLimit()
 	}
+	defer func() {
+		if c.shouldRateLimit(ctx) {
+			c.markRequestDone()
+		}
+	}()
+
+	if c.useCurl.Load() {
+		return c.doCurlRequest(ctx, method, rawURL, body)
+	}
+
 	log.Printf("HTTP %s (go) %s", method, rawURL)
 	req, err := c.newRequest(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := c.httpClient.Do(req)
-	if c.shouldRateLimit(ctx) {
-		c.markRequestDone()
-	}
 	if err != nil {
-		log.Printf("HTTP %s (go) -> error: %v %s",
-			method, err, rawURL)
+		log.Printf("HTTP %s (go) -> error: %v %s", method, err, rawURL)
 		return nil, err
 	}
-	log.Printf("HTTP %s (go) -> %d %s",
-		method, resp.StatusCode, rawURL)
-	return resp, nil
+	log.Printf("HTTP %s (go) -> %d %s", method, resp.StatusCode, rawURL)
+
+	if !isBotResponse(resp) {
+		return resp, nil
+	}
+
+	// Bot protection detected — retry with curl
+	resp.Body.Close()
+	log.Printf("HTTP %s (go) -> bot protection detected, retrying with curl %s", method, rawURL)
+	if seeker, ok := body.(io.Seeker); ok {
+		seeker.Seek(0, io.SeekStart)
+	}
+	curlResp, curlErr := c.doCurlRequest(ctx, method, rawURL, body)
+	if curlErr != nil {
+		return nil, fmt.Errorf("bot protection: curl fallback failed: %w", curlErr)
+	}
+	if isBotResponse(curlResp) {
+		curlResp.Body.Close()
+		return nil, fmt.Errorf("bot protection: Go and curl both blocked for %s", rawURL)
+	}
+	c.useCurl.Store(true)
+	log.Printf("HTTP: permanently switched to curl for API requests")
+	return curlResp, nil
 }
 
 func (c *Client) doExternalRequest(

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -594,5 +595,123 @@ func TestFixScheme_InPagination(t *testing.T) {
 	want := "https://patchwork.example.com/api/1.2/patches/?page=2"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestIsBotResponse(t *testing.T) {
+	bot := &http.Response{Header: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}}}
+	if !isBotResponse(bot) {
+		t.Error("text/html should be detected as bot response")
+	}
+	ok := &http.Response{Header: http.Header{"Content-Type": []string{"application/json"}}}
+	if isBotResponse(ok) {
+		t.Error("application/json should not be detected as bot response")
+	}
+	empty := &http.Response{Header: http.Header{}}
+	if isBotResponse(empty) {
+		t.Error("missing Content-Type should not be detected as bot response")
+	}
+}
+
+func TestDoRequest_BotDetection_FallbackToCurl(t *testing.T) {
+	if !curlAvailable() {
+		t.Skip("curl not installed")
+	}
+	var reqCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			n := reqCount.Add(1)
+			ua := r.Header.Get("User-Agent")
+			// First request from Go HTTP — return HTML (bot page).
+			// Second request from curl — return JSON.
+			if n == 1 && !strings.Contains(ua, "curl") {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte("<html>not a bot</html>"))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":1}`))
+		}))
+	defer srv.Close()
+
+	c := &Client{
+		baseURL:    srv.URL,
+		project:    "test",
+		httpClient: srv.Client(),
+		minDelay:   10 * time.Millisecond,
+	}
+
+	resp, err := c.doRequest(context.Background(), "GET", srv.URL+"/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if !c.useCurl.Load() {
+		t.Error("useCurl should be true after bot detection fallback")
+	}
+}
+
+func TestDoRequest_PermanentCurlSwitch(t *testing.T) {
+	if !curlAvailable() {
+		t.Skip("curl not installed")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":1}`))
+		}))
+	defer srv.Close()
+
+	c := &Client{
+		baseURL:    srv.URL,
+		project:    "test",
+		httpClient: srv.Client(),
+		minDelay:   10 * time.Millisecond,
+	}
+	// Pre-set useCurl as if bot detection already triggered
+	c.useCurl.Store(true)
+
+	resp, err := c.doRequest(context.Background(), "GET", srv.URL+"/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDoRequest_NormalResponse_NoCurlFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":1}`))
+		}))
+	defer srv.Close()
+
+	c := &Client{
+		baseURL:    srv.URL,
+		project:    "test",
+		httpClient: srv.Client(),
+		minDelay:   10 * time.Millisecond,
+	}
+
+	resp, err := c.doRequest(context.Background(), "GET", srv.URL+"/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if c.useCurl.Load() {
+		t.Error("useCurl should remain false for normal responses")
 	}
 }
