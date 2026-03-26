@@ -528,6 +528,78 @@ func TestFetchEvents_NotifiesPerPage(t *testing.T) {
 	}
 }
 
+func TestFetchEvents_SkipsAlreadyProcessed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/events/" {
+				w.WriteHeader(404)
+				return
+			}
+			// Return 3 events with IDs 10, 11, 12
+			w.Write([]byte(`[
+				{"id":10, "category":"patch-state-changed",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-03-11T01:00:00", "actor":null,
+				 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"","name":"","mbox":""},
+				   "previous_state":"new","current_state":"under-review"}},
+				{"id":11, "category":"patch-state-changed",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-03-11T02:00:00", "actor":null,
+				 "payload":{"patch":{"id":101,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"","name":"","mbox":""},
+				   "previous_state":"new","current_state":"accepted"}},
+				{"id":12, "category":"patch-state-changed",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-03-11T03:00:00", "actor":null,
+				 "payload":{"patch":{"id":102,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"","name":"","mbox":""},
+				   "previous_state":"new","current_state":"rejected"}}
+			]`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	savePatch(d, 101, "p2", "2026-03-10", "new")
+	savePatch(d, 102, "p3", "2026-03-10", "new")
+	d.SetSyncState("last_event_date", "2026-03-10")
+	// Mark event 11 as already processed — events 10 and 11 should be skipped
+	d.SetSyncState("last_event_id", "11")
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test-project",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+
+	s.fetchEventsSince(context.Background(), "2026-03-10", status.BgSync)
+
+	// Event 10 (patch 100) should NOT have been processed — state stays "new"
+	r1, _ := d.GetPatch(100)
+	if r1.State != "new" {
+		t.Errorf("patch 100 state = %q, want %q (should be skipped)", r1.State, "new")
+	}
+	// Event 11 (patch 101) should NOT have been processed — state stays "new"
+	r2, _ := d.GetPatch(101)
+	if r2.State != "new" {
+		t.Errorf("patch 101 state = %q, want %q (should be skipped)", r2.State, "new")
+	}
+	// Event 12 (patch 102) SHOULD have been processed
+	r3, _ := d.GetPatch(102)
+	if r3.State != "rejected" {
+		t.Errorf("patch 102 state = %q, want %q", r3.State, "rejected")
+	}
+	// last_event_id should be updated to 12
+	if got := d.GetSyncState("last_event_id"); got != "12" {
+		t.Errorf("last_event_id = %q, want %q", got, "12")
+	}
+}
+
 func TestFetchPatches_NotifiesPerPage(t *testing.T) {
 	pageNum := 0
 	var srvURL string

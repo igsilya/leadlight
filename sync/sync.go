@@ -488,6 +488,7 @@ func (s *Syncer) incrementalSync(ctx context.Context) {
 func (s *Syncer) fetchEventsSince(
 	ctx context.Context, since string, statusKey status.Key,
 ) {
+	lastID, _ := strconv.Atoi(s.db.GetSyncState("last_event_id"))
 	pageURL := s.client.BuildEventsURL(api.EventListParams{
 		Since:   since,
 		Project: s.cfg.Project,
@@ -506,15 +507,22 @@ func (s *Syncer) fetchEventsSince(
 			log.Printf("fetch events: %v", err)
 			return
 		}
-		log.Printf("SYNC: received %d events (page %d)", len(page.Items), pageNum)
+		skipped := 0
 		for _, ev := range page.Items {
+			if ev.ID <= lastID {
+				skipped++
+				continue
+			}
 			log.Printf("SYNC: event %s: %s", ev.Category, eventSummary(ev))
 			seriesID := seriesIDFromEvent(ev)
 			if err := s.processEvent(ev, seriesID); err != nil {
 				log.Printf("SYNC: process event %d: %v", ev.ID, err)
 			}
 			s.db.SetSyncState("last_event_date", ev.Date)
+			s.db.SetSyncState("last_event_id", strconv.Itoa(ev.ID))
 		}
+		log.Printf("SYNC: received %d events, %d new (page %d)",
+			len(page.Items), len(page.Items)-skipped, pageNum)
 		s.notify()
 		pageURL = page.NextURL
 	}
