@@ -380,7 +380,7 @@ func (s *Syncer) initialSync(ctx context.Context) {
 	s.status.Set(status.Sync, "Fetching maintainers...", true)
 	s.fetchMaintainers(ctx)
 	s.status.Set(status.Sync, "Fetching patches...", true)
-	s.fetchAllPatches(ctx)
+	s.fetchAllActivePatches(ctx)
 
 	// Fetch all patches (any state, including archived) and all
 	// series from the older of the oldest active patch date and
@@ -464,11 +464,11 @@ func (s *Syncer) fetchMaintainers(ctx context.Context) {
 	s.db.SaveMaintainers(rows)
 }
 
-func (s *Syncer) fetchAllPatches(ctx context.Context) {
+func (s *Syncer) fetchAllActivePatches(ctx context.Context) {
 	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
-		State:   s.cfg.States,
-		Project: s.cfg.Project,
-		Archive: "both",
+		State:    s.cfg.States,
+		Project:  s.cfg.Project,
+		Archived: "false",
 	})
 
 	pageNum := 0
@@ -918,31 +918,20 @@ func (s *Syncer) backfillHistory(ctx context.Context) {
 }
 
 // fetchPatchesSince fetches all patches (any state, including archived)
-// from since backward from the oldest known patch date. Self-healing:
-// uses GetOldestPatchDate to compute the upper bound, so interrupted
-// runs resume where they left off.
+// since the given date. Skips if the backfill_patches_since flag
+// indicates this range was already searched.
 func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey status.Key) {
-	oldest := s.db.GetOldestPatchDate()
-	if oldest != "" && oldest <= since {
-		return
-	}
 	searched := s.db.GetSyncState("backfill_patches_since")
 	if searched != "" && searched <= since {
 		return
 	}
-	before := time.Now().Add(1 * time.Hour).Format("2006-01-02T15:04:05")
-	if oldest != "" {
-		oldestTime, _ := time.Parse("2006-01-02T15:04:05", oldest)
-		before = oldestTime.Add(1 * time.Hour).Format("2006-01-02T15:04:05")
-	}
 
 	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
-		State:   api.AllPatchStates,
-		Project: s.cfg.Project,
-		Since:   since,
-		Before:  before,
-		Order:   "-date",
-		Archive: "both",
+		State:    api.AllPatchStates,
+		Project:  s.cfg.Project,
+		Since:    since,
+		Order:    "-date",
+		Archived: "both",
 	})
 	pageNum := 0
 
@@ -971,28 +960,18 @@ func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey 
 	s.db.SetSyncState("backfill_patches_since", since)
 }
 
-// fetchSeriesSince fetches all series from since backward from the
-// oldest known series date. Saves full series data (submitter, cover
-// letter, completeness). Self-healing via GetOldestSeriesDate.
+// fetchSeriesSince fetches all series since the given date. Saves
+// full series data (submitter, cover letter, completeness) and
+// creates patch rows from each series' patch list.
 func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey status.Key) {
-	oldest := s.db.GetOldestSeriesDate()
-	if oldest != "" && oldest <= since {
-		return
-	}
 	searched := s.db.GetSyncState("backfill_series_since")
 	if searched != "" && searched <= since {
 		return
-	}
-	before := time.Now().Add(1 * time.Hour).Format("2006-01-02T15:04:05")
-	if oldest != "" {
-		oldestTime, _ := time.Parse("2006-01-02T15:04:05", oldest)
-		before = oldestTime.Add(1 * time.Hour).Format("2006-01-02T15:04:05")
 	}
 
 	pageURL := s.client.BuildSeriesURL(api.SeriesListParams{
 		Project: s.cfg.Project,
 		Since:   since,
-		Before:  before,
 		Order:   "-date",
 	})
 	pageNum := 0

@@ -341,11 +341,12 @@ func (d *DB) GetPatchesNeedingChecks(
 	}
 	query := fmt.Sprintf(`
 		SELECT id, COALESCE(series_id, 0),
-			CASE WHEN state IN (%s) THEN 1 ELSE 0 END
+			CASE WHEN state IN (%s) AND archived = 0
+				THEN 1 ELSE 0 END
 		FROM patches
 		WHERE COALESCE(checks_fetched, 0) = 0
 		ORDER BY
-			CASE WHEN state IN (%s)
+			CASE WHEN state IN (%s) AND archived = 0
 				THEN 0 ELSE 1 END,
 			id DESC`,
 		strings.Join(placeholders, ","),
@@ -564,7 +565,7 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 			COALESCE(s.updated_at, '')
 		FROM series s
 		JOIN patches p ON p.series_id = s.id
-		WHERE p.state IN (%s)
+		WHERE p.state IN (%s) AND p.archived = 0
 		ORDER BY s.date DESC`,
 		strings.Join(placeholders, ","))
 
@@ -779,11 +780,12 @@ func (d *DB) GetPatchesNeedingDetail(
 	}
 	query := fmt.Sprintf(`
 		SELECT id, COALESCE(series_id, 0),
-			CASE WHEN state IN (%s) THEN 1 ELSE 0 END
+			CASE WHEN state IN (%s) AND archived = 0
+				THEN 1 ELSE 0 END
 		FROM patches
 		WHERE COALESCE(detail_fetched, 0) = 0
 		ORDER BY
-			CASE WHEN state IN (%s)
+			CASE WHEN state IN (%s) AND archived = 0
 				THEN 0 ELSE 1 END,
 			id DESC`,
 		strings.Join(placeholders, ","),
@@ -818,7 +820,7 @@ func (d *DB) GetCoversNeedingDetail(
 		args[i] = s
 	}
 	stateCase := fmt.Sprintf(
-		"CASE WHEN p.state IN (%s) THEN 0 ELSE 1 END",
+		"CASE WHEN p.state IN (%s) AND p.archived = 0 THEN 0 ELSE 1 END",
 		strings.Join(placeholders, ","))
 	query := fmt.Sprintf(`
 		SELECT cv.id, cv.series_id,
@@ -860,7 +862,7 @@ func (d *DB) GetSeriesNeedingDetail(priorityStates []string) []FetchRef {
 		args[i] = s
 	}
 	activeExists := fmt.Sprintf(
-		"EXISTS (SELECT 1 FROM patches p WHERE p.series_id = s.id AND p.state IN (%s))",
+		"EXISTS (SELECT 1 FROM patches p WHERE p.series_id = s.id AND p.state IN (%s) AND p.archived = 0)",
 		strings.Join(placeholders, ","))
 	query := fmt.Sprintf(`
 		SELECT s.id, s.id,
@@ -981,7 +983,7 @@ func (d *DB) seriesIDSubquery(
 	}
 	return fmt.Sprintf(`SELECT DISTINCT s.id FROM series s
 		JOIN patches p ON p.series_id = s.id
-		WHERE p.state IN (%s)`,
+		WHERE p.state IN (%s) AND p.archived = 0`,
 		strings.Join(parts, ",")), args
 }
 
@@ -1250,18 +1252,10 @@ func (d *DB) getAllNames(table string) map[int]string {
 	return result
 }
 
-func (d *DB) GetOldestSeriesDate() string {
-	var date string
-	d.conn.QueryRow(
-		"SELECT COALESCE(MIN(date), '') FROM series",
-	).Scan(&date)
-	return date
-}
-
 func (d *DB) GetOldestPatchDate() string {
 	var date string
 	d.conn.QueryRow(
-		"SELECT COALESCE(MIN(date), '') FROM patches",
+		"SELECT COALESCE(MIN(date), '') FROM patches WHERE archived = 0",
 	).Scan(&date)
 	return date
 }
@@ -1280,11 +1274,12 @@ func (d *DB) GetPatchesNeedingComments(
 	}
 	query := fmt.Sprintf(`
 		SELECT id, COALESCE(series_id, 0),
-			CASE WHEN state IN (%s) THEN 1 ELSE 0 END
+			CASE WHEN state IN (%s) AND archived = 0
+				THEN 1 ELSE 0 END
 		FROM patches
 		WHERE comments_fetched = 0
 		ORDER BY
-			CASE WHEN state IN (%s)
+			CASE WHEN state IN (%s) AND archived = 0
 				THEN 0 ELSE 1 END,
 			id DESC`,
 		strings.Join(placeholders, ","),
@@ -1339,7 +1334,7 @@ func (d *DB) ResetAllCommentsFetched(states []string) error {
 		args[i] = s
 	}
 	query := fmt.Sprintf(
-		"UPDATE patches SET comments_fetched = 0 WHERE state IN (%s)",
+		"UPDATE patches SET comments_fetched = 0 WHERE state IN (%s) AND archived = 0",
 		strings.Join(placeholders, ","))
 	_, err := d.conn.Exec(query, args...)
 	return err
@@ -1442,7 +1437,7 @@ func (d *DB) GetCoversNeedingComments(
 		args[i] = s
 	}
 	stateCase := fmt.Sprintf(
-		"CASE WHEN p.state IN (%s) THEN 0 ELSE 1 END",
+		"CASE WHEN p.state IN (%s) AND p.archived = 0 THEN 0 ELSE 1 END",
 		strings.Join(placeholders, ","))
 	query := fmt.Sprintf(`
 		SELECT cv.id, cv.series_id,

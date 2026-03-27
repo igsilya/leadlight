@@ -82,12 +82,12 @@ func NewClientForTest(
 }
 
 type PatchListParams struct {
-	State   []string
-	Project string
-	Since   string
-	Before  string
-	Order   string
-	Archive string // "true", "false", "both", or "" (server default)
+	State    []string
+	Project  string
+	Since    string
+	Before   string
+	Order    string
+	Archived string // "true", "false", "both", or "" (server default)
 }
 
 type SeriesListParams struct {
@@ -563,8 +563,8 @@ func (c *Client) BuildPatchesURL(
 	if params.Order != "" {
 		v.Set("order", params.Order)
 	}
-	if params.Archive != "" {
-		v.Set("archive", params.Archive)
+	if params.Archived != "" {
+		v.Set("archived", params.Archived)
 	}
 	return c.baseURL + "/patches/?" + v.Encode()
 }

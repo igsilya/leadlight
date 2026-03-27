@@ -731,7 +731,7 @@ func TestFetchPatches_NotifiesPerPage(t *testing.T) {
 		notifyCount++
 	}, status.NewRegistry(nil))
 
-	s.fetchAllPatches(context.Background())
+	s.fetchAllActivePatches(context.Background())
 
 	if notifyCount != 2 {
 		t.Errorf("notify count = %d, want 2 (one per page)",
@@ -2863,12 +2863,9 @@ func TestBackfillHistory_AlreadyComplete(t *testing.T) {
 	defer d.Close()
 	oldDate := time.Now().AddDate(-2, 0, 0).
 		Format("2006-01-02T15:04:05")
-	// Both patches and series already beyond the target
-	d.SavePatch(db.PatchRow{
-		ID: 1, Name: "old", State: "accepted",
-		Submitter: "Lorem", Date: oldDate,
-	})
-	d.SaveSeriesSummary(1, "old series", oldDate, 1)
+	// Simulate a previous backfill run that already covered this range
+	d.SetSyncState("backfill_patches_since", oldDate)
+	d.SetSyncState("backfill_series_since", oldDate)
 
 	cfg := &config.Config{
 		Server:       srv.URL,
