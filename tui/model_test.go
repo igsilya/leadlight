@@ -1308,3 +1308,62 @@ func TestLogAnchor_WrappedLinesPageUp(t *testing.T) {
 			m.logAnchor, a0-delta, delta)
 	}
 }
+
+func TestRenderPatchView_NoTrailingSpaces(t *testing.T) {
+	m := testModel()
+	m.viewportLines = []string{
+		"Subject: Lorem ipsum dolor sit amet",
+		"From: Lorem <lorem@ipsum.example>",
+		"",
+		"Short line",
+		"A much longer line with more content to test varying widths across the viewport",
+		"  indented context line",
+		"+ added line",
+		"- removed line",
+	}
+
+	output := m.renderPatchView()
+	// The status bar is the last line — check all lines above it
+	lines := strings.Split(output, "\n")
+	for i, line := range lines[:len(lines)-1] {
+		stripped := strings.TrimRight(line, " ")
+		if len(stripped) != len(line) {
+			t.Errorf("line %d has trailing spaces: %q", i, line)
+		}
+	}
+}
+
+func TestRenderPatchView_LineCount(t *testing.T) {
+	m := testModel()
+	visible := m.viewportVisibleLines()
+
+	tests := []struct {
+		name     string
+		numLines int
+	}{
+		{"fewer than visible", visible / 2},
+		{"exactly visible", visible},
+		{"more than visible", visible * 2},
+		{"empty", 0},
+		{"single line", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m.viewportOffset = 0
+			m.viewportLines = make([]string, tt.numLines)
+			for i := range m.viewportLines {
+				m.viewportLines[i] = fmt.Sprintf("line %d", i)
+			}
+
+			output := m.renderPatchView()
+			lines := strings.Split(output, "\n")
+			// Output = visible content lines + 1 status bar line
+			want := visible + 1
+			if len(lines) != want {
+				t.Errorf("got %d lines, want %d (visible=%d + 1 status)",
+					len(lines), want, visible)
+			}
+		})
+	}
+}

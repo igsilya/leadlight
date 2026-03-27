@@ -59,11 +59,12 @@ func (m *Model) renderPatchView() string {
 		end = total
 	}
 
-	content := strings.Join(m.viewportLines[start:end], "\n")
-	body := lipgloss.NewStyle().
-		Width(m.width).
-		Height(visible).
-		Render(content)
+	// Assemble exactly `visible` lines separated by newlines.
+	lines := make([]string, visible)
+	for i := 0; i < end-start; i++ {
+		lines[i] = m.viewportLines[start+i]
+	}
+	body := strings.Join(lines, "\n")
 
 	pct := 0
 	maxOff := total - visible

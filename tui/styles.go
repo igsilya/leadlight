@@ -71,6 +71,7 @@ var (
 	diffDelStyle           lipgloss.Style
 	diffHunkStyle          lipgloss.Style
 	diffHeaderStyle        lipgloss.Style
+	diffContextStyle       lipgloss.Style
 	quotedLineStyle        lipgloss.Style
 	wrapIndicatorStyle     lipgloss.Style
 	logLineStyle           lipgloss.Style
@@ -144,6 +145,7 @@ func buildStyles(t *theme) {
 	diffDelStyle = fg(t.DiffDelFg)
 	diffHunkStyle = fg(t.DiffHunkFg)
 	diffHeaderStyle = lipgloss.NewStyle().Bold(true)
+	diffContextStyle = lipgloss.NewStyle()
 	quotedLineStyle = fg(t.QuotedLineFg)
 	wrapIndicatorStyle = fg(t.WrapIndicatorFg)
 	logLineStyle = fg(t.LogLineFg)

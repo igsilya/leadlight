@@ -254,7 +254,7 @@ func formatDiff(diff string, width int) string {
 		case strings.HasPrefix(line, "diff --git"):
 			b.WriteString(diffHeaderStyle.Render(line))
 		default:
-			b.WriteString(line)
+			b.WriteString(diffContextStyle.Render(line))
 		}
 		b.WriteByte('\n')
 	}
