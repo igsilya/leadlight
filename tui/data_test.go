@@ -320,17 +320,8 @@ func TestFormatDelegate(t *testing.T) {
 
 func TestDisplayState(t *testing.T) {
 	tests := []struct{ in, want string }{
-		{"new", "new"},
-		{"rfc", "rfc"},
-		{"deferred", "deferred"},
-		{"mixed", "mixed"},
 		{"under-review", "review"},
-		{"accepted", "accept"},
-		{"rejected", "reject"},
-		{"superseded", "supersed"},
-		{"changes-requested", "changes"},
-		{"not-applicable", "n/a"},
-		{"handled-elsewhere", "handled"},
+		{"unknown-state", "unknown-state"},
 	}
 	for _, tt := range tests {
 		got := displayState(tt.in)

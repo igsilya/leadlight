@@ -33,6 +33,10 @@ var stateDisplay = map[string]string{
 	"changes-requested": "changes",
 	"not-applicable":    "n/a",
 	"handled-elsewhere": "handled",
+	"awaiting-upstream": "awaiting",
+	"deferred":          "defer",
+	"mainlined":         "mainline",
+	"needs-ack":         "need-ack",
 }
 
 func displayState(state string) string {
