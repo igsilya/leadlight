@@ -927,11 +927,9 @@ func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey 
 	}
 
 	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
-		State:    api.AllPatchStates,
-		Project:  s.cfg.Project,
-		Since:    since,
-		Order:    "-date",
-		Archived: "both",
+		Project: s.cfg.Project,
+		Since:   since,
+		Order:   "-date",
 	})
 	pageNum := 0
 

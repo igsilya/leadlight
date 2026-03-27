@@ -21,12 +21,6 @@ import (
 
 const defaultMinDelay = 5 * time.Second
 
-var AllPatchStates = []string{
-	"new", "under-review", "accepted", "rejected", "rfc",
-	"not-applicable", "changes-requested", "superseded",
-	"awaiting-upstream", "deferred",
-}
-
 type transportMode int32
 
 const (
