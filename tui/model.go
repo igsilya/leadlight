@@ -528,7 +528,8 @@ func (m *Model) getVisibleItems() []visibleItem {
 		})
 
 		// Auto-expand series with matching sub-rows during filtering
-		showSubs := rd.Expanded || (filter != "" && len(matchingSubs) > 0)
+		showSubs := rd.Expanded ||
+			(filter != "" && len(matchingSubs) > 0 && !singlePatchSameName(rd))
 		if showSubs {
 			for si, sub := range rd.SubRows {
 				if filter != "" && !seriesMatch {
@@ -558,6 +559,13 @@ func (m *Model) getVisibleItems() []visibleItem {
 		}
 	}
 	return items
+}
+
+func singlePatchSameName(rd RowData) bool {
+	return len(rd.SubRows) == 1 &&
+		len(rd.Data) > int(ColName) &&
+		len(rd.SubRows[0]) > int(ColName) &&
+		rd.Data[ColName] == rd.SubRows[0][ColName]
 }
 
 func (m *Model) renderHeight() int {
