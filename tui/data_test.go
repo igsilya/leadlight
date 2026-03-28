@@ -44,7 +44,7 @@ func TestFormatAge_Days(t *testing.T) {
 }
 
 func TestFormatAge_Weeks(t *testing.T) {
-	d := time.Now().Add(-21 * 24 * time.Hour)
+	d := time.Now().AddDate(0, 0, -21)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
 	if got != "3w" {
 		t.Errorf("got %q, want 3w", got)
@@ -52,10 +52,18 @@ func TestFormatAge_Weeks(t *testing.T) {
 }
 
 func TestFormatAge_Months(t *testing.T) {
-	d := time.Now().Add(-65 * 24 * time.Hour)
+	d := time.Now().AddDate(0, -5, 0)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
-	if got != "2mo" {
-		t.Errorf("got %q, want 2mo", got)
+	if got != "5mo" {
+		t.Errorf("got %q, want 5mo", got)
+	}
+}
+
+func TestFormatAge_Years(t *testing.T) {
+	d := time.Now().AddDate(-3, 0, 0)
+	got := formatAge(d.Format("2006-01-02T15:04:05"))
+	if got != "3y" {
+		t.Errorf("got %q, want 3y", got)
 	}
 }
 
