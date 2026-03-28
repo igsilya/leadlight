@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
+	"runtime/pprof"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -17,6 +19,23 @@ import (
 )
 
 func main() {
+	pprofFlag := flag.Bool("pprof", false,
+		"write CPU profile to leadlight.cpu.prof")
+	flag.Parse()
+
+	if *pprofFlag {
+		f, err := os.Create("leadlight.cpu.prof")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pprof: %v\n", err)
+			os.Exit(1)
+		}
+		pprof.StartCPUProfile(f)
+		defer func() {
+			pprof.StopCPUProfile()
+			f.Close()
+		}()
+	}
+
 	logBuf := tui.NewLogBuffer()
 	log.SetOutput(logBuf)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
