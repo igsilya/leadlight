@@ -364,6 +364,16 @@ func computePatchAFRT(patchID int, tags []db.TagRow) (a, f, r, t int) {
 }
 
 func firstName(s string) string {
+	if i := strings.IndexByte(s, '<'); i > 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	// "Lastname, Firstname" → use Firstname
+	if i := strings.IndexByte(s, ','); i >= 0 {
+		after := strings.TrimSpace(s[i+1:])
+		if after != "" {
+			s = after
+		}
+	}
 	if i := strings.IndexByte(s, ' '); i > 0 {
 		return s[:i]
 	}

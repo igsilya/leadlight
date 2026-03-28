@@ -318,6 +318,25 @@ func TestFormatDelegate(t *testing.T) {
 	}
 }
 
+func TestFirstName(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"Lorem Ipsum", "Lorem"},
+		{"Ipsum, Lorem", "Lorem"},
+		{"Ipsum, Lorem <lorem@ex>", "Lorem"},
+		{"Ipsum,Lorem", "Lorem"},
+		{"Ipsum , Lorem Dolor", "Lorem"},
+		{"Lorem", "Lorem"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := firstName(tt.in)
+		if got != tt.want {
+			t.Errorf("firstName(%q) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestDisplayState(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"under-review", "review"},
