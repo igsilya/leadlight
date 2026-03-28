@@ -193,9 +193,9 @@ func (m *Model) renderRows(
 		afrtWidth = widths[ColAFRT]
 	}
 
-	if !m.cacheValid {
-		m.cachedRows = make([]string, len(items))
-		m.cacheValid = true
+	if !m.cachedRenderedRowsValid {
+		m.cachedRenderedRows = make([]string, len(items))
+		m.cachedRenderedRowsValid = true
 	}
 
 	for i := m.scrollOffset; i < len(items); i++ {
@@ -223,12 +223,12 @@ func (m *Model) renderRows(
 		} else if fetching {
 			prefix := " " + spinnerFrames[m.spinnerFrame]
 			row = m.buildStyledRow(items[i], widths, prefix)
-		} else if i < len(m.cachedRows) && m.cachedRows[i] != "" {
-			row = m.cachedRows[i]
+		} else if i < len(m.cachedRenderedRows) && m.cachedRenderedRows[i] != "" {
+			row = m.cachedRenderedRows[i]
 		} else {
 			row = m.buildStyledRow(items[i], widths, blank)
-			if i < len(m.cachedRows) {
-				m.cachedRows[i] = row
+			if i < len(m.cachedRenderedRows) {
+				m.cachedRenderedRows[i] = row
 			}
 		}
 

@@ -145,12 +145,15 @@ type Model struct {
 	commentBarLo  int
 	commentBarHi  int
 
-	selectedID string
-	showAll    bool
-	filterMode bool
-	filterText string
-	cachedRows []string
-	cacheValid bool
+	selectedID              string
+	showAll                 bool
+	filterMode              bool
+	filterText              string
+	cachedRenderedRows      []string
+	cachedRenderedRowsValid bool
+
+	cachedVisibleItems      []visibleItem
+	cachedVisibleItemsValid bool
 
 	viewMode       viewMode
 	viewingPatchID int
@@ -260,9 +263,9 @@ func (m *Model) reloadData() {
 	}
 
 	m.RowData = rows
+	m.invalidateRowCache()
 	m.restoreSelection()
 	m.ensureSelectedVisible()
-	m.invalidateRowCache()
 }
 
 func (m *Model) restoreSelection() {
@@ -350,8 +353,8 @@ func (m *Model) clearFilter() {
 		m.RowData[expandParent].Expanded = true
 	}
 
-	m.restoreSelection()
 	m.invalidateRowCache()
+	m.restoreSelection()
 	m.ensureSelectedVisible()
 }
 
@@ -369,7 +372,8 @@ func (m *Model) ensureSelectedVisible() {
 }
 
 func (m *Model) invalidateRowCache() {
-	m.cacheValid = false
+	m.cachedRenderedRowsValid = false
+	m.cachedVisibleItemsValid = false
 }
 
 func (m *Model) updateSelectedID() {
@@ -499,6 +503,10 @@ func splitLines(content string) []string {
 }
 
 func (m *Model) getVisibleItems() []visibleItem {
+	if m.cachedVisibleItemsValid && m.cachedVisibleItems != nil {
+		return m.cachedVisibleItems
+	}
+
 	filter := strings.ToLower(foldAccents(m.filterText))
 	var items []visibleItem
 
@@ -558,6 +566,8 @@ func (m *Model) getVisibleItems() []visibleItem {
 			}
 		}
 	}
+	m.cachedVisibleItems = items
+	m.cachedVisibleItemsValid = true
 	return items
 }
 

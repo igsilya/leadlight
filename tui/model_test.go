@@ -1309,6 +1309,74 @@ func TestLogAnchor_WrappedLinesPageUp(t *testing.T) {
 	}
 }
 
+func TestGetVisibleItems_CacheHit(t *testing.T) {
+	m := testModel()
+	items1 := m.getVisibleItems()
+	items2 := m.getVisibleItems()
+	if !m.cachedVisibleItemsValid {
+		t.Error("cache should be valid after getVisibleItems")
+	}
+	if len(items1) != len(items2) {
+		t.Errorf("cached result differs: %d vs %d", len(items1), len(items2))
+	}
+	// Verify it's the exact same slice (pointer equality)
+	if &items1[0] != &items2[0] {
+		t.Error("second call should return cached slice, not recompute")
+	}
+}
+
+func TestGetVisibleItems_InvalidateOnDataChange(t *testing.T) {
+	m := testModel()
+	items1 := m.getVisibleItems()
+	if !m.cachedVisibleItemsValid {
+		t.Error("cache should be valid")
+	}
+
+	// Simulate data change
+	m.RowData = append(m.RowData, RowData{
+		Data:  []string{"4", "Amet", "Active", "New row"},
+		Style: RowStyle{Background: "active"},
+	})
+	m.invalidateRowCache()
+
+	if m.cachedVisibleItemsValid {
+		t.Error("cache should be invalid after invalidateRowCache")
+	}
+	items2 := m.getVisibleItems()
+	if len(items2) <= len(items1) {
+		t.Error("recomputed items should include the new row")
+	}
+}
+
+func TestGetVisibleItems_InvalidateOnFilter(t *testing.T) {
+	m := testModel()
+	items1 := m.getVisibleItems()
+
+	// Apply a filter
+	m.filterMode = true
+	m.filterText = "lorem"
+	m.applyFilter()
+
+	items2 := m.getVisibleItems()
+	if len(items2) >= len(items1) {
+		t.Error("filtered items should be fewer than unfiltered")
+	}
+}
+
+func TestGetVisibleItems_InvalidateOnExpand(t *testing.T) {
+	m := testModel()
+	items1 := m.getVisibleItems()
+
+	// Expand first row (has sub-rows)
+	m.RowData[0].Expanded = true
+	m.invalidateRowCache()
+
+	items2 := m.getVisibleItems()
+	if len(items2) <= len(items1) {
+		t.Error("expanded items should include sub-rows")
+	}
+}
+
 func TestRenderPatchView_NoTrailingSpaces(t *testing.T) {
 	m := testModel()
 	m.viewportLines = []string{
