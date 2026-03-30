@@ -76,7 +76,14 @@ func (m *Model) isRowFetching(item visibleItem) bool {
 	return m.Status.IsFetchingSeries(id)
 }
 
-type SyncUpdateMsg struct{}
+type SyncUpdateMsg struct {
+	SeriesIDs []int // nil/empty = full invalidation
+}
+
+type seriesRowCache struct {
+	seriesRow string
+	subRows   []string
+}
 type StatusUpdateMsg struct{}
 type patchUpdateResultMsg struct{ err error }
 
@@ -145,15 +152,17 @@ type Model struct {
 	commentBarLo  int
 	commentBarHi  int
 
-	selectedID              string
-	showAll                 bool
-	filterMode              bool
-	filterText              string
-	cachedRenderedRows      []string
-	cachedRenderedRowsValid bool
+	selectedID         string
+	showAll            bool
+	filterMode         bool
+	filterText         string
+	cachedRenderedRows map[int]*seriesRowCache
 
 	cachedVisibleItems      []visibleItem
 	cachedVisibleItemsValid bool
+
+	renderBuf   strings.Builder // reused by renderMainView each frame
+	gradientBuf strings.Builder // reused by renderGradientRow each frame
 
 	viewMode       viewMode
 	viewingPatchID int
@@ -213,6 +222,7 @@ func NewModelWithData(
 		ChecksColIdx:         ColNone,
 		selectorHighlightCol: ColNone,
 		highlightAnimating:   true,
+		cachedRenderedRows:   map[int]*seriesRowCache{},
 	}
 }
 
@@ -263,7 +273,7 @@ func (m *Model) reloadData() {
 	}
 
 	m.RowData = rows
-	m.invalidateRowCache()
+	m.invalidateVisibleItems()
 	m.restoreSelection()
 	m.ensureSelectedVisible()
 }
@@ -323,13 +333,13 @@ func matchesFilter(data []string, filter string) bool {
 func (m *Model) startFilter() {
 	m.filterMode = true
 	m.filterText = ""
-	m.invalidateRowCache()
+	m.invalidateVisibleItems()
 }
 
 func (m *Model) applyFilter() {
 	m.selectedRow = 0
 	m.scrollOffset = 0
-	m.invalidateRowCache()
+	m.invalidateVisibleItems()
 	m.updateSelectedID()
 }
 
@@ -353,7 +363,7 @@ func (m *Model) clearFilter() {
 		m.RowData[expandParent].Expanded = true
 	}
 
-	m.invalidateRowCache()
+	m.invalidateVisibleItems()
 	m.restoreSelection()
 	m.ensureSelectedVisible()
 }
@@ -371,8 +381,19 @@ func (m *Model) ensureSelectedVisible() {
 	}
 }
 
-func (m *Model) invalidateRowCache() {
-	m.cachedRenderedRowsValid = false
+func (m *Model) invalidateAllCaches() {
+	m.cachedRenderedRows = map[int]*seriesRowCache{}
+	m.cachedVisibleItemsValid = false
+}
+
+func (m *Model) invalidateVisibleItems() {
+	m.cachedVisibleItemsValid = false
+}
+
+func (m *Model) invalidateSeriesCache(seriesIDs []int) {
+	for _, sid := range seriesIDs {
+		delete(m.cachedRenderedRows, sid)
+	}
 	m.cachedVisibleItemsValid = false
 }
 
@@ -429,6 +450,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SyncUpdateMsg:
 		m.reloadData()
+		if len(msg.SeriesIDs) == 0 {
+			m.cachedRenderedRows = map[int]*seriesRowCache{}
+		} else {
+			m.invalidateSeriesCache(msg.SeriesIDs)
+		}
 		if m.viewMode == viewPatch {
 			if len(m.viewportLines) == 1 &&
 				(m.viewportLines[0] == "Fetching..." ||
@@ -445,7 +471,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.invalidateRowCache()
+		m.invalidateAllCaches()
 		if m.viewMode == viewPatch && m.viewingPatchID != 0 {
 			m.refreshViewport()
 		}

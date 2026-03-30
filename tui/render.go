@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -26,16 +27,17 @@ func (m *Model) renderMainView() string {
 	}
 
 	widths := m.columnWidths()
-	var out strings.Builder
+	m.renderBuf.Reset()
+	m.renderBuf.Grow(m.width * m.height * 4)
 
-	m.renderHeader(&out, widths)
+	m.renderHeader(&m.renderBuf, widths)
 
 	items := m.getVisibleItems()
-	m.renderRows(&out, items, widths)
-	m.padToBottom(&out)
-	m.renderStatusBar(&out)
+	m.renderRows(&m.renderBuf, items, widths)
+	m.padToBottom(&m.renderBuf)
+	m.renderStatusBar(&m.renderBuf)
 
-	return out.String()
+	return m.renderBuf.String()
 }
 
 func (m *Model) viewportVisibleLines() int {
@@ -193,11 +195,6 @@ func (m *Model) renderRows(
 		afrtWidth = widths[ColAFRT]
 	}
 
-	if !m.cachedRenderedRowsValid {
-		m.cachedRenderedRows = make([]string, len(items))
-		m.cachedRenderedRowsValid = true
-	}
-
 	for i := m.scrollOffset; i < len(items); i++ {
 		if rendered >= maxRows {
 			break
@@ -222,14 +219,9 @@ func (m *Model) renderRows(
 			}
 		} else if fetching {
 			prefix := " " + spinnerFrames[m.spinnerFrame]
-			row = m.buildStyledRow(items[i], widths, prefix)
-		} else if i < len(m.cachedRenderedRows) && m.cachedRenderedRows[i] != "" {
-			row = m.cachedRenderedRows[i]
+			row = m.buildStyledRow(items[i], widths, prefix, false)
 		} else {
-			row = m.buildStyledRow(items[i], widths, blank)
-			if i < len(m.cachedRenderedRows) {
-				m.cachedRenderedRows[i] = row
-			}
+			row = m.buildStyledRow(items[i], widths, blank, true)
 		}
 
 		out.WriteString(row)
@@ -244,6 +236,7 @@ func (m *Model) buildRawRow(
 	item visibleItem, widths []int,
 ) string {
 	var b strings.Builder
+	b.Grow(m.width * 2)
 	for j, cellData := range item.data {
 		if widths[j] == 0 {
 			continue
@@ -262,6 +255,7 @@ func (m *Model) buildRow(
 ) string {
 	cached := bgStyles[item.style.Background]
 	var b strings.Builder
+	b.Grow(m.width * 4)
 	for j, cellData := range item.data {
 		if widths[j] == 0 {
 			continue
@@ -293,10 +287,28 @@ func (m *Model) buildRow(
 }
 
 func (m *Model) buildStyledRow(
-	item visibleItem, widths []int, prefix string,
+	item visibleItem, widths []int, prefix string, cache bool,
 ) string {
+	seriesID, _ := strconv.Atoi(m.RowData[item.parentIdx].Data[ColID])
+
+	// Check cache
+	if cache {
+		if sc := m.cachedRenderedRows[seriesID]; sc != nil {
+			if item.isSubRow {
+				if item.subRowIdx < len(sc.subRows) &&
+					sc.subRows[item.subRowIdx] != "" {
+					return sc.subRows[item.subRowIdx]
+				}
+			} else if sc.seriesRow != "" {
+				return sc.seriesRow
+			}
+		}
+	}
+
+	// Build the row
 	rowStyle := item.style.lipgloss()
 	var b strings.Builder
+	b.Grow(m.width * 4)
 	b.WriteString(rowStyle.Render(prefix))
 	for j, cellData := range item.data {
 		if widths[j] == 0 {
@@ -321,7 +333,28 @@ func (m *Model) buildStyledRow(
 			b.WriteString(rowStyle.Render(cell))
 		}
 	}
-	return b.String()
+	row := b.String()
+
+	// Store in cache
+	if cache {
+		sc := m.cachedRenderedRows[seriesID]
+		if sc == nil {
+			sc = &seriesRowCache{
+				subRows: make([]string,
+					len(m.RowData[item.parentIdx].SubRows)),
+			}
+			m.cachedRenderedRows[seriesID] = sc
+		}
+		if item.isSubRow {
+			if item.subRowIdx < len(sc.subRows) {
+				sc.subRows[item.subRowIdx] = row
+			}
+		} else {
+			sc.seriesRow = row
+		}
+	}
+
+	return row
 }
 
 func (m *Model) renderSelectedRow(
@@ -398,8 +431,8 @@ func (m *Model) renderGradientRow(
 		flatFg = cached.fgHex
 	}
 
-	var b strings.Builder
-	b.Grow(total * 30)
+	m.gradientBuf.Reset()
+	m.gradientBuf.Grow(total * 30)
 
 	for pos := 0; pos < total; pos++ {
 		var bg, fg string
@@ -454,9 +487,9 @@ func (m *Model) renderGradientRow(
 		if bold {
 			style = style.Bold(true)
 		}
-		b.WriteString(style.Render(string(runes[pos : pos+1])))
+		m.gradientBuf.WriteString(style.Render(string(runes[pos : pos+1])))
 	}
-	return b.String()
+	return m.gradientBuf.String()
 }
 
 func renderChecksCellWithBg(text string, width int, bgName string) string {

@@ -52,7 +52,7 @@ func setupSyncer(
 		srv.URL, "test-project", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	return s, d
 }
@@ -308,7 +308,7 @@ func TestIncrementalSync(t *testing.T) {
 		srv.URL, "test-project", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	s.incrementalSync(context.Background())
 
@@ -379,7 +379,7 @@ func TestInitialSync(t *testing.T) {
 		srv.URL, "test-project", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	s.initialSync(context.Background())
 
@@ -506,7 +506,7 @@ func TestFetchEvents_NotifiesPerPage(t *testing.T) {
 		10*time.Millisecond)
 
 	notifyCount := 0
-	s := NewSyncer(client, d, cfg, func() {
+	s := NewSyncer(client, d, cfg, func(...int) {
 		notifyCount++
 	}, status.NewRegistry(nil))
 
@@ -575,7 +575,7 @@ func TestFetchEvents_SkipsAlreadyProcessed(t *testing.T) {
 		States:  []string{"new"},
 	}
 	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
 
 	s.fetchEventsSince(context.Background(), "2026-03-10", status.BgSync)
 
@@ -626,7 +626,7 @@ func TestFetchInitialEvents_CapsOldDate(t *testing.T) {
 		States:  []string{"new"},
 	}
 	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
 
 	s.fetchInitialEvents(context.Background())
 
@@ -672,7 +672,7 @@ func TestFetchInitialEvents_RecentNotCapped(t *testing.T) {
 		States:  []string{"new"},
 	}
 	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
 
 	s.fetchInitialEvents(context.Background())
 
@@ -727,7 +727,7 @@ func TestFetchPatches_NotifiesPerPage(t *testing.T) {
 		10*time.Millisecond)
 
 	notifyCount := 0
-	s := NewSyncer(client, d, cfg, func() {
+	s := NewSyncer(client, d, cfg, func(...int) {
 		notifyCount++
 	}, status.NewRegistry(nil))
 
@@ -796,7 +796,7 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	// With id DESC ordering, patch 101 (higher ID) is fetched first
@@ -1305,11 +1305,11 @@ func TestFetchNextPatchDetail_ThenCover(t *testing.T) {
 
 	// Both done — nothing left
 	called = nil
-	if s.fetchNextPatchDetail(context.Background()) {
-		t.Error("patch detail should return false")
+	if s.fetchNextPatchDetail(context.Background()) != 0 {
+		t.Error("patch detail should return 0")
 	}
-	if s.fetchNextCoverDetail(context.Background()) {
-		t.Error("cover detail should return false")
+	if s.fetchNextCoverDetail(context.Background()) != 0 {
+		t.Error("cover detail should return 0")
 	}
 }
 
@@ -1686,7 +1686,7 @@ func TestCheckMailArchive(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.checkMailArchive(context.Background())
@@ -1762,7 +1762,7 @@ func TestCheckMailArchive_SkipsOldMessages(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	s.checkMailArchive(context.Background())
 
@@ -1814,7 +1814,7 @@ func TestCheckMailArchive_CoverComments(t *testing.T) {
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
 
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	s.checkMailArchive(context.Background())
 
@@ -1855,7 +1855,7 @@ func TestCheckMailArchive_MultiMonthCatchup(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.checkMailArchive(context.Background())
@@ -1897,7 +1897,7 @@ func TestCheckMailArchive_FirstRun(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.checkMailArchive(context.Background())
@@ -1941,7 +1941,7 @@ func TestCheckMailArchive_SameMonth(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.checkMailArchive(context.Background())
@@ -1980,7 +1980,7 @@ func TestCheckMailArchive_YearBoundary(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.checkMailArchive(context.Background())
@@ -2104,10 +2104,9 @@ func TestFetchNextSeriesDetail(t *testing.T) {
 	}
 	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
 
-	notified := false
-	s := NewSyncer(client, d, cfg, func() { notified = true },
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
-	s.fetchNextSeriesDetail(context.Background())
+	sid := s.fetchNextSeriesDetail(context.Background())
 
 	// Both patches should have submitter set via UpdateSeriesPatches
 	r1, _ := d.GetPatch(100)
@@ -2125,8 +2124,8 @@ func TestFetchNextSeriesDetail(t *testing.T) {
 		t.Errorf("series should be complete, got %d needing detail", len(refs))
 	}
 
-	if !notified {
-		t.Error("should have called notify")
+	if sid != 50 {
+		t.Errorf("fetchNextSeriesDetail returned %d, want 50", sid)
 	}
 }
 
@@ -2153,13 +2152,97 @@ func TestFetchNextSeriesDetail_SkipsComplete(t *testing.T) {
 		States:  []string{"new"},
 	}
 	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
 
-	if s.fetchNextSeriesDetail(context.Background()) {
-		t.Error("should return false when no series need detail")
+	if s.fetchNextSeriesDetail(context.Background()) != 0 {
+		t.Error("should return 0 when no series need detail")
 	}
 	if apiCalled {
 		t.Error("should not call API when all series have detail")
+	}
+}
+
+func TestFetchNextComments_ReturnsSeriesID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[]`))
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
+
+	var notifiedIDs []int
+	s := NewSyncer(client, d, cfg, func(ids ...int) {
+		notifiedIDs = append(notifiedIDs, ids...)
+	}, status.NewRegistry(nil))
+
+	sid := s.fetchNextComments(context.Background())
+	if sid != 50 {
+		t.Errorf("fetchNextComments returned %d, want 50", sid)
+	}
+}
+
+func TestFetchNextComments_NoWork_ReturnsZero(t *testing.T) {
+	s, _ := setupSyncer(t, http.NotFoundHandler())
+	// No patches needing comments — should return 0
+	sid := s.fetchNextComments(context.Background())
+	if sid != 0 {
+		t.Errorf("fetchNextComments returned %d, want 0 (no work)", sid)
+	}
+}
+
+func TestFetchNextPatchDetail_ReturnsSeriesID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(api.PatchDetail{
+				Patch: api.Patch{
+					ID: 100, Name: "p1", Date: "2026-03-10",
+					State: "new", Submitter: api.Person{Name: "Lorem"},
+					Series: []api.SeriesSummary{{
+						ID: 50, Name: "s1", Date: "2026-03-10", Version: 1,
+					}},
+				},
+				Content: "body", Diff: "diff",
+				Headers:  map[string]interface{}{},
+				Prefixes: []string{},
+			})
+		}))
+	defer srv.Close()
+
+	d, _ := db.Open(":memory:")
+	defer d.Close()
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+
+	cfg := &config.Config{
+		Server:  srv.URL,
+		Project: "test",
+		States:  []string{"new"},
+	}
+	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
+	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
+
+	sid := s.fetchNextPatchDetail(context.Background())
+	if sid != 50 {
+		t.Errorf("fetchNextPatchDetail returned %d, want 50", sid)
 	}
 }
 
@@ -2194,12 +2277,12 @@ func TestFetchNextChecks(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	result := s.fetchNextChecks(context.Background())
-	if !result {
-		t.Error("expected true (work done)")
+	if result == 0 {
+		t.Error("expected non-zero series ID (work done)")
 	}
 
 	checks := d.GetChecksForPatch(100)
@@ -2252,12 +2335,12 @@ func TestFetchNextChecks_Error(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	result := s.fetchNextChecks(context.Background())
-	if result {
-		t.Error("expected false (error)")
+	if result != 0 {
+		t.Error("expected 0 (error)")
 	}
 
 	// Should be in skip set
@@ -2293,7 +2376,7 @@ func TestProcessEvent_CheckCreated_NoDescription_ResetsFlag(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	// Event without description
@@ -2334,7 +2417,7 @@ func TestProcessEvent_CheckCreated_WithDescription_KeepsFlag(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	// Event with description
@@ -2399,7 +2482,7 @@ func TestFetchAllForPatch(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.fetchAllForPatch(context.Background(), 100)
@@ -2447,7 +2530,7 @@ func TestFetchAllForPatch_AlreadyFetched(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.fetchAllForPatch(context.Background(), 100)
@@ -2506,7 +2589,7 @@ func TestFetchAllForSeries(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.fetchAllForSeries(context.Background(), 50)
@@ -2590,7 +2673,7 @@ func TestFetchAllForSeries_PartiallyFetched(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.fetchAllForSeries(context.Background(), 50)
@@ -2638,7 +2721,7 @@ func TestFetchDetailForPatch_Extracted(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	err := s.fetchDetailForPatch(context.Background(), 100, 50, status.Detail)
@@ -2682,7 +2765,7 @@ func TestRequestDetail_Patch(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.fetchDetailForPatch(context.Background(), 100, 50,
@@ -2725,7 +2808,7 @@ func TestRequestDetail_Cover(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.fetchDetailForCover(context.Background(), 99, 50,
@@ -2761,7 +2844,7 @@ func TestFetchDetailForCover_Extracted(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	err := s.fetchDetailForCover(context.Background(), 99, 50, status.Detail)
@@ -2793,7 +2876,7 @@ func TestBackfillHistory_Disabled(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	s.backfillHistory(context.Background())
 }
@@ -2840,7 +2923,7 @@ func TestBackfillHistory_FetchesPages(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	s.backfillHistory(context.Background())
 
@@ -2876,7 +2959,7 @@ func TestBackfillHistory_AlreadyComplete(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 	s.backfillHistory(context.Background())
 
@@ -2920,7 +3003,7 @@ func TestFetchSeriesSince_SavesPatches(t *testing.T) {
 		States:  []string{"new"},
 	}
 	client := api.NewClientForTest(srv.URL, "test", srv.Client(), 10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {}, status.NewRegistry(nil))
+	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
 
 	s.fetchSeriesSince(context.Background(), "2026-03-01", status.Sync)
 
@@ -2985,7 +3068,7 @@ func TestFetchChecksForPatch_OnDemand(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	s.fetchChecksForPatch(context.Background(), 100, 50, status.BgChecks)
@@ -3029,17 +3112,17 @@ func TestFetchNextChecks_Terminal(t *testing.T) {
 	client := api.NewClientForTest(
 		srv.URL, "test", srv.Client(),
 		10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func() {},
+	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
 
 	result := s.fetchNextChecks(context.Background())
-	if !result {
-		t.Error("expected true (terminal work done)")
+	if result == 0 {
+		t.Error("expected non-zero (terminal work done)")
 	}
 
 	// Second call within cooldown should skip terminal work
 	result = s.fetchNextChecks(context.Background())
-	if result {
-		t.Error("expected false (terminal cooldown active)")
+	if result != 0 {
+		t.Error("expected 0 (terminal cooldown active)")
 	}
 }

@@ -24,7 +24,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.logLastSeen = count
 			m.logAnchor = count
 		}
-		m.invalidateRowCache()
+		m.invalidateAllCaches()
 		return m, nil
 	}
 	if m.logConsole && key == "tab" {
@@ -36,7 +36,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "esc":
 			m.logConsole = false
 			m.logFocused = false
-			m.invalidateRowCache()
+			m.invalidateAllCaches()
 			return m, nil
 		case "up", "k", "down", "j",
 			"pgup", "ctrl+u", "pgdown", "ctrl+d",
@@ -162,7 +162,7 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !item.isSubRow && item.canExpand {
 				idx := item.parentIdx
 				m.RowData[idx].Expanded = !m.RowData[idx].Expanded
-				m.invalidateRowCache()
+				m.invalidateVisibleItems()
 				m.ensureSelectedVisible()
 			}
 		}

@@ -32,7 +32,7 @@ type Syncer struct {
 	client *api.Client
 	db     *db.DB
 	cfg    *config.Config
-	notify func()
+	notify func(seriesIDs ...int)
 	status *status.Registry
 
 	// Channels for user-initiated requests, handled by runUserRequests.
@@ -104,7 +104,7 @@ func NewSyncer(
 	client *api.Client,
 	d *db.DB,
 	cfg *config.Config,
-	notify func(),
+	notify func(seriesIDs ...int),
 	st *status.Registry,
 ) *Syncer {
 	return &Syncer{
@@ -249,7 +249,7 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 						noRL, req.ID, sid, status.Comments)
 				}
 				s.status.Clear(status.Comments)
-				s.notify()
+				s.notify(sid)
 			}()
 		case req := <-s.detailC:
 			go func() {
@@ -264,7 +264,7 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 						noRL, req.ID, sid, status.Detail)
 				}
 				s.status.Clear(status.Detail)
-				s.notify()
+				s.notify(sid)
 			}()
 		case patchID := <-s.checkC:
 			go func() {
@@ -274,18 +274,20 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 				s.fetchChecksForPatch(
 					noRL, patchID, sid, status.BgChecks)
 				s.status.Clear(status.BgChecks)
-				s.notify()
+				s.notify(sid)
 			}()
 		case req := <-s.fetchAllC:
 			go func() {
 				fctx := WithFetchOrigin(ctx, OriginFetchAll)
-				if req.SeriesID != 0 {
-					s.fetchAllForSeries(fctx, req.SeriesID)
+				sid := req.SeriesID
+				if sid != 0 {
+					s.fetchAllForSeries(fctx, sid)
 				} else if req.PatchID != 0 {
+					sid = s.lookupSeriesID(req.PatchID, false)
 					s.fetchAllForPatch(fctx, req.PatchID)
 				}
 				s.status.Clear(status.FetchAll)
-				s.notify()
+				s.notify(sid)
 			}()
 		}
 	}
@@ -297,7 +299,6 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	s.status.Set(status.BgSync, "Checking events...", true)
 	s.incrementalSync(ctx)
 	s.status.Clear(status.BgSync)
-	s.notify()
 
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
@@ -308,7 +309,6 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		s.incrementalSync(syncCtx)
 		s.status.Clear(status.BgSync)
 		s.status.Clear(status.Sync)
-		s.notify()
 		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
 			s.fetchMaintainers(syncCtx)
 			lastMaintainerRefresh = time.Now()
@@ -333,19 +333,19 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 func (s *Syncer) runBgLoop(
 	ctx context.Context, wg *gosync.WaitGroup,
 	interval time.Duration,
-	fetch func(context.Context) bool,
+	fetch func(context.Context) int,
 ) {
 	defer wg.Done()
-	if fetch(ctx) {
-		s.notify()
+	if sid := fetch(ctx); sid != 0 {
+		s.notify(sid)
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(interval):
-			if fetch(ctx) {
-				s.notify()
+			if sid := fetch(ctx); sid != 0 {
+				s.notify(sid)
 			}
 		}
 	}
@@ -543,6 +543,7 @@ func (s *Syncer) fetchEventsSince(
 					pageProgress(pageNum, page.TotalPages)), true)
 		}
 		skipped := 0
+		affected := map[int]bool{}
 		for _, ev := range page.Items {
 			if ev.ID <= lastID {
 				skipped++
@@ -553,12 +554,26 @@ func (s *Syncer) fetchEventsSince(
 			if err := s.processEvent(ev, seriesID); err != nil {
 				log.Printf("SYNC: process event %d: %v", ev.ID, err)
 			}
+			if seriesID == 0 {
+				seriesID = s.seriesIDForEventPatch(ev)
+			}
+			if seriesID != 0 {
+				affected[seriesID] = true
+			}
 			s.db.SetSyncState("last_event_date", ev.Date)
 			s.db.SetSyncState("last_event_id", strconv.Itoa(ev.ID))
 		}
 		log.Printf("SYNC: received %d events, %d new (page %d)",
 			len(page.Items), len(page.Items)-skipped, pageNum)
-		s.notify()
+		if len(affected) > 0 {
+			ids := make([]int, 0, len(affected))
+			for id := range affected {
+				ids = append(ids, id)
+			}
+			s.notify(ids...)
+		} else if len(page.Items)-skipped > 0 {
+			s.notify()
+		}
 		pageURL = page.NextURL
 	}
 }
@@ -573,6 +588,30 @@ func seriesIDFromEvent(ev api.Event) int {
 		return p.Series.ID
 	}
 	return 0
+}
+
+func (s *Syncer) seriesIDForEventPatch(ev api.Event) int {
+	var patchID int
+	switch p := ev.Payload.(type) {
+	case *api.PatchCreatedPayload:
+		patchID = p.Patch.ID
+	case *api.PatchStateChangedPayload:
+		patchID = p.Patch.ID
+	case *api.PatchDelegatedPayload:
+		patchID = p.Patch.ID
+	case *api.CheckCreatedPayload:
+		patchID = p.Patch.ID
+	case *api.PatchCommentCreatedPayload:
+		patchID = p.Patch.ID
+	}
+	if patchID == 0 {
+		return 0
+	}
+	row, err := s.db.GetPatch(patchID)
+	if err != nil || row == nil {
+		return 0
+	}
+	return row.SeriesID
 }
 
 func eventSummary(ev api.Event) string {
@@ -667,7 +706,7 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 	return nil
 }
 
-func (s *Syncer) fetchNextComments(ctx context.Context) bool {
+func (s *Syncer) fetchNextComments(ctx context.Context) int {
 	refs := s.db.GetPatchesNeedingComments(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
@@ -681,7 +720,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 		if !s.fetchCommentsForPatch(ctx, ref.ID, ref.SeriesID,
 			status.BgComments) {
 			s.commentSkip[ref.ID] = time.Now()
-			return false
+			return 0
 		}
 		delete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgComments,
@@ -690,12 +729,12 @@ func (s *Syncer) fetchNextComments(ctx context.Context) bool {
 		if !ref.IsActive {
 			s.lastTerminalComment = time.Now()
 		}
-		return true
+		return ref.SeriesID
 	}
-	return false
+	return 0
 }
 
-func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
+func (s *Syncer) fetchNextCoverComments(ctx context.Context) int {
 	refs := s.db.GetCoversNeedingComments(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
@@ -709,7 +748,7 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 		if !s.fetchCommentsForCover(ctx, ref.ID, ref.SeriesID,
 			status.BgCoverComments) {
 			s.commentSkip[ref.ID] = time.Now()
-			return false
+			return 0
 		}
 		delete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgCoverComments,
@@ -718,9 +757,9 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) bool {
 		if !ref.IsActive {
 			s.lastTerminalCoverComment = time.Now()
 		}
-		return true
+		return ref.SeriesID
 	}
-	return false
+	return 0
 }
 
 func (s *Syncer) fetchCommentsForPatch(
@@ -848,7 +887,7 @@ func (s *Syncer) checkArchiveMonth(
 	s.db.SetSyncState(monthKey, strconv.Itoa(maxNum))
 }
 
-func (s *Syncer) fetchNextPatchDetail(ctx context.Context) bool {
+func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 	refs := s.db.GetPatchesNeedingDetail(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
@@ -862,7 +901,7 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) bool {
 		if err := s.fetchDetailForPatch(ctx, ref.ID,
 			ref.SeriesID, status.Detail); err != nil {
 			s.detailSkip[ref.ID] = time.Now()
-			return false
+			return 0
 		}
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
@@ -871,12 +910,12 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) bool {
 		if !ref.IsActive {
 			s.lastTerminalPatchDetail = time.Now()
 		}
-		return true
+		return ref.SeriesID
 	}
-	return false
+	return 0
 }
 
-func (s *Syncer) fetchNextCoverDetail(ctx context.Context) bool {
+func (s *Syncer) fetchNextCoverDetail(ctx context.Context) int {
 	refs := s.db.GetCoversNeedingDetail(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
@@ -890,7 +929,7 @@ func (s *Syncer) fetchNextCoverDetail(ctx context.Context) bool {
 		if err := s.fetchDetailForCover(ctx, ref.ID,
 			ref.SeriesID, status.Detail); err != nil {
 			s.detailSkip[ref.ID] = time.Now()
-			return false
+			return 0
 		}
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
@@ -899,9 +938,9 @@ func (s *Syncer) fetchNextCoverDetail(ctx context.Context) bool {
 		if !ref.IsActive {
 			s.lastTerminalCoverDetail = time.Now()
 		}
-		return true
+		return ref.SeriesID
 	}
-	return false
+	return 0
 }
 
 // backfillHistory extends patch and series data backward to the
@@ -1015,7 +1054,7 @@ func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey s
 	s.db.SetSyncState("backfill_series_since", since)
 }
 
-func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) bool {
+func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
 	refs := s.db.GetSeriesNeedingDetail(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.seriesSkip[ref.ID]; ok &&
@@ -1034,7 +1073,7 @@ func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) bool {
 				fetchOrigin(ctx), ref.ID, err)
 			s.status.EndFetch(ref.ID)
 			s.seriesSkip[ref.ID] = time.Now()
-			return false
+			return 0
 		}
 		delete(s.seriesSkip, ref.ID)
 		s.db.SaveSeries(db.SeriesRow{
@@ -1059,16 +1098,15 @@ func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) bool {
 		s.status.SetTimed(status.BgSync,
 			fmt.Sprintf("Series details fetched (%d remaining)",
 				len(refs)-i-1), 3*time.Second)
-		s.notify()
 		if !ref.IsActive {
 			s.lastTerminalSeriesDetail = time.Now()
 		}
-		return true
+		return ref.ID
 	}
-	return false
+	return 0
 }
 
-func (s *Syncer) fetchNextChecks(ctx context.Context) bool {
+func (s *Syncer) fetchNextChecks(ctx context.Context) int {
 	refs := s.db.GetPatchesNeedingChecks(s.cfg.States)
 	for i, ref := range refs {
 		if t, ok := s.checkSkip[ref.ID]; ok &&
@@ -1083,7 +1121,7 @@ func (s *Syncer) fetchNextChecks(ctx context.Context) bool {
 			status.BgChecks)
 		if s.db.NeedsPatchChecks(ref.ID) {
 			s.checkSkip[ref.ID] = time.Now()
-			return false
+			return 0
 		}
 		delete(s.checkSkip, ref.ID)
 		s.status.SetTimed(status.BgChecks,
@@ -1092,9 +1130,9 @@ func (s *Syncer) fetchNextChecks(ctx context.Context) bool {
 		if !ref.IsActive {
 			s.lastTerminalCheck = time.Now()
 		}
-		return true
+		return ref.SeriesID
 	}
-	return false
+	return 0
 }
 
 // fetchAllForSeries fetches all data for a series: cover detail +
@@ -1426,7 +1464,12 @@ func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) 
 	}
 	log.Printf("SYNC: patch update %d success, syncing events", req.PatchID)
 	s.incrementalSync(ctx)
-	s.notify()
+	sid := s.lookupSeriesID(req.PatchID, false)
+	if sid != 0 {
+		s.notify(sid)
+	} else {
+		s.notify()
+	}
 	s.status.SetTimed(status.Update, "Updated", 3*time.Second)
 	return nil
 }

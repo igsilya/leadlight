@@ -86,8 +86,8 @@ func main() {
 	defer cancel()
 
 	syncer := appSync.NewSyncer(
-		client, database, cfg, func() {
-			p.Send(tui.SyncUpdateMsg{})
+		client, database, cfg, func(seriesIDs ...int) {
+			p.Send(tui.SyncUpdateMsg{SeriesIDs: seriesIDs})
 		}, statusReg)
 
 	m.FetchSeriesCover = func(seriesID int) {

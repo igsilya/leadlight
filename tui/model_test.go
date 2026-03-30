@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1337,7 +1338,7 @@ func TestGetVisibleItems_InvalidateOnDataChange(t *testing.T) {
 		Data:  []string{"4", "Amet", "Active", "New row"},
 		Style: RowStyle{Background: "active"},
 	})
-	m.invalidateRowCache()
+	m.invalidateAllCaches()
 
 	if m.cachedVisibleItemsValid {
 		t.Error("cache should be invalid after invalidateRowCache")
@@ -1369,11 +1370,323 @@ func TestGetVisibleItems_InvalidateOnExpand(t *testing.T) {
 
 	// Expand first row (has sub-rows)
 	m.RowData[0].Expanded = true
-	m.invalidateRowCache()
+	m.invalidateAllCaches()
 
 	items2 := m.getVisibleItems()
 	if len(items2) <= len(items1) {
 		t.Error("expanded items should include sub-rows")
+	}
+}
+
+func TestSeriesRowCache_Hit(t *testing.T) {
+	m := testModel()
+	// Populate cache via buildStyledRow with cache=true
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	if len(items) == 0 {
+		t.Fatal("no visible items")
+	}
+	blank := "  "
+	row1 := m.buildStyledRow(items[0], widths, blank, true)
+	// Second call should return cached value
+	row2 := m.buildStyledRow(items[0], widths, blank, true)
+	if row1 != row2 {
+		t.Error("second call should return cached row")
+	}
+	// Verify cache entry exists
+	seriesID, _ := strconv.Atoi(m.RowData[items[0].parentIdx].Data[ColID])
+	sc := m.cachedRenderedRows[seriesID]
+	if sc == nil || sc.seriesRow == "" {
+		t.Error("cache entry should exist for series row")
+	}
+}
+
+func TestSeriesRowCache_SubRowHit(t *testing.T) {
+	m := testModel()
+	// Expand first row to get sub-rows
+	m.RowData[0].Expanded = true
+	m.invalidateVisibleItems()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	// Find the first sub-row
+	var subItem visibleItem
+	found := false
+	for _, item := range items {
+		if item.isSubRow {
+			subItem = item
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no sub-rows found after expanding")
+	}
+	blank := "  "
+	row1 := m.buildStyledRow(subItem, widths, blank, true)
+	row2 := m.buildStyledRow(subItem, widths, blank, true)
+	if row1 != row2 {
+		t.Error("second call should return cached sub-row")
+	}
+}
+
+func TestSeriesRowCache_NoCacheWhenFetching(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	if len(items) == 0 {
+		t.Fatal("no visible items")
+	}
+	// Build with cache=false (simulates fetching row with spinner)
+	m.buildStyledRow(items[0], widths, "▸⠋", false)
+	seriesID, _ := strconv.Atoi(m.RowData[items[0].parentIdx].Data[ColID])
+	if sc := m.cachedRenderedRows[seriesID]; sc != nil && sc.seriesRow != "" {
+		t.Error("should not cache when cache=false")
+	}
+}
+
+func TestInvalidateSeriesCache_TargetedClear(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	// Populate cache for all series rows
+	seriesIDs := map[int]bool{}
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+			sid, _ := strconv.Atoi(m.RowData[item.parentIdx].Data[ColID])
+			seriesIDs[sid] = true
+		}
+	}
+	if len(m.cachedRenderedRows) < 2 {
+		t.Fatalf("need at least 2 cached series, got %d",
+			len(m.cachedRenderedRows))
+	}
+	// Pick one series to invalidate
+	var targetID int
+	for id := range seriesIDs {
+		targetID = id
+		break
+	}
+	m.invalidateSeriesCache([]int{targetID})
+	// Target should be gone
+	if _, ok := m.cachedRenderedRows[targetID]; ok {
+		t.Errorf("series %d should be cleared", targetID)
+	}
+	// Others should remain
+	remaining := 0
+	for id := range seriesIDs {
+		if id != targetID {
+			if _, ok := m.cachedRenderedRows[id]; ok {
+				remaining++
+			}
+		}
+	}
+	if remaining == 0 {
+		t.Error("other series should still be cached")
+	}
+}
+
+func TestInvalidateSeriesCache_MultipleSeries(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	var allIDs []int
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+			sid, _ := strconv.Atoi(m.RowData[item.parentIdx].Data[ColID])
+			allIDs = append(allIDs, sid)
+		}
+	}
+	if len(allIDs) < 3 {
+		t.Skipf("need at least 3 series, got %d", len(allIDs))
+	}
+	// Invalidate first two, keep the third
+	m.invalidateSeriesCache(allIDs[:2])
+	for _, id := range allIDs[:2] {
+		if _, ok := m.cachedRenderedRows[id]; ok {
+			t.Errorf("series %d should be cleared", id)
+		}
+	}
+	if _, ok := m.cachedRenderedRows[allIDs[2]]; !ok {
+		t.Errorf("series %d should still be cached", allIDs[2])
+	}
+}
+
+func TestInvalidateSeriesCache_NonexistentSeries(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+		}
+	}
+	before := len(m.cachedRenderedRows)
+	m.invalidateSeriesCache([]int{999999})
+	if len(m.cachedRenderedRows) != before {
+		t.Error("invalidating nonexistent series should not affect cache")
+	}
+}
+
+func TestInvalidateAllCaches_ClearsEverything(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+		}
+	}
+	if len(m.cachedRenderedRows) == 0 {
+		t.Fatal("cache should be populated")
+	}
+	m.invalidateAllCaches()
+	if len(m.cachedRenderedRows) != 0 {
+		t.Error("invalidateAllCaches should clear all rendered rows")
+	}
+	if m.cachedVisibleItemsValid {
+		t.Error("invalidateAllCaches should clear visible items cache")
+	}
+}
+
+func TestFilterChange_KeepsRenderedCache(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+		}
+	}
+	before := len(m.cachedRenderedRows)
+	if before == 0 {
+		t.Fatal("cache should be populated")
+	}
+	// Start filter — should NOT clear rendered row cache
+	m.startFilter()
+	if len(m.cachedRenderedRows) != before {
+		t.Error("startFilter should not clear rendered row cache")
+	}
+	// Apply filter — should NOT clear rendered row cache
+	m.filterText = "lorem"
+	m.applyFilter()
+	if len(m.cachedRenderedRows) != before {
+		t.Error("applyFilter should not clear rendered row cache")
+	}
+	// Clear filter — should NOT clear rendered row cache
+	m.clearFilter()
+	if len(m.cachedRenderedRows) != before {
+		t.Error("clearFilter should not clear rendered row cache")
+	}
+}
+
+func TestExpandCollapse_KeepsRenderedCache(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+		}
+	}
+	before := len(m.cachedRenderedRows)
+	// Expand a row — should NOT clear rendered row cache
+	m.RowData[0].Expanded = true
+	m.invalidateVisibleItems()
+	if len(m.cachedRenderedRows) != before {
+		t.Error("expand should not clear rendered row cache")
+	}
+}
+
+func TestResize_ClearsRenderedCache(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+		}
+	}
+	if len(m.cachedRenderedRows) == 0 {
+		t.Fatal("cache should be populated")
+	}
+	// Resize — SHOULD clear rendered row cache
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	if len(m.cachedRenderedRows) != 0 {
+		t.Error("resize should clear rendered row cache")
+	}
+}
+
+func TestSyncUpdateMsg_TargetedInvalidation(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	var allIDs []int
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+			sid, _ := strconv.Atoi(m.RowData[item.parentIdx].Data[ColID])
+			allIDs = append(allIDs, sid)
+		}
+	}
+	if len(allIDs) < 2 {
+		t.Skipf("need at least 2 series, got %d", len(allIDs))
+	}
+	// Targeted invalidation
+	m.Update(SyncUpdateMsg{SeriesIDs: []int{allIDs[0]}})
+	if _, ok := m.cachedRenderedRows[allIDs[0]]; ok {
+		t.Errorf("series %d should be cleared", allIDs[0])
+	}
+	if _, ok := m.cachedRenderedRows[allIDs[1]]; !ok {
+		t.Errorf("series %d should still be cached", allIDs[1])
+	}
+}
+
+func TestSyncUpdateMsg_FullInvalidation(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+		}
+	}
+	if len(m.cachedRenderedRows) == 0 {
+		t.Fatal("cache should be populated")
+	}
+	// Full invalidation (empty SeriesIDs)
+	m.Update(SyncUpdateMsg{})
+	if len(m.cachedRenderedRows) != 0 {
+		t.Error("empty SeriesIDs should clear all rendered rows")
+	}
+}
+
+func TestCacheSurvivesScrolling(t *testing.T) {
+	m := testModel()
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	blank := "  "
+	for _, item := range items {
+		if !item.isSubRow {
+			m.buildStyledRow(item, widths, blank, true)
+		}
+	}
+	before := len(m.cachedRenderedRows)
+	// Scroll down
+	m.selectedRow = 1
+	m.scrollOffset = 0
+	if len(m.cachedRenderedRows) != before {
+		t.Error("scrolling should not clear rendered row cache")
 	}
 }
 
