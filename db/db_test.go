@@ -2390,7 +2390,8 @@ func TestRecomputeActiveFlag_TerminalStates(t *testing.T) {
 	terminal := []string{
 		"accepted", "rejected", "superseded", "rfc",
 		"not-applicable", "changes-requested", "deferred",
-		"handled-elsewhere",
+		"handled-elsewhere", "awaiting-upstream",
+		"mainlined", "queued", "in-next",
 	}
 	for _, state := range terminal {
 		t.Run(state, func(t *testing.T) {

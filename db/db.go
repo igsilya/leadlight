@@ -745,7 +745,7 @@ func (d *DB) GetDelegateDisplayNames() map[string]string {
 // for background fetch prioritization. Patches in these states
 // (and not archived) are fetched before terminal-state patches.
 var ActiveStates = []string{
-	"new", "under-review", "needs-ack", "awaiting-upstream",
+	"new", "under-review", "needs-ack",
 }
 
 func activeStateFilter() (string, []interface{}) {
