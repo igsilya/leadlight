@@ -336,16 +336,22 @@ func (s *Syncer) runBgLoop(
 	fetch func(context.Context) int,
 ) {
 	defer wg.Done()
+	delay := interval
 	if sid := fetch(ctx); sid != 0 {
 		s.notify(sid)
+	} else {
+		delay += interval
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(interval):
+		case <-time.After(delay):
 			if sid := fetch(ctx); sid != 0 {
 				s.notify(sid)
+				delay = interval
+			} else if delay < 3*interval {
+				delay += interval
 			}
 		}
 	}
