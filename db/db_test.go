@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -1072,7 +1073,7 @@ func TestBatchConsistency(t *testing.T) {
 		Date: "2026-03-12", State: "accepted", Submitter: "Sit",
 	})
 
-	states := []string{"new"}
+	states := []string{"new", "under-review"}
 	patches := d.GetAllPatchesBatch(false, states)
 	tags := d.GetTagsBatch(false, states)
 	comments := d.GetCommentCountsBatch(false, states)
@@ -1125,7 +1126,7 @@ func TestGetPatchesNeedingComments_Order(t *testing.T) {
 		Date: "2026-03-15", State: "new", Submitter: "Lorem",
 	})
 
-	ids := d.GetPatchesNeedingComments([]string{"new"})
+	ids := d.GetPatchesNeedingComments(100)
 	if len(ids) != 3 {
 		t.Fatalf("len = %d, want 3", len(ids))
 	}
@@ -1167,8 +1168,9 @@ func TestGetCoversNeedingComments_Order(t *testing.T) {
 	d.SaveCover(CoverRow{
 		ID: 92, SeriesID: 52, Name: "c3", Date: "2026-03-15",
 	})
+	d.RecomputeAllActiveFlags()
 
-	ids := d.GetCoversNeedingComments([]string{"new"})
+	ids := d.GetCoversNeedingComments(100)
 	if len(ids) != 3 {
 		t.Fatalf("len = %d, want 3", len(ids))
 	}
@@ -1200,7 +1202,7 @@ func TestGetPatchesNeedingDetail_Order(t *testing.T) {
 		Submitter: "Lorem",
 	})
 
-	ids := d.GetPatchesNeedingDetail([]string{"new", "under-review"})
+	ids := d.GetPatchesNeedingDetail(100)
 	if len(ids) != 3 {
 		t.Fatalf("len = %d, want 3", len(ids))
 	}
@@ -1233,8 +1235,9 @@ func TestGetCoversNeedingDetail_Order(t *testing.T) {
 	d.SaveCover(CoverRow{
 		ID: 91, SeriesID: 51, Name: "c2", Date: "2026-03-10",
 	})
+	d.RecomputeAllActiveFlags()
 
-	ids := d.GetCoversNeedingDetail([]string{"new"})
+	ids := d.GetCoversNeedingDetail(100)
 	if len(ids) != 2 {
 		t.Fatalf("len = %d, want 2", len(ids))
 	}
@@ -1274,9 +1277,71 @@ func TestGetPatchesNeedingDetail(t *testing.T) {
 	})
 	d.UpdatePatchDetail(100, "body", "diff", "{}", "[]")
 
-	ids := d.GetPatchesNeedingDetail(nil)
+	ids := d.GetPatchesNeedingDetail(100)
 	if len(ids) != 1 || ids[0].ID != 101 {
 		t.Errorf("got %v, want [101]", ids)
+	}
+}
+
+func TestGetPatchesNeedingDetail_Limit(t *testing.T) {
+	d := openTestDB(t)
+	for i := 100; i < 110; i++ {
+		d.SavePatch(PatchRow{
+			ID: i, Name: fmt.Sprintf("p%d", i), Date: "2026-03-10",
+			State: "new", Submitter: "Lorem",
+		})
+	}
+	refs := d.GetPatchesNeedingDetail(3)
+	if len(refs) != 3 {
+		t.Errorf("got %d refs, want 3", len(refs))
+	}
+}
+
+func TestGetPatchesNeedingDetail_ActiveFirst(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "terminal", Date: "2026-03-10",
+		State: "accepted", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, Name: "active", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	refs := d.GetPatchesNeedingDetail(100)
+	if len(refs) != 2 {
+		t.Fatalf("got %d refs, want 2", len(refs))
+	}
+	if refs[0].ID != 101 || !refs[0].IsActive {
+		t.Errorf("first should be active 101, got id=%d active=%v",
+			refs[0].ID, refs[0].IsActive)
+	}
+	if refs[1].ID != 100 || refs[1].IsActive {
+		t.Errorf("second should be terminal 100, got id=%d active=%v",
+			refs[1].ID, refs[1].IsActive)
+	}
+}
+
+func TestGetPatchesNeedingDetail_ArchivedNotActive(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "archived new", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem", Archived: true,
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, Name: "non-archived new", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	refs := d.GetPatchesNeedingDetail(100)
+	if len(refs) != 2 {
+		t.Fatalf("got %d refs, want 2", len(refs))
+	}
+	if refs[0].ID != 101 || !refs[0].IsActive {
+		t.Errorf("first should be non-archived active, got id=%d active=%v",
+			refs[0].ID, refs[0].IsActive)
+	}
+	if refs[1].ID != 100 || refs[1].IsActive {
+		t.Errorf("archived should not be active, got id=%d active=%v",
+			refs[1].ID, refs[1].IsActive)
 	}
 }
 
@@ -1292,7 +1357,7 @@ func TestGetCoversNeedingDetail(t *testing.T) {
 	})
 	d.UpdateCoverDetail(99, "body", "{}")
 
-	ids := d.GetCoversNeedingDetail(nil)
+	ids := d.GetCoversNeedingDetail(100)
 	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("got %v, want [100]", ids)
 	}
@@ -1755,7 +1820,7 @@ func TestGetPatchesNeedingChecks(t *testing.T) {
 	})
 	d.MarkChecksFetched(102)
 
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 2 {
 		t.Fatalf("got %d refs, want 2 (102 already fetched)", len(refs))
 	}
@@ -1776,12 +1841,12 @@ func TestMarkChecksFetched(t *testing.T) {
 		ID: 100, Name: "test", Date: "2026-03-10",
 		State: "new", Submitter: "Lorem",
 	})
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 1 {
 		t.Fatalf("before: got %d refs, want 1", len(refs))
 	}
 	d.MarkChecksFetched(100)
-	refs = d.GetPatchesNeedingChecks([]string{"new"})
+	refs = d.GetPatchesNeedingChecks(100)
 	if len(refs) != 0 {
 		t.Errorf("after: got %d refs, want 0", len(refs))
 	}
@@ -1794,12 +1859,12 @@ func TestResetChecksFetched(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 	d.MarkChecksFetched(100)
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 0 {
 		t.Fatal("should not need checks after marking")
 	}
 	d.ResetChecksFetched(100)
-	refs = d.GetPatchesNeedingChecks([]string{"new"})
+	refs = d.GetPatchesNeedingChecks(100)
 	if len(refs) != 1 {
 		t.Errorf("got %d refs after reset, want 1", len(refs))
 	}
@@ -1821,7 +1886,7 @@ func TestStartupReset_ChecksWithoutDescriptions(t *testing.T) {
 	// Run the startup reset
 	d.RunResetChecksWithoutDescriptions()
 
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 1 {
 		t.Errorf("got %d refs, want 1 (reset because no description)",
 			len(refs))
@@ -1845,7 +1910,7 @@ func TestStartupReset_ChecksWithDescriptions_NoReset(t *testing.T) {
 	// Run the startup reset — should NOT reset
 	d.RunResetChecksWithoutDescriptions()
 
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 0 {
 		t.Errorf("got %d refs, want 0 (has description, no reset)",
 			len(refs))
@@ -1913,22 +1978,21 @@ func TestGetPatchesNeedingComments(t *testing.T) {
 		State: "new", Submitter: "Lorem",
 	})
 
-	states := []string{"new", "under-review"}
-	ids := d.GetPatchesNeedingComments(states)
+	ids := d.GetPatchesNeedingComments(100)
 	if len(ids) != 2 {
 		t.Fatalf("got %d, want 2", len(ids))
 	}
 
 	d.MarkCommentsFetched(100)
 
-	ids = d.GetPatchesNeedingComments(states)
+	ids = d.GetPatchesNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 101 {
 		t.Errorf("got %v, want [101]", ids)
 	}
 
 	d.MarkCommentsFetched(101)
 
-	ids = d.GetPatchesNeedingComments(states)
+	ids = d.GetPatchesNeedingComments(100)
 	if len(ids) != 0 {
 		t.Errorf("got %v, want empty", ids)
 	}
@@ -1949,8 +2013,7 @@ func TestGetPatchesNeedingComments_Priority(t *testing.T) {
 		State: "under-review", Submitter: "Lorem",
 	})
 
-	states := []string{"new", "under-review"}
-	ids := d.GetPatchesNeedingComments(states)
+	ids := d.GetPatchesNeedingComments(100)
 	if len(ids) != 3 {
 		t.Fatalf("got %d, want 3", len(ids))
 	}
@@ -1974,62 +2037,16 @@ func TestResetCommentsFetched(t *testing.T) {
 	})
 	d.MarkCommentsFetched(100)
 
-	states := []string{"new"}
-	ids := d.GetPatchesNeedingComments(states)
+	ids := d.GetPatchesNeedingComments(100)
 	if len(ids) != 0 {
 		t.Fatalf("should be empty after mark")
 	}
 
 	d.ResetCommentsFetched(100)
 
-	ids = d.GetPatchesNeedingComments(states)
+	ids = d.GetPatchesNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("got %v, want [100] after reset", ids)
-	}
-}
-
-func TestResetAllCommentsFetched(t *testing.T) {
-	d := openTestDB(t)
-	d.SavePatch(PatchRow{
-		ID: 100, Name: "p1", Date: "2026-03-10",
-		State: "new", Submitter: "Lorem",
-	})
-	d.SavePatch(PatchRow{
-		ID: 101, Name: "p2", Date: "2026-03-10",
-		State: "accepted", Submitter: "Lorem",
-	})
-	d.SavePatch(PatchRow{
-		ID: 102, Name: "p3", Date: "2026-03-10",
-		State: "under-review", Submitter: "Lorem",
-	})
-
-	d.MarkCommentsFetched(100)
-	d.MarkCommentsFetched(101)
-	d.MarkCommentsFetched(102)
-
-	// Reset only active states
-	d.ResetAllCommentsFetched([]string{"new", "under-review"})
-
-	states := []string{"new", "under-review", "accepted"}
-	ids := d.GetPatchesNeedingComments(states)
-
-	// 100 (new) and 102 (under-review) should be reset
-	// 101 (accepted) should still be marked
-	if len(ids) != 2 {
-		t.Fatalf("got %d, want 2", len(ids))
-	}
-	got := map[int]bool{}
-	for _, ref := range ids {
-		got[ref.ID] = true
-	}
-	if !got[100] {
-		t.Error("patch 100 (new) should be reset")
-	}
-	if !got[102] {
-		t.Error("patch 102 (under-review) should be reset")
-	}
-	if got[101] {
-		t.Error("patch 101 (accepted) should NOT be reset")
 	}
 }
 
@@ -2083,19 +2100,19 @@ func TestGetCoversNeedingComments(t *testing.T) {
 		Name: "Cover B", Date: "2026-03-11",
 	})
 
-	ids := d.GetCoversNeedingComments(nil)
+	ids := d.GetCoversNeedingComments(100)
 	if len(ids) != 2 {
 		t.Fatalf("len = %d, want 2", len(ids))
 	}
 
 	d.MarkCoverCommentsFetched(99)
-	ids = d.GetCoversNeedingComments(nil)
+	ids = d.GetCoversNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("after mark: ids = %v", ids)
 	}
 
 	d.MarkCoverCommentsFetched(100)
-	ids = d.GetCoversNeedingComments(nil)
+	ids = d.GetCoversNeedingComments(100)
 	if len(ids) != 0 {
 		t.Errorf("after mark all: ids = %v", ids)
 	}
@@ -2110,13 +2127,13 @@ func TestResetCoverCommentsFetched(t *testing.T) {
 	})
 
 	d.MarkCoverCommentsFetched(99)
-	ids := d.GetCoversNeedingComments(nil)
+	ids := d.GetCoversNeedingComments(100)
 	if len(ids) != 0 {
 		t.Fatalf("after mark: len = %d", len(ids))
 	}
 
 	d.ResetCoverCommentsFetched(99)
-	ids = d.GetCoversNeedingComments(nil)
+	ids = d.GetCoversNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 99 {
 		t.Errorf("after reset: ids = %v", ids)
 	}
@@ -2204,7 +2221,7 @@ func TestGetSeriesNeedingDetail(t *testing.T) {
 	d := openTestDB(t)
 
 	// No series — empty result
-	refs := d.GetSeriesNeedingDetail(nil)
+	refs := d.GetSeriesNeedingDetail(100)
 	if len(refs) != 0 {
 		t.Errorf("want empty, got %d", len(refs))
 	}
@@ -2213,7 +2230,7 @@ func TestGetSeriesNeedingDetail(t *testing.T) {
 	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
 	d.SaveSeriesSummary(51, "Dolor series", "2026-03-09", 1)
 
-	refs = d.GetSeriesNeedingDetail(nil)
+	refs = d.GetSeriesNeedingDetail(100)
 	if len(refs) != 2 {
 		t.Fatalf("want 2, got %d", len(refs))
 	}
@@ -2223,9 +2240,279 @@ func TestGetSeriesNeedingDetail(t *testing.T) {
 		ID: 50, Name: "Lorem series", Date: "2026-03-10",
 		Version: 1, Submitter: "Lorem", TotalPatches: 1,
 	})
-	refs = d.GetSeriesNeedingDetail(nil)
+	refs = d.GetSeriesNeedingDetail(100)
 	if len(refs) != 1 || refs[0].ID != 51 {
 		t.Errorf("want [51], got %v", refs)
+	}
+}
+
+func TestRecomputeActiveFlag_ActivePatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveCover(CoverRow{ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10"})
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.RecomputeActiveFlag(50)
+	refs := d.GetSeriesNeedingDetail(100)
+	if len(refs) == 0 || !refs[0].IsActive {
+		t.Error("series should be active")
+	}
+	crefs := d.GetCoversNeedingDetail(100)
+	if len(crefs) == 0 || !crefs[0].IsActive {
+		t.Error("cover should be active")
+	}
+}
+
+func TestRecomputeActiveFlag_TerminalPatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveCover(CoverRow{ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10"})
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.RecomputeActiveFlag(50)
+	refs := d.GetSeriesNeedingDetail(100)
+	if len(refs) == 0 || refs[0].IsActive {
+		t.Error("series should not be active")
+	}
+}
+
+func TestRecomputeActiveFlag_ArchivedActivePatch(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+		Archived: true,
+	})
+	d.RecomputeActiveFlag(50)
+	refs := d.GetSeriesNeedingDetail(100)
+	if len(refs) == 0 || refs[0].IsActive {
+		t.Error("archived active patch should not set flag")
+	}
+}
+
+func TestRecomputeActiveFlag_MixedPatches(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "p2",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.RecomputeActiveFlag(50)
+	refs := d.GetSeriesNeedingDetail(100)
+	if len(refs) == 0 || !refs[0].IsActive {
+		t.Error("one active patch should be enough to set flag")
+	}
+}
+
+func TestRecomputeActiveFlag_Transition(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveCover(CoverRow{ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10"})
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.RecomputeActiveFlag(50)
+	// Should be active
+	refs := d.GetCoversNeedingDetail(100)
+	if len(refs) == 0 || !refs[0].IsActive {
+		t.Fatal("should start active")
+	}
+	// Transition to terminal
+	d.UpdatePatchState(100, "accepted")
+	d.RecomputeActiveFlag(50)
+	refs = d.GetCoversNeedingDetail(100)
+	if len(refs) == 0 || refs[0].IsActive {
+		t.Error("should be terminal after state change")
+	}
+	// Transition back to active
+	d.UpdatePatchState(100, "under-review")
+	d.RecomputeActiveFlag(50)
+	refs = d.GetCoversNeedingDetail(100)
+	if len(refs) == 0 || !refs[0].IsActive {
+		t.Error("should be active again")
+	}
+}
+
+func TestRecomputeActiveFlag_DoesNotAffectOtherSeries(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "s2", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 51, Name: "p2",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.RecomputeAllActiveFlags()
+	// Recompute only series 50
+	d.UpdatePatchState(100, "accepted")
+	d.RecomputeActiveFlag(50)
+	// Series 51 should be unchanged (still terminal)
+	refs := d.GetSeriesNeedingDetail(100)
+	for _, r := range refs {
+		if r.ID == 51 && r.IsActive {
+			t.Error("series 51 should not be affected")
+		}
+	}
+}
+
+func TestRecomputeActiveFlag_AllActiveStates(t *testing.T) {
+	for _, state := range ActiveStates {
+		t.Run(state, func(t *testing.T) {
+			d := openTestDB(t)
+			d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+			d.SavePatch(PatchRow{
+				ID: 100, SeriesID: 50, Name: "p1",
+				Date: "2026-03-10", State: state, Submitter: "Lorem",
+			})
+			d.RecomputeActiveFlag(50)
+			refs := d.GetSeriesNeedingDetail(100)
+			if len(refs) == 0 || !refs[0].IsActive {
+				t.Errorf("state %q should be active", state)
+			}
+		})
+	}
+}
+
+func TestRecomputeActiveFlag_TerminalStates(t *testing.T) {
+	terminal := []string{
+		"accepted", "rejected", "superseded", "rfc",
+		"not-applicable", "changes-requested", "deferred",
+		"handled-elsewhere",
+	}
+	for _, state := range terminal {
+		t.Run(state, func(t *testing.T) {
+			d := openTestDB(t)
+			d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+			d.SavePatch(PatchRow{
+				ID: 100, SeriesID: 50, Name: "p1",
+				Date: "2026-03-10", State: state, Submitter: "Lorem",
+			})
+			d.RecomputeActiveFlag(50)
+			refs := d.GetSeriesNeedingDetail(100)
+			if len(refs) > 0 && refs[0].IsActive {
+				t.Errorf("state %q should not be active", state)
+			}
+		})
+	}
+}
+
+func TestRecomputeActiveFlag_NonexistentSeries(t *testing.T) {
+	d := openTestDB(t)
+	// Should not panic or error
+	d.RecomputeActiveFlag(999999)
+}
+
+func TestRecomputeAllActiveFlags_Basic(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "active", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "terminal", "2026-03-10", 1)
+	d.SaveCover(CoverRow{ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10"})
+	d.SaveCover(CoverRow{ID: 98, SeriesID: 51, Name: "c2", Date: "2026-03-10"})
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 51, Name: "p2",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.RecomputeAllActiveFlags()
+
+	srefs := d.GetSeriesNeedingDetail(100)
+	if len(srefs) < 2 {
+		t.Fatalf("want 2 series, got %d", len(srefs))
+	}
+	if srefs[0].ID != 50 || !srefs[0].IsActive {
+		t.Errorf("first should be active series 50")
+	}
+	if srefs[1].ID != 51 || srefs[1].IsActive {
+		t.Errorf("second should be terminal series 51")
+	}
+	crefs := d.GetCoversNeedingDetail(100)
+	if len(crefs) < 2 {
+		t.Fatalf("want 2 covers, got %d", len(crefs))
+	}
+	if crefs[0].ID != 99 || !crefs[0].IsActive {
+		t.Errorf("first cover should be active")
+	}
+	if crefs[1].ID != 98 || crefs[1].IsActive {
+		t.Errorf("second cover should be terminal")
+	}
+}
+
+func TestRecomputeAllActiveFlags_ResetsStaleFlags(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	// Manually set stale flag
+	d.RecomputeActiveFlag(50) // should set to 0
+	// Force it to 1 (stale)
+	d.conn.Exec("UPDATE series SET has_active_patch = 1 WHERE id = 50")
+	// Bulk recompute should fix it
+	d.RecomputeAllActiveFlags()
+	refs := d.GetSeriesNeedingDetail(100)
+	if len(refs) > 0 && refs[0].IsActive {
+		t.Error("stale flag should be corrected to 0")
+	}
+}
+
+func TestGetCoversNeedingDetail_FlagBasedPriority(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "active", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "terminal", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 51, Name: "p2",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10"})
+	d.SaveCover(CoverRow{ID: 98, SeriesID: 51, Name: "c2", Date: "2026-03-10"})
+	d.RecomputeAllActiveFlags()
+
+	refs := d.GetCoversNeedingDetail(1)
+	if len(refs) != 1 || refs[0].ID != 99 || !refs[0].IsActive {
+		t.Errorf("LIMIT 1 should return the active cover, got %v", refs)
+	}
+}
+
+func TestGetCoversNeedingComments_FlagBasedPriority(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "active", "2026-03-10", 1)
+	d.SaveSeriesSummary(51, "terminal", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 51, Name: "p2",
+		Date: "2026-03-10", State: "accepted", Submitter: "Lorem",
+	})
+	d.SaveCover(CoverRow{ID: 99, SeriesID: 50, Name: "c1", Date: "2026-03-10"})
+	d.SaveCover(CoverRow{ID: 98, SeriesID: 51, Name: "c2", Date: "2026-03-10"})
+	d.RecomputeAllActiveFlags()
+
+	refs := d.GetCoversNeedingComments(1)
+	if len(refs) != 1 || refs[0].ID != 99 || !refs[0].IsActive {
+		t.Errorf("LIMIT 1 should return the active cover, got %v", refs)
 	}
 }
 
@@ -2246,8 +2533,9 @@ func TestGetSeriesNeedingDetail_ActiveFirst(t *testing.T) {
 		Name: "p2", Date: "2026-03-09",
 		State: "accepted", Submitter: "Dolor",
 	})
+	d.RecomputeAllActiveFlags()
 
-	refs := d.GetSeriesNeedingDetail([]string{"new", "under-review"})
+	refs := d.GetSeriesNeedingDetail(100)
 	if len(refs) != 2 {
 		t.Fatalf("want 2, got %d", len(refs))
 	}
@@ -2266,7 +2554,7 @@ func TestSaveSeries_SetsDetailFetched(t *testing.T) {
 
 	// SaveSeriesSummary — detail_fetched stays 0
 	d.SaveSeriesSummary(50, "Lorem", "2026-03-10", 1)
-	refs := d.GetSeriesNeedingDetail(nil)
+	refs := d.GetSeriesNeedingDetail(100)
 	if len(refs) != 1 {
 		t.Fatalf("summary should leave detail_fetched=0, got %d needing", len(refs))
 	}
@@ -2276,7 +2564,7 @@ func TestSaveSeries_SetsDetailFetched(t *testing.T) {
 		ID: 50, Name: "Lorem", Date: "2026-03-10",
 		Version: 1, Submitter: "Lorem Ipsum", TotalPatches: 2,
 	})
-	refs = d.GetSeriesNeedingDetail(nil)
+	refs = d.GetSeriesNeedingDetail(100)
 	if len(refs) != 0 {
 		t.Errorf("SaveSeries should set detail_fetched=1, got %d needing", len(refs))
 	}

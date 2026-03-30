@@ -1,6 +1,10 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS maintainers (
@@ -22,10 +26,11 @@ CREATE TABLE IF NOT EXISTS series (
     web_url           TEXT,
     mbox_url          TEXT,
     complete          INTEGER DEFAULT 0,
-    total_patches     INTEGER DEFAULT 0,
-    received_patches  INTEGER DEFAULT 0,
-    detail_fetched    INTEGER DEFAULT 0,
-    updated_at        TEXT
+    total_patches      INTEGER DEFAULT 0,
+    received_patches   INTEGER DEFAULT 0,
+    detail_fetched     INTEGER DEFAULT 0,
+    has_active_patch   INTEGER DEFAULT 0,
+    updated_at         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS patches (
@@ -78,7 +83,8 @@ CREATE TABLE IF NOT EXISTS covers (
     headers           TEXT DEFAULT '',
     mbox_content      TEXT DEFAULT '',
     detail_fetched    INTEGER DEFAULT 0,
-    comments_fetched  INTEGER DEFAULT 0
+    comments_fetched  INTEGER DEFAULT 0,
+    has_active_patch  INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS checks (
@@ -188,6 +194,55 @@ var alterStatements = []string{
 	`ALTER TABLE patches DROP COLUMN mbox_content`,
 	`ALTER TABLE covers DROP COLUMN mbox_content`,
 	`ALTER TABLE series ADD COLUMN detail_fetched INTEGER DEFAULT 0`,
+	// Normalize NULLs to 0 for partial index compatibility.
+	`UPDATE patches SET checks_fetched = 0 WHERE checks_fetched IS NULL`,
+	`UPDATE patches SET detail_fetched = 0 WHERE detail_fetched IS NULL`,
+	`UPDATE covers SET detail_fetched = 0 WHERE detail_fetched IS NULL`,
+	// Denormalized active flag for fast cover/series priority lookups.
+	`ALTER TABLE series ADD COLUMN has_active_patch INTEGER DEFAULT 0`,
+	`ALTER TABLE covers ADD COLUMN has_active_patch INTEGER DEFAULT 0`,
+	// Drop old simple partial indexes (replaced by compound covering indexes).
+	`DROP INDEX IF EXISTS idx_patches_comments_unfetched`,
+	`DROP INDEX IF EXISTS idx_patches_detail_unfetched`,
+	`DROP INDEX IF EXISTS idx_patches_checks_unfetched`,
+	`DROP INDEX IF EXISTS idx_covers_comments_unfetched`,
+	`DROP INDEX IF EXISTS idx_covers_detail_unfetched`,
+	`DROP INDEX IF EXISTS idx_series_detail_unfetched`,
+	// Patches: active step (SEARCH by state, covering with series_id).
+	`CREATE INDEX IF NOT EXISTS idx_patches_comments_active ON patches (state, id DESC, series_id) WHERE comments_fetched = 0 AND archived = 0`,
+	`CREATE INDEX IF NOT EXISTS idx_patches_detail_active ON patches (state, id DESC, series_id) WHERE detail_fetched = 0 AND archived = 0`,
+	`CREATE INDEX IF NOT EXISTS idx_patches_checks_active ON patches (state, id DESC, series_id) WHERE checks_fetched = 0 AND archived = 0`,
+	// Patches: terminal step (covering scan, first entry matches).
+	`CREATE INDEX IF NOT EXISTS idx_patches_comments_unfetched ON patches (id DESC, series_id) WHERE comments_fetched = 0`,
+	`CREATE INDEX IF NOT EXISTS idx_patches_detail_unfetched ON patches (id DESC, series_id) WHERE detail_fetched = 0`,
+	`CREATE INDEX IF NOT EXISTS idx_patches_checks_unfetched ON patches (id DESC, series_id) WHERE checks_fetched = 0`,
+	// Active series lookup (for RecomputeActiveFlag).
+	`CREATE INDEX IF NOT EXISTS idx_patches_active_series ON patches (state, series_id) WHERE archived = 0`,
+	// Covers: by has_active_patch flag (SEARCH, no subquery).
+	`CREATE INDEX IF NOT EXISTS idx_covers_detail_unfetched ON covers (has_active_patch, id DESC, series_id) WHERE detail_fetched = 0`,
+	`CREATE INDEX IF NOT EXISTS idx_covers_comments_unfetched ON covers (has_active_patch, id DESC, series_id) WHERE comments_fetched = 0`,
+	// Series: by has_active_patch flag.
+	`CREATE INDEX IF NOT EXISTS idx_series_detail_unfetched ON series (has_active_patch, id DESC) WHERE detail_fetched = 0`,
+}
+
+func recomputeAllActiveFlags(db *sql.DB) {
+	ph := make([]string, len(ActiveStates))
+	args := make([]interface{}, len(ActiveStates))
+	for i, s := range ActiveStates {
+		ph[i] = "?"
+		args[i] = s
+	}
+	inClause := strings.Join(ph, ",")
+	db.Exec("UPDATE series SET has_active_patch = 0 WHERE has_active_patch != 0")
+	db.Exec("UPDATE covers SET has_active_patch = 0 WHERE has_active_patch != 0")
+	q := fmt.Sprintf(`UPDATE series SET has_active_patch = 1
+		WHERE id IN (SELECT DISTINCT series_id FROM patches
+		WHERE state IN (%s) AND archived = 0)`, inClause)
+	db.Exec(q, args...)
+	q = fmt.Sprintf(`UPDATE covers SET has_active_patch = 1
+		WHERE series_id IN (SELECT DISTINCT series_id FROM patches
+		WHERE state IN (%s) AND archived = 0)`, inClause)
+	db.Exec(q, args...)
 }
 
 func migrate(db *sql.DB) error {
@@ -202,6 +257,7 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	db.Exec(resetChecksWithoutDescriptions)
+	recomputeAllActiveFlags(db)
 	// Bump this version when comment schema changes require re-fetch
 	const commentSchemaVersion = "2"
 	var ver string

@@ -400,6 +400,7 @@ func (s *Syncer) initialSync(ctx context.Context) {
 
 	s.status.Set(status.Sync, "Fetching events...", true)
 	s.fetchInitialEvents(ctx)
+	s.db.RecomputeAllActiveFlags()
 	s.status.Clear(status.Sync)
 	s.db.SetSyncState("initial_sync_complete", "true")
 }
@@ -551,13 +552,14 @@ func (s *Syncer) fetchEventsSince(
 			}
 			log.Printf("SYNC: event %s: %s", ev.Category, eventSummary(ev))
 			seriesID := seriesIDFromEvent(ev)
-			if err := s.processEvent(ev, seriesID); err != nil {
-				log.Printf("SYNC: process event %d: %v", ev.ID, err)
-			}
 			if seriesID == 0 {
 				seriesID = s.seriesIDForEventPatch(ev)
 			}
+			if err := s.processEvent(ev, seriesID); err != nil {
+				log.Printf("SYNC: process event %d: %v", ev.ID, err)
+			}
 			if seriesID != 0 {
+				s.db.RecomputeActiveFlag(seriesID)
 				affected[seriesID] = true
 			}
 			s.db.SetSyncState("last_event_date", ev.Date)
@@ -707,7 +709,7 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 }
 
 func (s *Syncer) fetchNextComments(ctx context.Context) int {
-	refs := s.db.GetPatchesNeedingComments(s.cfg.States)
+	refs := s.db.GetPatchesNeedingComments(len(s.commentSkip) + 1)
 	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -735,7 +737,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) int {
 }
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) int {
-	refs := s.db.GetCoversNeedingComments(s.cfg.States)
+	refs := s.db.GetCoversNeedingComments(len(s.commentSkip) + 1)
 	for i, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -888,7 +890,7 @@ func (s *Syncer) checkArchiveMonth(
 }
 
 func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
-	refs := s.db.GetPatchesNeedingDetail(s.cfg.States)
+	refs := s.db.GetPatchesNeedingDetail(len(s.detailSkip) + 1)
 	for i, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -916,7 +918,7 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 }
 
 func (s *Syncer) fetchNextCoverDetail(ctx context.Context) int {
-	refs := s.db.GetCoversNeedingDetail(s.cfg.States)
+	refs := s.db.GetCoversNeedingDetail(len(s.detailSkip) + 1)
 	for i, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -953,6 +955,7 @@ func (s *Syncer) backfillHistory(ctx context.Context) {
 	target := s.cfg.HistoryLimit.Before().Format("2006-01-02T15:04:05")
 	s.fetchPatchesSince(ctx, target, status.History)
 	s.fetchSeriesSince(ctx, target, status.History)
+	s.db.RecomputeAllActiveFlags()
 	s.status.Clear(status.History)
 }
 
@@ -1055,7 +1058,7 @@ func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey s
 }
 
 func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
-	refs := s.db.GetSeriesNeedingDetail(s.cfg.States)
+	refs := s.db.GetSeriesNeedingDetail(len(s.seriesSkip) + 1)
 	for i, ref := range refs {
 		if t, ok := s.seriesSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -1107,7 +1110,7 @@ func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
 }
 
 func (s *Syncer) fetchNextChecks(ctx context.Context) int {
-	refs := s.db.GetPatchesNeedingChecks(s.cfg.States)
+	refs := s.db.GetPatchesNeedingChecks(len(s.checkSkip) + 1)
 	for i, ref := range refs {
 		if t, ok := s.checkSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
@@ -1209,6 +1212,9 @@ func (s *Syncer) fetchDetailForPatch(
 	s.db.SavePatch(patchToRow(detail.Patch))
 	for _, ss := range detail.Series {
 		s.db.SaveSeriesSummary(ss.ID, ss.Name, ss.Date, ss.Version)
+	}
+	if seriesID != 0 {
+		s.db.RecomputeActiveFlag(seriesID)
 	}
 	prefixes, _ := json.Marshal(detail.Prefixes)
 	headers, _ := json.Marshal(detail.Headers)

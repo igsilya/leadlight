@@ -327,45 +327,26 @@ func (d *DB) SaveCheck(c CheckRow) error {
 	return err
 }
 
-func (d *DB) GetPatchesNeedingChecks(
-	priorityStates []string,
-) []FetchRef {
-	if len(priorityStates) == 0 {
-		priorityStates = []string{"new", "under-review"}
-	}
-	placeholders := make([]string, len(priorityStates))
-	args := make([]interface{}, len(priorityStates))
-	for i, s := range priorityStates {
-		placeholders[i] = "?"
-		args[i] = s
-	}
-	query := fmt.Sprintf(`
-		SELECT id, COALESCE(series_id, 0),
-			CASE WHEN state IN (%s) AND archived = 0
-				THEN 1 ELSE 0 END
+func (d *DB) GetPatchesNeedingChecks(limit int) []FetchRef {
+	ph, args := activeStateFilter()
+	q1 := fmt.Sprintf(`
+		SELECT id, COALESCE(series_id, 0), 1
 		FROM patches
-		WHERE COALESCE(checks_fetched, 0) = 0
-		ORDER BY
-			CASE WHEN state IN (%s) AND archived = 0
-				THEN 0 ELSE 1 END,
-			id DESC`,
-		strings.Join(placeholders, ","),
-		strings.Join(placeholders, ","))
-	doubleArgs := append(args, args...)
-	rows, err := d.conn.Query(query, doubleArgs...)
-	if err != nil {
-		return nil
+		WHERE checks_fetched = 0
+			AND state IN (%s) AND archived = 0
+		ORDER BY id DESC LIMIT ?`, ph)
+	refs := scanFetchRefs(d.conn.Query(q1, append(args, limit)...))
+	if len(refs) >= limit {
+		return refs
 	}
-	defer rows.Close()
-	var refs []FetchRef
-	for rows.Next() {
-		var ref FetchRef
-		var active int
-		rows.Scan(&ref.ID, &ref.SeriesID, &active)
-		ref.IsActive = active == 1
-		refs = append(refs, ref)
-	}
-	return refs
+	q2 := fmt.Sprintf(`
+		SELECT id, COALESCE(series_id, 0), 0
+		FROM patches
+		WHERE checks_fetched = 0
+			AND NOT (state IN (%s) AND archived = 0)
+		ORDER BY id DESC LIMIT ?`, ph)
+	return append(refs,
+		scanFetchRefs(d.conn.Query(q2, append(args, limit-len(refs))...))...)
 }
 
 func (d *DB) MarkChecksFetched(patchID int) error {
@@ -667,7 +648,7 @@ const patchSelectSQL = `
 		COALESCE(diff, ''),
 		COALESCE(headers, ''),
 		COALESCE(prefixes, ''),
-		COALESCE(detail_fetched, 0),
+		detail_fetched,
 		COALESCE(updated_at, '')
 	FROM patches`
 
@@ -760,134 +741,126 @@ func (d *DB) GetDelegateDisplayNames() map[string]string {
 // FetchRef identifies an item that needs fetching, along with its
 // parent series. Used by the syncer to track which items are being
 // fetched and to show per-row spinners in the TUI.
+// ActiveStates defines which patch states are considered "active"
+// for background fetch prioritization. Patches in these states
+// (and not archived) are fetched before terminal-state patches.
+var ActiveStates = []string{
+	"new", "under-review", "needs-ack", "awaiting-upstream",
+}
+
+func activeStateFilter() (string, []interface{}) {
+	ph := make([]string, len(ActiveStates))
+	args := make([]interface{}, len(ActiveStates))
+	for i, s := range ActiveStates {
+		ph[i] = "?"
+		args[i] = s
+	}
+	return strings.Join(ph, ","), args
+}
+
+func (d *DB) RecomputeActiveFlag(seriesID int) {
+	ph, args := activeStateFilter()
+	var has int
+	d.conn.QueryRow(fmt.Sprintf(
+		`SELECT EXISTS (SELECT 1 FROM patches
+		 WHERE series_id = ? AND archived = 0 AND state IN (%s))`, ph),
+		append([]interface{}{seriesID}, args...)...).Scan(&has)
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec("UPDATE series SET has_active_patch = ? WHERE id = ?",
+		has, seriesID)
+	d.conn.Exec("UPDATE covers SET has_active_patch = ? WHERE series_id = ?",
+		has, seriesID)
+}
+
+func (d *DB) RecomputeAllActiveFlags() {
+	ph, args := activeStateFilter()
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec("UPDATE series SET has_active_patch = 0 WHERE has_active_patch != 0")
+	d.conn.Exec("UPDATE covers SET has_active_patch = 0 WHERE has_active_patch != 0")
+	q := fmt.Sprintf(`UPDATE series SET has_active_patch = 1
+		WHERE id IN (SELECT DISTINCT series_id FROM patches
+		WHERE state IN (%s) AND archived = 0)`, ph)
+	d.conn.Exec(q, args...)
+	q = fmt.Sprintf(`UPDATE covers SET has_active_patch = 1
+		WHERE series_id IN (SELECT DISTINCT series_id FROM patches
+		WHERE state IN (%s) AND archived = 0)`, ph)
+	d.conn.Exec(q, args...)
+}
+
 type FetchRef struct {
 	ID       int  // patch or cover ID
 	SeriesID int  // parent series ID (0 if unknown)
 	IsActive bool // true if in an active state (e.g., new, under-review)
 }
 
-func (d *DB) GetPatchesNeedingDetail(
-	priorityStates []string,
-) []FetchRef {
-	if len(priorityStates) == 0 {
-		priorityStates = []string{"new", "under-review"}
+func scanFetchRefs(rows *sql.Rows, err error) []FetchRef {
+	if err != nil {
+		return nil
 	}
-	placeholders := make([]string, len(priorityStates))
-	args := make([]interface{}, len(priorityStates))
-	for i, s := range priorityStates {
-		placeholders[i] = "?"
-		args[i] = s
+	defer rows.Close()
+	var refs []FetchRef
+	for rows.Next() {
+		var ref FetchRef
+		var active int
+		rows.Scan(&ref.ID, &ref.SeriesID, &active)
+		ref.IsActive = active == 1
+		refs = append(refs, ref)
 	}
-	query := fmt.Sprintf(`
-		SELECT id, COALESCE(series_id, 0),
-			CASE WHEN state IN (%s) AND archived = 0
-				THEN 1 ELSE 0 END
+	return refs
+}
+
+func (d *DB) GetPatchesNeedingDetail(limit int) []FetchRef {
+	ph, args := activeStateFilter()
+	q1 := fmt.Sprintf(`
+		SELECT id, COALESCE(series_id, 0), 1
 		FROM patches
-		WHERE COALESCE(detail_fetched, 0) = 0
-		ORDER BY
-			CASE WHEN state IN (%s) AND archived = 0
-				THEN 0 ELSE 1 END,
-			id DESC`,
-		strings.Join(placeholders, ","),
-		strings.Join(placeholders, ","))
-	doubleArgs := append(args, args...)
-	rows, err := d.conn.Query(query, doubleArgs...)
-	if err != nil {
-		return nil
+		WHERE detail_fetched = 0
+			AND state IN (%s) AND archived = 0
+		ORDER BY id DESC LIMIT ?`, ph)
+	refs := scanFetchRefs(d.conn.Query(q1, append(args, limit)...))
+	if len(refs) >= limit {
+		return refs
 	}
-	defer rows.Close()
-	var refs []FetchRef
-	for rows.Next() {
-		var ref FetchRef
-		var active int
-		rows.Scan(&ref.ID, &ref.SeriesID, &active)
-		ref.IsActive = active == 1
-		refs = append(refs, ref)
-	}
-	return refs
+	q2 := fmt.Sprintf(`
+		SELECT id, COALESCE(series_id, 0), 0
+		FROM patches
+		WHERE detail_fetched = 0
+			AND NOT (state IN (%s) AND archived = 0)
+		ORDER BY id DESC LIMIT ?`, ph)
+	return append(refs,
+		scanFetchRefs(d.conn.Query(q2, append(args, limit-len(refs))...))...)
 }
 
-func (d *DB) GetCoversNeedingDetail(
-	priorityStates []string,
-) []FetchRef {
-	if len(priorityStates) == 0 {
-		priorityStates = []string{"new", "under-review"}
+func (d *DB) GetCoversNeedingDetail(limit int) []FetchRef {
+	q1 := `SELECT id, series_id, 1 FROM covers
+		WHERE detail_fetched = 0 AND has_active_patch = 1
+		ORDER BY id DESC LIMIT ?`
+	refs := scanFetchRefs(d.conn.Query(q1, limit))
+	if len(refs) >= limit {
+		return refs
 	}
-	placeholders := make([]string, len(priorityStates))
-	args := make([]interface{}, len(priorityStates))
-	for i, s := range priorityStates {
-		placeholders[i] = "?"
-		args[i] = s
-	}
-	stateCase := fmt.Sprintf(
-		"CASE WHEN p.state IN (%s) AND p.archived = 0 THEN 0 ELSE 1 END",
-		strings.Join(placeholders, ","))
-	query := fmt.Sprintf(`
-		SELECT cv.id, cv.series_id,
-			CASE WHEN (SELECT MIN(%s) FROM patches p
-				WHERE p.series_id = cv.series_id) = 0
-			THEN 1 ELSE 0 END
-		FROM covers cv
-		WHERE COALESCE(cv.detail_fetched, 0) = 0
-		ORDER BY
-			(SELECT MIN(%s) FROM patches p
-			 WHERE p.series_id = cv.series_id),
-			cv.id DESC`,
-		stateCase, stateCase)
-	tripleArgs := append(append(args, args...), args...)
-	rows, err := d.conn.Query(query, tripleArgs...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var refs []FetchRef
-	for rows.Next() {
-		var ref FetchRef
-		var active int
-		rows.Scan(&ref.ID, &ref.SeriesID, &active)
-		ref.IsActive = active == 1
-		refs = append(refs, ref)
-	}
-	return refs
+	q2 := `SELECT id, series_id, 0 FROM covers
+		WHERE detail_fetched = 0 AND has_active_patch = 0
+		ORDER BY id DESC LIMIT ?`
+	return append(refs,
+		scanFetchRefs(d.conn.Query(q2, limit-len(refs)))...)
 }
 
-func (d *DB) GetSeriesNeedingDetail(priorityStates []string) []FetchRef {
-	if len(priorityStates) == 0 {
-		priorityStates = []string{"new", "under-review"}
+func (d *DB) GetSeriesNeedingDetail(limit int) []FetchRef {
+	q1 := `SELECT id, id, 1 FROM series
+		WHERE detail_fetched = 0 AND has_active_patch = 1
+		ORDER BY id DESC LIMIT ?`
+	refs := scanFetchRefs(d.conn.Query(q1, limit))
+	if len(refs) >= limit {
+		return refs
 	}
-	placeholders := make([]string, len(priorityStates))
-	args := make([]interface{}, len(priorityStates))
-	for i, s := range priorityStates {
-		placeholders[i] = "?"
-		args[i] = s
-	}
-	activeExists := fmt.Sprintf(
-		"EXISTS (SELECT 1 FROM patches p WHERE p.series_id = s.id AND p.state IN (%s) AND p.archived = 0)",
-		strings.Join(placeholders, ","))
-	query := fmt.Sprintf(`
-		SELECT s.id, s.id,
-			CASE WHEN %s THEN 1 ELSE 0 END
-		FROM series s
-		WHERE s.detail_fetched = 0
-		ORDER BY
-			CASE WHEN %s THEN 0 ELSE 1 END,
-			s.id DESC`,
-		activeExists, activeExists)
-	tripleArgs := append(append(args, args...), args...)
-	rows, err := d.conn.Query(query, tripleArgs...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var refs []FetchRef
-	for rows.Next() {
-		var ref FetchRef
-		var active int
-		rows.Scan(&ref.ID, &ref.SeriesID, &active)
-		ref.IsActive = active == 1
-		refs = append(refs, ref)
-	}
-	return refs
+	q2 := `SELECT id, id, 0 FROM series
+		WHERE detail_fetched = 0 AND has_active_patch = 0
+		ORDER BY id DESC LIMIT ?`
+	return append(refs,
+		scanFetchRefs(d.conn.Query(q2, limit-len(refs)))...)
 }
 
 type TagRow struct {
@@ -1260,47 +1233,26 @@ func (d *DB) GetOldestPatchDate() string {
 	return date
 }
 
-func (d *DB) GetPatchesNeedingComments(
-	priorityStates []string,
-) []FetchRef {
-	if len(priorityStates) == 0 {
-		priorityStates = []string{"new", "under-review"}
-	}
-	placeholders := make([]string, len(priorityStates))
-	args := make([]interface{}, len(priorityStates))
-	for i, s := range priorityStates {
-		placeholders[i] = "?"
-		args[i] = s
-	}
-	query := fmt.Sprintf(`
-		SELECT id, COALESCE(series_id, 0),
-			CASE WHEN state IN (%s) AND archived = 0
-				THEN 1 ELSE 0 END
+func (d *DB) GetPatchesNeedingComments(limit int) []FetchRef {
+	ph, args := activeStateFilter()
+	q1 := fmt.Sprintf(`
+		SELECT id, COALESCE(series_id, 0), 1
 		FROM patches
 		WHERE comments_fetched = 0
-		ORDER BY
-			CASE WHEN state IN (%s) AND archived = 0
-				THEN 0 ELSE 1 END,
-			id DESC`,
-		strings.Join(placeholders, ","),
-		strings.Join(placeholders, ","))
-
-	doubleArgs := append(args, args...)
-	rows, err := d.conn.Query(query, doubleArgs...)
-	if err != nil {
-		return nil
+			AND state IN (%s) AND archived = 0
+		ORDER BY id DESC LIMIT ?`, ph)
+	refs := scanFetchRefs(d.conn.Query(q1, append(args, limit)...))
+	if len(refs) >= limit {
+		return refs
 	}
-	defer rows.Close()
-
-	var refs []FetchRef
-	for rows.Next() {
-		var ref FetchRef
-		var active int
-		rows.Scan(&ref.ID, &ref.SeriesID, &active)
-		ref.IsActive = active == 1
-		refs = append(refs, ref)
-	}
-	return refs
+	q2 := fmt.Sprintf(`
+		SELECT id, COALESCE(series_id, 0), 0
+		FROM patches
+		WHERE comments_fetched = 0
+			AND NOT (state IN (%s) AND archived = 0)
+		ORDER BY id DESC LIMIT ?`, ph)
+	return append(refs,
+		scanFetchRefs(d.conn.Query(q2, append(args, limit-len(refs))...))...)
 }
 
 func (d *DB) MarkCommentsFetched(patchID int) error {
@@ -1318,25 +1270,6 @@ func (d *DB) ResetCommentsFetched(patchID int) error {
 	_, err := d.conn.Exec(
 		"UPDATE patches SET comments_fetched = 0 WHERE id = ?",
 		patchID)
-	return err
-}
-
-func (d *DB) ResetAllCommentsFetched(states []string) error {
-	d.writeMu.Lock()
-	defer d.writeMu.Unlock()
-	if len(states) == 0 {
-		return nil
-	}
-	placeholders := make([]string, len(states))
-	args := make([]interface{}, len(states))
-	for i, s := range states {
-		placeholders[i] = "?"
-		args[i] = s
-	}
-	query := fmt.Sprintf(
-		"UPDATE patches SET comments_fetched = 0 WHERE state IN (%s) AND archived = 0",
-		strings.Join(placeholders, ","))
-	_, err := d.conn.Exec(query, args...)
 	return err
 }
 
@@ -1424,49 +1357,19 @@ func (d *DB) GetCommentsForCover(coverID int) []CommentRow {
 	return result
 }
 
-func (d *DB) GetCoversNeedingComments(
-	priorityStates []string,
-) []FetchRef {
-	if len(priorityStates) == 0 {
-		priorityStates = []string{"new", "under-review"}
+func (d *DB) GetCoversNeedingComments(limit int) []FetchRef {
+	q1 := `SELECT id, series_id, 1 FROM covers
+		WHERE comments_fetched = 0 AND has_active_patch = 1
+		ORDER BY id DESC LIMIT ?`
+	refs := scanFetchRefs(d.conn.Query(q1, limit))
+	if len(refs) >= limit {
+		return refs
 	}
-	placeholders := make([]string, len(priorityStates))
-	args := make([]interface{}, len(priorityStates))
-	for i, s := range priorityStates {
-		placeholders[i] = "?"
-		args[i] = s
-	}
-	stateCase := fmt.Sprintf(
-		"CASE WHEN p.state IN (%s) AND p.archived = 0 THEN 0 ELSE 1 END",
-		strings.Join(placeholders, ","))
-	query := fmt.Sprintf(`
-		SELECT cv.id, cv.series_id,
-			CASE WHEN (SELECT MIN(%s) FROM patches p
-				WHERE p.series_id = cv.series_id) = 0
-			THEN 1 ELSE 0 END
-		FROM covers cv
-		WHERE cv.comments_fetched = 0
-		ORDER BY
-			(SELECT MIN(%s) FROM patches p
-			 WHERE p.series_id = cv.series_id),
-			cv.id DESC`,
-		stateCase, stateCase)
-	tripleArgs := append(append(args, args...), args...)
-	rows, err := d.conn.Query(query, tripleArgs...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var refs []FetchRef
-	for rows.Next() {
-		var ref FetchRef
-		var active int
-		rows.Scan(&ref.ID, &ref.SeriesID, &active)
-		ref.IsActive = active == 1
-		refs = append(refs, ref)
-	}
-	return refs
+	q2 := `SELECT id, series_id, 0 FROM covers
+		WHERE comments_fetched = 0 AND has_active_patch = 0
+		ORDER BY id DESC LIMIT ?`
+	return append(refs,
+		scanFetchRefs(d.conn.Query(q2, limit-len(refs)))...)
 }
 
 func (d *DB) MarkCoverCommentsFetched(coverID int) error {
@@ -1490,7 +1393,7 @@ func (d *DB) ResetCoverCommentsFetched(coverID int) error {
 func (d *DB) NeedsPatchDetail(patchID int) bool {
 	var fetched int
 	err := d.conn.QueryRow(
-		"SELECT COALESCE(detail_fetched, 0) FROM patches WHERE id = ?",
+		"SELECT detail_fetched FROM patches WHERE id = ?",
 		patchID).Scan(&fetched)
 	return err == nil && fetched == 0
 }
@@ -1498,7 +1401,7 @@ func (d *DB) NeedsPatchDetail(patchID int) bool {
 func (d *DB) NeedsCoverDetail(coverID int) bool {
 	var fetched int
 	err := d.conn.QueryRow(
-		"SELECT COALESCE(detail_fetched, 0) FROM covers WHERE id = ?",
+		"SELECT detail_fetched FROM covers WHERE id = ?",
 		coverID).Scan(&fetched)
 	return err == nil && fetched == 0
 }
@@ -1506,7 +1409,7 @@ func (d *DB) NeedsCoverDetail(coverID int) bool {
 func (d *DB) NeedsPatchChecks(patchID int) bool {
 	var fetched int
 	err := d.conn.QueryRow(
-		"SELECT COALESCE(checks_fetched, 0) FROM patches WHERE id = ?",
+		"SELECT checks_fetched FROM patches WHERE id = ?",
 		patchID).Scan(&fetched)
 	return err == nil && fetched == 0
 }

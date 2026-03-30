@@ -814,7 +814,7 @@ func TestFetchNextComments_Progresses(t *testing.T) {
 	if !hasAcked {
 		t.Error("patch 100 should have acked tag")
 	}
-	needs := d.GetPatchesNeedingComments([]string{"new"})
+	needs := d.GetPatchesNeedingComments(100)
 	if len(needs) != 0 {
 		t.Errorf("still needing comments: %v", needs)
 	}
@@ -838,7 +838,7 @@ func TestProcessEvent_PatchCommentCreated(t *testing.T) {
 	d.MarkCommentsFetched(100)
 
 	// Verify it's marked as fetched
-	ids := d.GetPatchesNeedingComments([]string{"new"})
+	ids := d.GetPatchesNeedingComments(100)
 	if len(ids) != 0 {
 		t.Fatal("should be fetched before event")
 	}
@@ -858,7 +858,7 @@ func TestProcessEvent_PatchCommentCreated(t *testing.T) {
 	}
 
 	// Should be reset — needs re-fetch
-	ids = d.GetPatchesNeedingComments([]string{"new"})
+	ids = d.GetPatchesNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("got %v, want [100] (reset by event)",
 			ids)
@@ -874,7 +874,7 @@ func TestProcessEvent_CoverCommentCreated(t *testing.T) {
 	})
 	d.MarkCoverCommentsFetched(99)
 
-	ids := d.GetCoversNeedingComments(nil)
+	ids := d.GetCoversNeedingComments(100)
 	if len(ids) != 0 {
 		t.Fatal("should be fetched before event")
 	}
@@ -891,7 +891,7 @@ func TestProcessEvent_CoverCommentCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ids = d.GetCoversNeedingComments(nil)
+	ids = d.GetCoversNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 99 {
 		t.Errorf("got %v, want [99] (reset by event)", ids)
 	}
@@ -926,14 +926,14 @@ func TestFetchNextCoverComments(t *testing.T) {
 		Date: "2026-03-10T12:00:00",
 	})
 
-	ids := d.GetCoversNeedingComments(nil)
+	ids := d.GetCoversNeedingComments(100)
 	if len(ids) != 1 {
 		t.Fatalf("before: len = %d", len(ids))
 	}
 
 	s.fetchNextCoverComments(context.Background())
 
-	ids = d.GetCoversNeedingComments(nil)
+	ids = d.GetCoversNeedingComments(100)
 	if len(ids) != 0 {
 		t.Errorf("after: ids = %v, want empty", ids)
 	}
@@ -1139,14 +1139,14 @@ func TestFetchNextPatchDetail(t *testing.T) {
 	s, d := setupSyncer(t, handler)
 	savePatch(d, 100, "Lorem ipsum", "2026-03-10", "new")
 
-	ids := d.GetPatchesNeedingDetail(nil)
+	ids := d.GetPatchesNeedingDetail(100)
 	if len(ids) != 1 {
 		t.Fatalf("before: %v", ids)
 	}
 
 	s.fetchNextPatchDetail(context.Background())
 
-	ids = d.GetPatchesNeedingDetail(nil)
+	ids = d.GetPatchesNeedingDetail(100)
 	if len(ids) != 0 {
 		t.Errorf("after: %v, want empty", ids)
 	}
@@ -1163,7 +1163,7 @@ func TestFetchNextPatchDetail_ErrorNoMark(t *testing.T) {
 
 	s.fetchNextPatchDetail(context.Background())
 
-	ids := d.GetPatchesNeedingDetail(nil)
+	ids := d.GetPatchesNeedingDetail(100)
 	if len(ids) != 1 || ids[0].ID != 100 {
 		t.Errorf("should stay unfetched: %v", ids)
 	}
@@ -1241,14 +1241,14 @@ func TestFetchNextCoverDetail(t *testing.T) {
 		Name: "Lorem cover", Date: "2026-03-10",
 	})
 
-	ids := d.GetCoversNeedingDetail(nil)
+	ids := d.GetCoversNeedingDetail(100)
 	if len(ids) != 1 {
 		t.Fatalf("before: %v", ids)
 	}
 
 	s.fetchNextCoverDetail(context.Background())
 
-	ids = d.GetCoversNeedingDetail(nil)
+	ids = d.GetCoversNeedingDetail(100)
 	if len(ids) != 0 {
 		t.Errorf("after: %v, want empty", ids)
 	}
@@ -1692,7 +1692,7 @@ func TestCheckMailArchive(t *testing.T) {
 	s.checkMailArchive(context.Background())
 
 	// Patch 1000 should be reset (subject matches)
-	ids := d.GetPatchesNeedingComments([]string{"new"})
+	ids := d.GetPatchesNeedingComments(100)
 	got := map[int]bool{}
 	for _, ref := range ids {
 		got[ref.ID] = true
@@ -1767,7 +1767,7 @@ func TestCheckMailArchive_SkipsOldMessages(t *testing.T) {
 	s.checkMailArchive(context.Background())
 
 	// Patch 1000 should be reset (new message 200 matches)
-	ids := d.GetPatchesNeedingComments([]string{"new"})
+	ids := d.GetPatchesNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 1000 {
 		t.Errorf("got %v, want [1000]", ids)
 	}
@@ -1818,7 +1818,7 @@ func TestCheckMailArchive_CoverComments(t *testing.T) {
 		status.NewRegistry(nil))
 	s.checkMailArchive(context.Background())
 
-	ids := d.GetCoversNeedingComments(nil)
+	ids := d.GetCoversNeedingComments(100)
 	got := map[int]bool{}
 	for _, ref := range ids {
 		got[ref.ID] = true
@@ -2119,7 +2119,7 @@ func TestFetchNextSeriesDetail(t *testing.T) {
 	}
 
 	// Series should be marked as detail_fetched
-	refs := d.GetSeriesNeedingDetail(nil)
+	refs := d.GetSeriesNeedingDetail(100)
 	if len(refs) != 0 {
 		t.Errorf("series should be complete, got %d needing detail", len(refs))
 	}
@@ -2306,7 +2306,7 @@ func TestFetchNextChecks(t *testing.T) {
 	}
 
 	// Should be marked as fetched — no more work
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 0 {
 		t.Errorf("still %d patches needing checks after fetch",
 			len(refs))
@@ -2349,7 +2349,7 @@ func TestFetchNextChecks_Error(t *testing.T) {
 	}
 
 	// Should NOT be marked as fetched
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 1 {
 		t.Errorf("got %d patches needing checks, want 1 (not marked)",
 			len(refs))
@@ -2391,7 +2391,7 @@ func TestProcessEvent_CheckCreated_NoDescription_ResetsFlag(t *testing.T) {
 		},
 	}, 50)
 
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 1 {
 		t.Errorf("got %d refs, want 1 (should be reset)", len(refs))
 	}
@@ -2434,7 +2434,7 @@ func TestProcessEvent_CheckCreated_WithDescription_KeepsFlag(t *testing.T) {
 		},
 	}, 50)
 
-	refs := d.GetPatchesNeedingChecks([]string{"new"})
+	refs := d.GetPatchesNeedingChecks(100)
 	if len(refs) != 0 {
 		t.Errorf("got %d refs, want 0 (has description, flag kept)",
 			len(refs))
