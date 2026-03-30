@@ -1152,6 +1152,34 @@ func TestFetchNextPatchDetail(t *testing.T) {
 	}
 }
 
+func TestFetchNextPatchDetail_StatusShowsRemainingCount(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(api.PatchDetail{
+				Patch: api.Patch{
+					ID: 100, Name: "p1", Date: "2026-03-10",
+					State: "new", Submitter: api.Person{Name: "Lorem"},
+				},
+				Content: "body", Diff: "diff",
+				Headers: map[string]interface{}{}, Prefixes: []string{},
+			})
+		})
+
+	s, d := setupSyncer(t, handler)
+	// 3 patches needing detail
+	savePatch(d, 100, "p1", "2026-03-10", "new")
+	savePatch(d, 101, "p2", "2026-03-10", "new")
+	savePatch(d, 102, "p3", "2026-03-10", "new")
+
+	s.fetchNextPatchDetail(context.Background())
+
+	msg, _ := s.status.Active()
+	if !strings.Contains(msg, "2 remaining") {
+		t.Errorf("status should say '2 remaining', got %q", msg)
+	}
+}
+
 func TestFetchNextPatchDetail_ErrorNoMark(t *testing.T) {
 	handler := http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {

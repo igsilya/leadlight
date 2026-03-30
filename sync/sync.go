@@ -716,7 +716,7 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 
 func (s *Syncer) fetchNextComments(ctx context.Context) int {
 	refs := s.db.GetPatchesNeedingComments(len(s.commentSkip) + 1)
-	for i, ref := range refs {
+	for _, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
@@ -733,7 +733,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) int {
 		delete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgComments,
 			fmt.Sprintf("Comments fetched (%d remaining)",
-				len(refs)-i-1), 3*time.Second)
+				s.db.CountUnfetched("patches", "comments_fetched")), 3*time.Second)
 		if !ref.IsActive {
 			s.lastTerminalComment = time.Now()
 		}
@@ -744,7 +744,7 @@ func (s *Syncer) fetchNextComments(ctx context.Context) int {
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) int {
 	refs := s.db.GetCoversNeedingComments(len(s.commentSkip) + 1)
-	for i, ref := range refs {
+	for _, ref := range refs {
 		if t, ok := s.commentSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
@@ -761,7 +761,7 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) int {
 		delete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgCoverComments,
 			fmt.Sprintf("Cover comments fetched (%d remaining)",
-				len(refs)-i-1), 3*time.Second)
+				s.db.CountUnfetched("covers", "comments_fetched")), 3*time.Second)
 		if !ref.IsActive {
 			s.lastTerminalCoverComment = time.Now()
 		}
@@ -897,7 +897,7 @@ func (s *Syncer) checkArchiveMonth(
 
 func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 	refs := s.db.GetPatchesNeedingDetail(len(s.detailSkip) + 1)
-	for i, ref := range refs {
+	for _, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
@@ -914,7 +914,7 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
 			fmt.Sprintf("Patch details fetched (%d remaining)",
-				len(refs)-i-1), 3*time.Second)
+				s.db.CountUnfetched("patches", "detail_fetched")), 3*time.Second)
 		if !ref.IsActive {
 			s.lastTerminalPatchDetail = time.Now()
 		}
@@ -925,7 +925,7 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 
 func (s *Syncer) fetchNextCoverDetail(ctx context.Context) int {
 	refs := s.db.GetCoversNeedingDetail(len(s.detailSkip) + 1)
-	for i, ref := range refs {
+	for _, ref := range refs {
 		if t, ok := s.detailSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
@@ -942,7 +942,7 @@ func (s *Syncer) fetchNextCoverDetail(ctx context.Context) int {
 		delete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
 			fmt.Sprintf("Cover details fetched (%d remaining)",
-				len(refs)-i-1), 3*time.Second)
+				s.db.CountUnfetched("covers", "detail_fetched")), 3*time.Second)
 		if !ref.IsActive {
 			s.lastTerminalCoverDetail = time.Now()
 		}
@@ -1065,7 +1065,7 @@ func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey s
 
 func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
 	refs := s.db.GetSeriesNeedingDetail(len(s.seriesSkip) + 1)
-	for i, ref := range refs {
+	for _, ref := range refs {
 		if t, ok := s.seriesSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
@@ -1106,7 +1106,7 @@ func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
 			fetchOrigin(ctx), series.ID, series.Name, series.Total)
 		s.status.SetTimed(status.BgSync,
 			fmt.Sprintf("Series details fetched (%d remaining)",
-				len(refs)-i-1), 3*time.Second)
+				s.db.CountUnfetched("series", "detail_fetched")), 3*time.Second)
 		if !ref.IsActive {
 			s.lastTerminalSeriesDetail = time.Now()
 		}
@@ -1117,7 +1117,7 @@ func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
 
 func (s *Syncer) fetchNextChecks(ctx context.Context) int {
 	refs := s.db.GetPatchesNeedingChecks(len(s.checkSkip) + 1)
-	for i, ref := range refs {
+	for _, ref := range refs {
 		if t, ok := s.checkSkip[ref.ID]; ok &&
 			time.Since(t) < commentSkipCooldown {
 			continue
@@ -1135,7 +1135,7 @@ func (s *Syncer) fetchNextChecks(ctx context.Context) int {
 		delete(s.checkSkip, ref.ID)
 		s.status.SetTimed(status.BgChecks,
 			fmt.Sprintf("Checks fetched (%d remaining)",
-				len(refs)-i-1), 3*time.Second)
+				s.db.CountUnfetched("patches", "checks_fetched")), 3*time.Second)
 		if !ref.IsActive {
 			s.lastTerminalCheck = time.Now()
 		}

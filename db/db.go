@@ -758,6 +758,14 @@ func activeStateFilter() (string, []interface{}) {
 	return strings.Join(ph, ","), args
 }
 
+func (d *DB) CountUnfetched(table, column string) int {
+	var n int
+	d.conn.QueryRow(
+		fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = 0", table, column),
+	).Scan(&n)
+	return n
+}
+
 func (d *DB) RecomputeActiveFlag(seriesID int) {
 	ph, args := activeStateFilter()
 	var has int

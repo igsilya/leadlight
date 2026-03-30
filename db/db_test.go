@@ -2516,6 +2516,29 @@ func TestGetCoversNeedingComments_FlagBasedPriority(t *testing.T) {
 	}
 }
 
+func TestCountUnfetched(t *testing.T) {
+	d := openTestDB(t)
+	d.SavePatch(PatchRow{
+		ID: 100, Name: "p1", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, Name: "p2", Date: "2026-03-10",
+		State: "new", Submitter: "Lorem",
+	})
+	if n := d.CountUnfetched("patches", "detail_fetched"); n != 2 {
+		t.Errorf("want 2 unfetched, got %d", n)
+	}
+	d.UpdatePatchDetail(100, "body", "diff", "{}", "[]")
+	if n := d.CountUnfetched("patches", "detail_fetched"); n != 1 {
+		t.Errorf("want 1 unfetched after fetch, got %d", n)
+	}
+	d.UpdatePatchDetail(101, "body", "diff", "{}", "[]")
+	if n := d.CountUnfetched("patches", "detail_fetched"); n != 0 {
+		t.Errorf("want 0 unfetched after all fetched, got %d", n)
+	}
+}
+
 func TestGetSeriesNeedingDetail_ActiveFirst(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(50, "Active series", "2026-03-10", 1)
