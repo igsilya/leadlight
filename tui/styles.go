@@ -75,6 +75,7 @@ var (
 	quotedLineStyle        lipgloss.Style
 	wrapIndicatorStyle     lipgloss.Style
 	logLineStyle           lipgloss.Style
+	applyLogStyle          lipgloss.Style
 )
 
 type gradientEntry struct{ bg, fg string }
@@ -149,6 +150,7 @@ func buildStyles(t *theme) {
 	quotedLineStyle = fg(t.QuotedLineFg)
 	wrapIndicatorStyle = fg(t.WrapIndicatorFg)
 	logLineStyle = fg(t.LogLineFg)
+	applyLogStyle = fg(t.ApplyLogFg)
 
 	bgStyles = map[string]*cachedBgStyle{}
 	gradientPalettes = map[string][256]gradientEntry{}

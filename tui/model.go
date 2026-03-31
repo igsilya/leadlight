@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -100,11 +101,11 @@ type applyState int
 
 const (
 	applyIdle     applyState = iota
-	applyConfirm             // "Apply N patches? (y/n)"
+	applyConfirm             // "Apply N patches? [1 Apply] [2 Cancel]"
 	applyFetching            // waiting for async fetches
 	applyRunning             // git am in progress
-	applySuccess             // done
-	applyConflict            // git am failed
+	applyDone                // success or post-conflict, [OK] to dismiss
+	applyConflict            // git am failed, [1 Revert] [2 Keep]
 )
 
 type selectorMode int
@@ -219,13 +220,16 @@ type Model struct {
 	AbortGitAm    func() (string, error)
 	Signoff       bool // add -s to git am (default true)
 
-	applyState     applyState
-	applyPatchIDs  []int // patches to apply, in N/M order
-	applySeriesID  int
-	applyCoverID   int
-	applyName      string
-	applyTmpFile   string // mbox path (kept on conflict)
-	applyStartTime time.Time
+	applyState          applyState
+	applyPatchIDs       []int // patches to apply, in N/M order
+	applySeriesID       int
+	applyCoverID        int
+	applyName           string
+	applyTmpFile        string // mbox path (kept on conflict)
+	applyStartTime      time.Time
+	applySelectedOption int    // 0 = first option, 1 = second
+	applyOpenedLog      bool   // true if we auto-opened the log console
+	applyDoneMsg        string // message shown in the done state
 }
 
 func NewModel(d *db.DB, states []string, token string) *Model {
@@ -514,14 +518,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.applyState = applyConflict
+			m.applySelectedOption = 0 // default to Revert
 			m.applyTmpFile = msg.tmpFile
 			log.Printf("[apply] Failed: %v", msg.err)
 			if msg.tmpFile != "" {
 				log.Printf("[apply] Mbox saved to %s", msg.tmpFile)
 			}
-			log.Printf("[apply] Press r to revert, n to keep for manual resolution")
 		} else {
-			m.applyState = applySuccess
+			m.applyState = applyDone
+			m.applyDoneMsg = fmt.Sprintf(
+				"Applied %d patches.", len(m.applyPatchIDs))
 			log.Printf("[apply] Applied %d patches successfully",
 				len(m.applyPatchIDs))
 		}

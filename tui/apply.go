@@ -220,6 +220,7 @@ func (m *Model) startApplyConfirm(seriesID int, patchIDs []int, name string) {
 	m.applySeriesID = seriesID
 	m.applyPatchIDs = patchIDs
 	m.applyName = name
+	m.applySelectedOption = 0
 	m.applyCoverID = 0
 	if cover, _ := m.db.GetCover(seriesID); cover != nil {
 		m.applyCoverID = cover.ID
@@ -232,7 +233,10 @@ func (m *Model) startApplyConfirm(seriesID int, patchIDs []int, name string) {
 func (m *Model) startApplyFetching() {
 	m.applyState = applyFetching
 	m.applyStartTime = time.Now()
-	m.logConsole = true
+	if !m.logConsole {
+		m.logConsole = true
+		m.applyOpenedLog = true
+	}
 
 	pending := 0
 	for _, pid := range m.applyPatchIDs {
@@ -395,16 +399,55 @@ func (m *Model) collectApplyData() []applyPatch {
 	return patches
 }
 
+func (m *Model) exitApplyMode() {
+	m.applyState = applyIdle
+	if m.applyOpenedLog {
+		m.logConsole = false
+		m.applyOpenedLog = false
+	}
+}
+
+func (m *Model) doAbortGitAm() {
+	if m.AbortGitAm != nil {
+		output, err := m.AbortGitAm()
+		for _, line := range strings.Split(output, "\n") {
+			if line != "" {
+				log.Printf("[apply] %s", line)
+			}
+		}
+		if err != nil {
+			log.Printf("[apply] Abort failed: %v", err)
+		} else {
+			log.Printf("[apply] Reverted successfully")
+		}
+	}
+}
+
+func (m *Model) applyDoRevert() {
+	m.doAbortGitAm()
+	m.applyDoneMsg = "Reverted."
+	m.applyState = applyDone
+}
+
+func (m *Model) applyDoKeep() {
+	log.Printf("[apply] Left in conflicted state for manual resolution")
+	log.Printf("[apply] Use 'git am --continue' or 'git am --abort'")
+	m.applyDoneMsg = "Kept for manual resolution."
+	m.applyState = applyDone
+}
+
 // handleApplyKey handles key presses during the apply flow.
 func (m *Model) handleApplyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	// Log scrolling always works during apply
-	if m.logConsole {
+	// For all states except confirm, pass unhandled keys to the
+	// log handler for scrolling, saving, etc.
+	if m.applyState != applyConfirm && m.logConsole {
 		switch key {
-		case "up", "k", "down", "j",
-			"pgup", "ctrl+u", "pgdown", "ctrl+d",
-			"home", "g", "end", "G":
+		case "enter", "q", "esc", "1", "2",
+			"left", "right", "h", "l", "tab":
+			// Fall through to apply-specific handling
+		default:
 			return m.handleLogKey(msg)
 		}
 	}
@@ -412,44 +455,53 @@ func (m *Model) handleApplyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.applyState {
 	case applyConfirm:
 		switch key {
-		case "y":
+		case "1":
 			m.startApplyFetching()
 			if m.applyState == applyRunning {
 				return m, m.runApply()
 			}
-		case "n", "esc", "q":
-			m.applyState = applyIdle
+		case "2", "esc", "q":
+			m.exitApplyMode()
+		case "left", "right", "h", "l", "tab":
+			m.applySelectedOption = 1 - m.applySelectedOption
+		case "enter":
+			if m.applySelectedOption == 0 {
+				m.startApplyFetching()
+				if m.applyState == applyRunning {
+					return m, m.runApply()
+				}
+			} else {
+				m.exitApplyMode()
+			}
 		}
 	case applyFetching:
-		if key == "q" || key == "esc" {
-			m.applyState = applyIdle
+		if key == "q" || key == "esc" || key == "enter" || key == "1" {
 			log.Printf("[apply] Cancelled")
+			m.exitApplyMode()
 		}
 	case applyRunning:
 		// Can't cancel git am
-	case applySuccess:
-		m.applyState = applyIdle
 	case applyConflict:
 		switch key {
-		case "r":
-			if m.AbortGitAm != nil {
-				output, err := m.AbortGitAm()
-				for _, line := range strings.Split(output, "\n") {
-					if line != "" {
-						log.Printf("[apply] %s", line)
-					}
-				}
-				if err != nil {
-					log.Printf("[apply] Abort failed: %v", err)
-				} else {
-					log.Printf("[apply] Reverted successfully")
-				}
+		case "1":
+			m.applyDoRevert()
+		case "2":
+			m.applyDoKeep()
+		case "left", "right", "h", "l", "tab":
+			m.applySelectedOption = 1 - m.applySelectedOption
+		case "enter":
+			if m.applySelectedOption == 0 {
+				m.applyDoRevert()
+			} else {
+				m.applyDoKeep()
 			}
-			m.applyState = applyIdle
-		case "n", "esc", "q":
-			log.Printf("[apply] Left in conflicted state for manual resolution")
-			log.Printf("[apply] Use 'git am --continue' or 'git am --abort'")
-			m.applyState = applyIdle
+		case "esc", "q":
+			m.applyDoRevert()
+		}
+	case applyDone:
+		switch key {
+		case "1", "enter", "q", "esc":
+			m.exitApplyMode()
 		}
 	}
 	return m, nil

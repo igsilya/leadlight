@@ -825,6 +825,8 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 	b.WriteString(helpSepStr(sep))
 	b.WriteString(helpKey(bright, desc, "f", "fetch"))
 	b.WriteString(helpSepStr(sep))
+	b.WriteString(helpKey(bright, desc, "p", "apply"))
+	b.WriteString(helpSepStr(sep))
 	if m.showAll {
 		b.WriteString(helpKey(bright, desc, "a", "active"))
 	} else {
@@ -892,7 +894,7 @@ func (m *Model) helpStyles() (bright, desc, sep lipgloss.Style) {
 }
 
 func (m *Model) logHelpStyles() (bright, desc, sep lipgloss.Style) {
-	if m.logFocused {
+	if m.logFocused || m.applyState != applyIdle {
 		return helpBrightStyle, helpStyle, helpSepStyle
 	}
 	return helpDimStyle, helpDimStyle, helpDimStyle
@@ -939,7 +941,11 @@ func (m *Model) renderLogConsole(height int) string {
 	// Collect visual lines from anchor backward. If the viewport
 	// can't be filled (entries expired), push anchor forward until
 	// it fills or we reach logLastSeen.
-	var visual []string
+	type styledLine struct {
+		text    string
+		isApply bool
+	}
+	var visual []styledLine
 	for m.logAnchor <= m.logLastSeen {
 		visual = visual[:0]
 		anchorIdx := len(lines) - 1 - (currentCount - m.logAnchor)
@@ -947,9 +953,10 @@ func (m *Model) renderLogConsole(height int) string {
 			anchorIdx = 0
 		}
 		for i := anchorIdx; i >= 0; i-- {
+			isApply := strings.Contains(lines[i], "[apply]")
 			wrapped := wrapLogLine(lines[i], m.width)
 			for j := len(wrapped) - 1; j >= 0; j-- {
-				visual = append(visual, wrapped[j])
+				visual = append(visual, styledLine{wrapped[j], isApply})
 			}
 			if len(visual) >= visibleLines {
 				break
@@ -970,7 +977,11 @@ func (m *Model) renderLogConsole(height int) string {
 	}
 
 	for _, vl := range visual {
-		out.WriteString(logLineStyle.Render(vl))
+		if vl.isApply {
+			out.WriteString(applyLogStyle.Render(vl.text))
+		} else {
+			out.WriteString(logLineStyle.Render(vl.text))
+		}
 		out.WriteByte('\n')
 	}
 	for i := len(visual); i < visibleLines; i++ {
@@ -978,10 +989,12 @@ func (m *Model) renderLogConsole(height int) string {
 	}
 
 	hb, hd, hs := m.logHelpStyles()
-	out.WriteString(helpKey(hb, hd, "tab", "switch"))
-	out.WriteString(helpSepStr(hs))
-	out.WriteString(helpKey(hb, hd, "`", "close"))
-	out.WriteString(helpSepStr(hs))
+	if m.applyState == applyIdle {
+		out.WriteString(helpKey(hb, hd, "tab", "switch"))
+		out.WriteString(helpSepStr(hs))
+		out.WriteString(helpKey(hb, hd, "`", "close"))
+		out.WriteString(helpSepStr(hs))
+	}
 	out.WriteString(hb.Render("↑/↓") +
 		hs.Render(" ") + hb.Render("pgup/dn"))
 	out.WriteString(helpSepStr(hs))
@@ -1022,33 +1035,44 @@ func renderCell(text string, width int) string {
 		Render(truncate(text, width))
 }
 
+func renderApplyOption(out *strings.Builder, num int, label string, selected bool) {
+	var text string
+	if num > 0 {
+		text = fmt.Sprintf(" %d %s ", num, label)
+	} else {
+		text = " " + label + " "
+	}
+	if selected {
+		out.WriteString(highlightedOptionStyle.Render(text))
+	} else {
+		out.WriteString(normalOptionStyle.Render(text))
+	}
+	out.WriteString(" ")
+}
+
 func (m *Model) renderApplyStatusBar(out *strings.Builder) {
-	bright, desc, sep := m.helpStyles()
+	bright, _, _ := m.helpStyles()
 	switch m.applyState {
 	case applyConfirm:
-		out.WriteString(desc.Render(fmt.Sprintf(
-			"Apply %d patches from %q? ",
+		out.WriteString(bright.Render(fmt.Sprintf(
+			"Apply %d patches from %q?  ",
 			len(m.applyPatchIDs), truncate(m.applyName, 40))))
-		out.WriteString(helpKey(bright, desc, "y", "apply"))
-		out.WriteString(helpSepStr(sep))
-		out.WriteString(helpKey(bright, desc, "n", "cancel"))
+		renderApplyOption(out, 1, "Apply", m.applySelectedOption == 0)
+		renderApplyOption(out, 2, "Cancel", m.applySelectedOption == 1)
 	case applyFetching:
-		out.WriteString(desc.Render("Applying... fetching data "))
-		out.WriteString(helpSepStr(sep))
-		out.WriteString(helpKey(bright, desc, "q", "cancel"))
+		out.WriteString(bright.Render(
+			"Applying... fetching data  "))
+		renderApplyOption(out, 0, "Cancel", true)
 	case applyRunning:
-		out.WriteString(desc.Render("Applying... running git am"))
-	case applySuccess:
-		out.WriteString(desc.Render(fmt.Sprintf(
-			"Applied %d patches ", len(m.applyPatchIDs))))
-		out.WriteString(helpSepStr(sep))
-		out.WriteString(desc.Render("press any key"))
+		out.WriteString(bright.Render(
+			"Applying... running git am"))
 	case applyConflict:
-		out.WriteString(desc.Render("Apply failed "))
-		out.WriteString(helpSepStr(sep))
-		out.WriteString(helpKey(bright, desc, "r", "revert"))
-		out.WriteString(helpSepStr(sep))
-		out.WriteString(helpKey(bright, desc, "n", "keep"))
+		out.WriteString(bright.Render("Apply failed.  "))
+		renderApplyOption(out, 1, "Revert", m.applySelectedOption == 0)
+		renderApplyOption(out, 2, "Keep", m.applySelectedOption == 1)
+	case applyDone:
+		out.WriteString(bright.Render(m.applyDoneMsg + "  "))
+		renderApplyOption(out, 0, "OK", true)
 	}
 }
 

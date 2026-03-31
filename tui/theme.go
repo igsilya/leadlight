@@ -31,7 +31,8 @@ type theme struct {
 	DiffAddFg, DiffDelFg, DiffHunkFg     string
 	QuotedLineFg, WrapIndicatorFg        string
 
-	LogLineFg string
+	LogLineFg  string
+	ApplyLogFg string // bright color for [apply] log lines
 }
 
 // Dark theme FG colors inspired by the Catppuccin Mocha palette.
@@ -92,7 +93,8 @@ var darkTheme = theme{
 	QuotedLineFg:      "168", // dusty rose
 	WrapIndicatorFg:   "242", // dim grey
 
-	LogLineFg: "245", // soft grey
+	LogLineFg:  "245",     // soft grey
+	ApplyLogFg: "#cdd6f4", // catppuccin Text — bright, clearly readable
 }
 
 var lightTheme = theme{
@@ -151,5 +153,6 @@ var lightTheme = theme{
 	QuotedLineFg:      "125", // muted plum
 	WrapIndicatorFg:   "245", // mid-grey
 
-	LogLineFg: "242", // cool grey
+	LogLineFg:  "242",     // cool grey
+	ApplyLogFg: "#4c4f69", // catppuccin Text — dark, clearly readable
 }
