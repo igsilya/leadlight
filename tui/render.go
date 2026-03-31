@@ -35,13 +35,14 @@ func (m *Model) renderMainView() string {
 	items := m.getVisibleItems()
 	m.renderRows(&m.renderBuf, items, widths)
 	m.padToBottom(&m.renderBuf)
-	m.renderStatusBar(&m.renderBuf)
+	m.renderStatusLine(&m.renderBuf)
+	m.renderHelpBar(&m.renderBuf)
 
 	return m.renderBuf.String()
 }
 
 func (m *Model) viewportVisibleLines() int {
-	v := m.renderHeight() - 1
+	v := m.renderHeight() - 2 // status line + help bar
 	if v < 1 {
 		v = 1
 	}
@@ -120,8 +121,17 @@ func (m *Model) renderPatchView() string {
 		status = hb.String()
 	}
 
-	status = m.appendActiveStatus(status)
-	return body + "\n" + status
+	var statusLine string
+	msg, spinning := m.Status.Active()
+	if msg != "" {
+		if spinning {
+			statusLine = statusStyle.Render(
+				fmt.Sprintf("%s %s", spinnerFrames[m.spinnerFrame], msg))
+		} else {
+			statusLine = statusStyle.Render(msg)
+		}
+	}
+	return body + "\n" + statusLine + "\n" + status
 }
 
 func (m *Model) renderHeader(out *strings.Builder, widths []int) {
@@ -141,9 +151,9 @@ func (m *Model) renderHeader(out *strings.Builder, widths []int) {
 }
 
 func (m *Model) maxVisibleRows() int {
-	bottomLines := 1
+	bottomLines := 2 // status line + help bar
 	if m.selectorMode != selectorNone {
-		bottomLines = 2
+		bottomLines = 3 // status line + selector (2 lines)
 	}
 	rows := m.renderHeight() - 2 - bottomLines
 	if rows < 1 {
@@ -756,9 +766,9 @@ func (m *Model) renderCommentBar(maxWidth int) string {
 }
 
 func (m *Model) padToBottom(out *strings.Builder) {
-	bottomLines := 1
+	bottomLines := 2 // status line + help bar
 	if m.selectorMode != selectorNone {
-		bottomLines = 2
+		bottomLines = 3 // status line + selector (2 lines)
 	}
 	target := m.renderHeight() - bottomLines + 1
 	current := lipgloss.Height(out.String())
@@ -767,7 +777,21 @@ func (m *Model) padToBottom(out *strings.Builder) {
 	}
 }
 
-func (m *Model) renderStatusBar(out *strings.Builder) {
+func (m *Model) renderStatusLine(out *strings.Builder) {
+	msg, spinning := m.Status.Active()
+	if msg != "" {
+		if spinning {
+			frame := spinnerFrames[m.spinnerFrame]
+			out.WriteString(statusStyle.Render(
+				fmt.Sprintf("%s %s", frame, msg)))
+		} else {
+			out.WriteString(statusStyle.Render(msg))
+		}
+	}
+	out.WriteByte('\n')
+}
+
+func (m *Model) renderHelpBar(out *strings.Builder) {
 	if m.applyState != applyIdle {
 		m.renderApplyStatusBar(out)
 		return
@@ -837,7 +861,7 @@ func (m *Model) renderStatusBar(out *strings.Builder) {
 		b.WriteString(helpKey(bright, desc, "tab", "log"))
 	}
 
-	out.WriteString(m.appendActiveStatus(b.String()))
+	out.WriteString(b.String())
 }
 
 func (m *Model) renderSelectorBar(out *strings.Builder) {
@@ -1006,25 +1030,6 @@ func (m *Model) renderLogConsole(height int) string {
 			fmt.Sprintf("↓ %d new", newCount)))
 	}
 	return out.String()
-}
-
-func (m *Model) appendActiveStatus(left string) string {
-	msg, spinner := m.Status.Active()
-	if msg == "" {
-		return left
-	}
-	var right string
-	if spinner {
-		frame := spinnerFrames[m.spinnerFrame]
-		right = statusStyle.Render(fmt.Sprintf("%s %s", frame, msg))
-	} else {
-		right = statusStyle.Render(msg)
-	}
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 2 {
-		gap = 2
-	}
-	return left + lipgloss.NewStyle().Width(gap).Render("") + right
 }
 
 func renderCell(text string, width int) string {

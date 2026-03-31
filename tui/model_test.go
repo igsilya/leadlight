@@ -1739,10 +1739,10 @@ func TestRenderPatchView_LineCount(t *testing.T) {
 
 			output := m.renderPatchView()
 			lines := strings.Split(output, "\n")
-			// Output = visible content lines + 1 status bar line
-			want := visible + 1
+			// Output = visible content + status line + help bar
+			want := visible + 2
 			if len(lines) != want {
-				t.Errorf("got %d lines, want %d (visible=%d + 1 status)",
+				t.Errorf("got %d lines, want %d (visible=%d + 2 bottom)",
 					len(lines), want, visible)
 			}
 		})
