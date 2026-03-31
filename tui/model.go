@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -86,9 +87,25 @@ type seriesRowCache struct {
 }
 type StatusUpdateMsg struct{}
 type patchUpdateResultMsg struct{ err error }
+type applyResultMsg struct {
+	output  string
+	err     error
+	tmpFile string // kept on failure for manual resolution
+}
 
 type highlightAnimTickMsg struct{}
 type spinnerTickMsg time.Time
+
+type applyState int
+
+const (
+	applyIdle     applyState = iota
+	applyConfirm             // "Apply N patches? (y/n)"
+	applyFetching            // waiting for async fetches
+	applyRunning             // git am in progress
+	applySuccess             // done
+	applyConflict            // git am failed
+)
 
 type selectorMode int
 
@@ -193,6 +210,22 @@ type Model struct {
 		patchID int, state *string,
 		delegateUsername *string, unsetDelegate bool,
 	)
+
+	// Apply patches via git am
+	CheckGitRepo  func() bool
+	CheckGitDirty func() (bool, error)
+	GetGitSignoff func() string
+	RunGitAm      func(mboxPath string, signoff bool) (string, error)
+	AbortGitAm    func() (string, error)
+	Signoff       bool // add -s to git am (default true)
+
+	applyState     applyState
+	applyPatchIDs  []int // patches to apply, in N/M order
+	applySeriesID  int
+	applyCoverID   int
+	applyName      string
+	applyTmpFile   string // mbox path (kept on conflict)
+	applyStartTime time.Time
 }
 
 func NewModel(d *db.DB, states []string, token string) *Model {
@@ -455,6 +488,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.invalidateSeriesCache(msg.SeriesIDs)
 		}
+		if m.applyState == applyFetching && m.allApplyDataReady() {
+			m.applyState = applyRunning
+			log.Printf("[apply] All data fetched, constructing mbox...")
+			return m, m.runApply()
+		}
 		if m.viewMode == viewPatch {
 			if len(m.viewportLines) == 1 &&
 				(m.viewportLines[0] == "Fetching..." ||
@@ -466,6 +504,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case patchUpdateResultMsg:
+		return m, nil
+
+	case applyResultMsg:
+		for _, line := range strings.Split(msg.output, "\n") {
+			if line != "" {
+				log.Printf("[apply] %s", line)
+			}
+		}
+		if msg.err != nil {
+			m.applyState = applyConflict
+			m.applyTmpFile = msg.tmpFile
+			log.Printf("[apply] Failed: %v", msg.err)
+			if msg.tmpFile != "" {
+				log.Printf("[apply] Mbox saved to %s", msg.tmpFile)
+			}
+			log.Printf("[apply] Press r to revert, n to keep for manual resolution")
+		} else {
+			m.applyState = applySuccess
+			log.Printf("[apply] Applied %d patches successfully",
+				len(m.applyPatchIDs))
+		}
 		return m, nil
 
 	case tea.WindowSizeMsg:

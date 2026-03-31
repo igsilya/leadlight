@@ -16,6 +16,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "ctrl+z" {
 		return m, tea.Suspend
 	}
+	if m.applyState != applyIdle {
+		return m.handleApplyKey(msg)
+	}
 	if key == "`" {
 		m.logConsole = !m.logConsole
 		m.logFocused = false
@@ -197,6 +200,31 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.RequestFetchAll(id, 0)
 			}
 		}
+	case "p":
+		items := m.getVisibleItems()
+		if m.selectedRow < len(items) {
+			item := items[m.selectedRow]
+			if item.isSubRow {
+				patchID, _ := strconv.Atoi(item.data[ColID])
+				seriesID, _ := strconv.Atoi(
+					m.RowData[item.parentIdx].Data[ColID])
+				m.startApplyConfirm(seriesID, []int{patchID},
+					item.data[ColName])
+			} else {
+				seriesID, _ := strconv.Atoi(item.data[ColID])
+				patches := m.db.GetPatchesForSeries(seriesID)
+				if len(patches) == 0 {
+					log.Printf("[apply] No patches in series")
+					break
+				}
+				ids := make([]int, len(patches))
+				for i, p := range patches {
+					ids[i] = p.ID
+				}
+				m.startApplyConfirm(seriesID, ids, item.data[ColName])
+			}
+		}
+
 	case "a":
 		m.showAll = !m.showAll
 		m.reloadData()

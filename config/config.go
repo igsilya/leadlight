@@ -86,6 +86,7 @@ type Config struct {
 	BaseURL      string
 	APIVersion   string
 	HistoryLimit HistoryLimit
+	Signoff      *bool // nil = default (true), false = don't add -s to git am
 }
 
 func Load(dir string) (*Config, error) {
@@ -125,6 +126,12 @@ func Load(dir string) (*Config, error) {
 			return nil, err
 		}
 		cfg.HistoryLimit = limit
+	}
+
+	signoffStr := gitConfigGet(dir, "leadlight.signoff")
+	if signoffStr == "false" {
+		f := false
+		cfg.Signoff = &f
 	}
 
 	if err := validate(cfg); err != nil {

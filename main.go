@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"runtime/pprof"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -169,6 +171,50 @@ func main() {
 				UnsetDelegate:    unsetDelegate,
 			})
 		log.Printf("MAIN: RequestPatchUpdate done, err=%v", err)
+	}
+
+	m.Signoff = true
+	if cfg.Signoff != nil && !*cfg.Signoff {
+		m.Signoff = false
+	}
+
+	m.CheckGitRepo = func() bool {
+		return exec.Command("git", "rev-parse", "--git-dir").Run() == nil
+	}
+	m.CheckGitDirty = func() (bool, error) {
+		// Check for uncommitted changes to tracked files only.
+		// Untracked files are ignored — they don't affect git am.
+		err := exec.Command("git", "diff-index", "--quiet", "HEAD", "--").Run()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				return true, nil // non-zero exit = dirty
+			}
+			return false, err
+		}
+		return false, nil
+	}
+	m.GetGitSignoff = func() string {
+		name, _ := exec.Command("git", "config", "user.name").Output()
+		email, _ := exec.Command("git", "config", "user.email").Output()
+		n := strings.TrimSpace(string(name))
+		e := strings.TrimSpace(string(email))
+		if n == "" || e == "" {
+			return ""
+		}
+		return "Signed-off-by: " + n + " <" + e + ">"
+	}
+	m.RunGitAm = func(mboxPath string, signoff bool) (string, error) {
+		args := []string{"am", "-3"}
+		if signoff {
+			args = append(args, "-s")
+		}
+		args = append(args, mboxPath)
+		out, err := exec.Command("git", args...).CombinedOutput()
+		return string(out), err
+	}
+	m.AbortGitAm = func() (string, error) {
+		out, err := exec.Command("git", "am", "--abort").CombinedOutput()
+		return string(out), err
 	}
 
 	go syncer.Run(ctx)

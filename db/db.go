@@ -930,6 +930,44 @@ func (d *DB) GetTagsForSeries(seriesID int) []TagRow {
 	return result
 }
 
+func (d *DB) GetTagsForPatch(patchID int) []TagRow {
+	rows, err := d.conn.Query(`
+		SELECT patch_id, cover_id, comment_id,
+			source, type, identity
+		FROM tags WHERE patch_id = ?`, patchID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var result []TagRow
+	for rows.Next() {
+		var r TagRow
+		rows.Scan(&r.PatchID, &r.CoverID, &r.CommentID,
+			&r.Source, &r.Type, &r.Identity)
+		result = append(result, r)
+	}
+	return result
+}
+
+func (d *DB) GetTagsForCover(coverID int) []TagRow {
+	rows, err := d.conn.Query(`
+		SELECT patch_id, cover_id, comment_id,
+			source, type, identity
+		FROM tags WHERE cover_id = ?`, coverID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var result []TagRow
+	for rows.Next() {
+		var r TagRow
+		rows.Scan(&r.PatchID, &r.CoverID, &r.CommentID,
+			&r.Source, &r.Type, &r.Identity)
+		result = append(result, r)
+	}
+	return result
+}
+
 func (d *DB) GetCommentCountForSeries(seriesID int) int {
 	var count int
 	d.conn.QueryRow(`

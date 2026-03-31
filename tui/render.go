@@ -768,6 +768,10 @@ func (m *Model) padToBottom(out *strings.Builder) {
 }
 
 func (m *Model) renderStatusBar(out *strings.Builder) {
+	if m.applyState != applyIdle {
+		m.renderApplyStatusBar(out)
+		return
+	}
 	if m.selectorMode != selectorNone {
 		m.renderSelectorBar(out)
 		return
@@ -1016,6 +1020,36 @@ func renderCell(text string, width int) string {
 		MaxWidth(width).
 		Inline(true).
 		Render(truncate(text, width))
+}
+
+func (m *Model) renderApplyStatusBar(out *strings.Builder) {
+	bright, desc, sep := m.helpStyles()
+	switch m.applyState {
+	case applyConfirm:
+		out.WriteString(desc.Render(fmt.Sprintf(
+			"Apply %d patches from %q? ",
+			len(m.applyPatchIDs), truncate(m.applyName, 40))))
+		out.WriteString(helpKey(bright, desc, "y", "apply"))
+		out.WriteString(helpSepStr(sep))
+		out.WriteString(helpKey(bright, desc, "n", "cancel"))
+	case applyFetching:
+		out.WriteString(desc.Render("Applying... fetching data "))
+		out.WriteString(helpSepStr(sep))
+		out.WriteString(helpKey(bright, desc, "q", "cancel"))
+	case applyRunning:
+		out.WriteString(desc.Render("Applying... running git am"))
+	case applySuccess:
+		out.WriteString(desc.Render(fmt.Sprintf(
+			"Applied %d patches ", len(m.applyPatchIDs))))
+		out.WriteString(helpSepStr(sep))
+		out.WriteString(desc.Render("press any key"))
+	case applyConflict:
+		out.WriteString(desc.Render("Apply failed "))
+		out.WriteString(helpSepStr(sep))
+		out.WriteString(helpKey(bright, desc, "r", "revert"))
+		out.WriteString(helpSepStr(sep))
+		out.WriteString(helpKey(bright, desc, "n", "keep"))
+	}
 }
 
 func truncate(s string, width int) string {
