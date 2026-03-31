@@ -34,7 +34,7 @@ func TestPatchNumber(t *testing.T) {
 func TestInjectTags_BeforeSignoff(t *testing.T) {
 	body := "Fix the broken thing.\n\nSigned-off-by: Author <a@ex>\n"
 	comment := []db.TagRow{
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
 	}
 	got := injectTags(body, comment, nil, "")
 	// Reviewed-by should appear before Signed-off-by
@@ -48,7 +48,7 @@ func TestInjectTags_BeforeSignoff(t *testing.T) {
 func TestInjectTags_BeforeCoAuthored(t *testing.T) {
 	body := "Fix thing.\n\nSigned-off-by: Author <a@ex>\nCo-developed-by: Helper <h@ex>\n"
 	comment := []db.TagRow{
-		{Type: "acked-by", Identity: "Acker <ack@ex>"},
+		{Type: "acked", Identity: "Acker <ack@ex>"},
 	}
 	got := injectTags(body, comment, nil, "")
 	aIdx := strings.Index(got, "Acked-by:")
@@ -66,7 +66,7 @@ func TestInjectTags_FixesOnTop(t *testing.T) {
 	body := "Fix thing.\n\nAcked-by: Existing <e@ex>\nSigned-off-by: Author <a@ex>\n"
 	comment := []db.TagRow{
 		{Type: "fixes", Identity: "abcdef12345 (\"broken commit\")"},
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
 	}
 	got := injectTags(body, comment, nil, "")
 	fIdx := strings.Index(got, "Fixes:")
@@ -87,10 +87,10 @@ func TestInjectTags_FixesOnTop(t *testing.T) {
 func TestInjectTags_Dedup(t *testing.T) {
 	body := "Fix thing.\n\nReviewed-by: Reviewer <r@ex>\nSigned-off-by: Author <a@ex>\n"
 	comment := []db.TagRow{
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
 	}
 	original := []db.TagRow{
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
 	}
 	got := injectTags(body, comment, original, "")
 	count := strings.Count(got, "Reviewed-by:")
@@ -103,9 +103,9 @@ func TestInjectTags_Dedup(t *testing.T) {
 func TestInjectTags_Order(t *testing.T) {
 	body := "Fix thing.\n\nSigned-off-by: Author <a@ex>\n"
 	comment := []db.TagRow{
-		{Type: "tested-by", Identity: "Tester <t@ex>"},
-		{Type: "acked-by", Identity: "Acker <ack@ex>"},
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
+		{Type: "tested", Identity: "Tester <t@ex>"},
+		{Type: "acked", Identity: "Acker <ack@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
 		{Type: "fixes", Identity: "abcdef (\"broken\")"},
 	}
 	got := injectTags(body, comment, nil, "")
@@ -122,7 +122,7 @@ func TestInjectTags_Order(t *testing.T) {
 func TestInjectTags_NoTrailers(t *testing.T) {
 	body := "Fix thing.\n\nSome more explanation.\n"
 	comment := []db.TagRow{
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
 	}
 	got := injectTags(body, comment, nil, "")
 	if !strings.Contains(got, "Reviewed-by: Reviewer <r@ex>") {
@@ -145,10 +145,10 @@ func TestInjectTags_CoverTags(t *testing.T) {
 	body := "Fix thing.\n\nSigned-off-by: Author <a@ex>\n"
 	// Cover comment tags should be applied to individual patches
 	coverTags := []db.TagRow{
-		{Type: "acked-by", Identity: "Maintainer <m@ex>"},
+		{Type: "acked", Identity: "Maintainer <m@ex>"},
 	}
 	patchTags := []db.TagRow{
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
 	}
 	allTags := append(coverTags, patchTags...)
 	got := injectTags(body, allTags, nil, "")
@@ -163,14 +163,55 @@ func TestInjectTags_CoverTags(t *testing.T) {
 func TestInjectTags_DedupWithinComments(t *testing.T) {
 	body := "Fix thing.\n\nSigned-off-by: Author <a@ex>\n"
 	comment := []db.TagRow{
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"},
-		{Type: "reviewed-by", Identity: "Reviewer <r@ex>"}, // dup
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"}, // dup
 	}
 	got := injectTags(body, comment, nil, "")
 	count := strings.Count(got, "Reviewed-by:")
 	if count != 1 {
 		t.Errorf("should dedup within comment tags, got %d:\n%s",
 			count, got)
+	}
+}
+
+func TestInjectTags_BeforeSeparator(t *testing.T) {
+	body := "Fix thing.\n\nSigned-off-by: Author <a@ex>\n---\n file.c | 2 +-\n 1 file changed\n"
+	comment := []db.TagRow{
+		{Type: "acked", Identity: "Reviewer <r@ex>"},
+	}
+	got := injectTags(body, comment, nil, "")
+	aIdx := strings.Index(got, "Acked-by:")
+	sepIdx := strings.Index(got, "\n---\n")
+	if aIdx < 0 || sepIdx < 0 {
+		t.Fatalf("missing tag or separator:\n%s", got)
+	}
+	if aIdx > sepIdx {
+		t.Errorf("Acked-by should be before --- separator:\n%s", got)
+	}
+	// Diffstat should still be present after ---
+	if !strings.Contains(got, "1 file changed") {
+		t.Errorf("diffstat should be preserved:\n%s", got)
+	}
+}
+
+func TestInjectTags_WithDiffstat(t *testing.T) {
+	body := "Fix thing.\n\nAcked-by: Existing <e@ex>\nSigned-off-by: Author <a@ex>\n---\n file.c | 2 +-\n 1 file changed\n"
+	comment := []db.TagRow{
+		{Type: "fixes", Identity: "abcdef (\"broken\")"},
+		{Type: "reviewed", Identity: "Reviewer <r@ex>"},
+	}
+	got := injectTags(body, comment, nil, "")
+	fIdx := strings.Index(got, "Fixes:")
+	rIdx := strings.Index(got, "Reviewed-by:")
+	sepIdx := strings.Index(got, "\n---\n")
+	if fIdx < 0 || rIdx < 0 || sepIdx < 0 {
+		t.Fatalf("missing tags or separator:\n%s", got)
+	}
+	if fIdx > sepIdx || rIdx > sepIdx {
+		t.Errorf("tags should be before --- separator:\n%s", got)
+	}
+	if fIdx > strings.Index(got, "Acked-by:") {
+		t.Errorf("Fixes should be before existing Acked-by:\n%s", got)
 	}
 }
 

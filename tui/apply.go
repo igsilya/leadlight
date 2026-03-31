@@ -47,7 +47,26 @@ type applyPatch struct {
 // the first Signed-off-by/Co-authored-by/Co-developed-by.
 // If removeSignoff is non-empty, any Signed-off-by matching that
 // identity is removed (to avoid duplicates when git am -s is used).
+// splitBodyAtSeparator splits a commit message body at the "---"
+// separator line. The Patchwork API includes the diffstat after
+// "---" as part of the Content field. Tags must be injected into
+// the commit message part only, before the separator.
+func splitBodyAtSeparator(body string) (msg, rest string) {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "---" {
+			return strings.Join(lines[:i], "\n"),
+				"\n" + strings.Join(lines[i:], "\n")
+		}
+	}
+	return body, ""
+}
+
 func injectTags(body string, commentTags []db.TagRow, originalTags []db.TagRow, removeSignoff string) string {
+	// Split at "---" separator — tags go into the commit message
+	// part only, before the diffstat.
+	msg, rest := splitBodyAtSeparator(body)
+
 	// Build set of existing original tags for dedup
 	existing := map[string]bool{}
 	for _, t := range originalTags {
@@ -66,11 +85,11 @@ func injectTags(body string, commentTags []db.TagRow, originalTags []db.TagRow, 
 		switch t.Type {
 		case "fixes":
 			fixes = append(fixes, line)
-		case "acked-by":
+		case "acked":
 			acked = append(acked, line)
-		case "reviewed-by":
+		case "reviewed":
 			reviewed = append(reviewed, line)
-		case "tested-by":
+		case "tested":
 			tested = append(tested, line)
 		}
 	}
@@ -80,7 +99,7 @@ func injectTags(body string, commentTags []db.TagRow, originalTags []db.TagRow, 
 		return body
 	}
 
-	lines := strings.Split(body, "\n")
+	lines := strings.Split(msg, "\n")
 
 	// Remove trailing blank lines to find the trailer block
 	end := len(lines)
@@ -134,18 +153,18 @@ func injectTags(body string, commentTags []db.TagRow, originalTags []db.TagRow, 
 		lines = insertLines(lines, trailerStart, fixes)
 	}
 
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n") + rest
 }
 
 func tagLine(tagType, identity string) string {
 	switch tagType {
 	case "fixes":
 		return "Fixes: " + identity
-	case "acked-by":
+	case "acked":
 		return "Acked-by: " + identity
-	case "reviewed-by":
+	case "reviewed":
 		return "Reviewed-by: " + identity
-	case "tested-by":
+	case "tested":
 		return "Tested-by: " + identity
 	default:
 		return tagType + ": " + identity
