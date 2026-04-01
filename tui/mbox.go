@@ -240,7 +240,7 @@ func FormatMbox(p ParsedMbox, width int, collapse bool) string {
 func formatDiff(diff string, width int) string {
 	var b strings.Builder
 	for _, line := range strings.Split(diff, "\n") {
-		line = truncateLine(line, width)
+		line = truncateLine(expandTabs(line, 8), width)
 		switch {
 		case strings.HasPrefix(line, "+++ ") ||
 			strings.HasPrefix(line, "--- "):
@@ -337,7 +337,35 @@ func isQuotedLine(s string) bool {
 	return strings.HasPrefix(strings.TrimLeft(s, " "), ">")
 }
 
+// expandTabs replaces tab characters with spaces using position-aware
+// 8-column tab stops, matching terminal defaults and git diff output.
+// Lipgloss uses fixed 4-space tab replacement which misaligns lines
+// with different numbers of characters before the tab (e.g., diff
+// context lines with "  \t" vs +/- lines with "+\t").
+func expandTabs(s string, tabWidth int) string {
+	if !strings.Contains(s, "\t") {
+		return s
+	}
+	var buf strings.Builder
+	col := 0
+	for _, r := range s {
+		if r == '\t' {
+			spaces := tabWidth - (col % tabWidth)
+			buf.WriteString(strings.Repeat(" ", spaces))
+			col += spaces
+		} else if r == '\n' {
+			buf.WriteRune(r)
+			col = 0
+		} else {
+			buf.WriteRune(r)
+			col++
+		}
+	}
+	return buf.String()
+}
+
 func writeStyledLine(b *strings.Builder, line string, quoted bool) {
+	line = expandTabs(line, 8) // position-aware tabs before lipgloss
 	if quoted {
 		b.WriteString(quotedLineStyle.Render(line))
 	} else if strings.HasPrefix(line, "↳ ") {

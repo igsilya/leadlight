@@ -888,6 +888,49 @@ func TestFormatMbox_CollapseMarkerCount(t *testing.T) {
 	}
 }
 
+func TestExpandTabs(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"\tcode", "        code"},
+		{"x\tcode", "x       code"},
+		{"+\tcode", "+       code"},
+		{"-\tcode", "-       code"},
+		// Context line (2 spaces) and +/- line (1 char) align at col 8
+		{"  \tcode", "        code"},
+		// Both produce "code" at column 8 — position-aware alignment
+		{"+\t\t\toff", "+                       off"},
+		{"  \t\t\toff", "                        off"},
+		{"no tabs", "no tabs"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := expandTabs(tt.in, 8)
+		if got != tt.want {
+			t.Errorf("expandTabs(%q, 8) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestExpandTabs_DiffAlignment(t *testing.T) {
+	// The key issue: in a diff, context lines have "  \t" (2 spaces
+	// + tab) while +/- lines have "+\t" (1 char + tab). With
+	// position-aware 8-col tabs, both should align code at column 8.
+	ctx := expandTabs("  \tPPC_LI64(code);", 8)
+	del := expandTabs("-\t/* Load percpu */", 8)
+	add := expandTabs("+\tEMIT(code);", 8)
+
+	// Find where the code text starts (after spaces)
+	ctxStart := len(ctx) - len(strings.TrimLeft(ctx, " "))
+	delStart := 1 + len(del[1:]) - len(strings.TrimLeft(del[1:], " "))
+	addStart := 1 + len(add[1:]) - len(strings.TrimLeft(add[1:], " "))
+
+	if ctxStart != delStart || ctxStart != addStart {
+		t.Errorf("code should start at same column:\n"+
+			"  ctx=%d: %q\n  del=%d: %q\n  add=%d: %q",
+			ctxStart, ctx, delStart, del, addStart, add)
+	}
+}
+
 func TestWrapHeaderValue_CommaTrailsCurrentLine(t *testing.T) {
 	value := "Lorem <lorem@ipsum.example>, Dolor <dolor@ipsum.example>, " +
 		"Amet <amet@ipsum.example>, Sit <sit@ipsum.example>"
