@@ -757,8 +757,9 @@ func TestSeriesToRow(t *testing.T) {
 	if row.Data[4] != "Lorem Ipsum" {
 		t.Errorf("Submitter = %q", row.Data[4])
 	}
-	if row.Data[5] != "2d" {
-		t.Errorf("Age = %q", row.Data[5])
+	// Age column stores raw date; formatAge is called at render time
+	if row.Data[5] == "" {
+		t.Error("Age should contain raw date")
 	}
 	if row.Data[ColC] != "1" {
 		t.Errorf("C = %q, want 1", row.Data[ColC])

@@ -1690,6 +1690,34 @@ func TestCacheSurvivesScrolling(t *testing.T) {
 	}
 }
 
+func TestSeriesRowCache_StaleAge(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	widths := m.columnWidths()
+	items := m.getVisibleItems()
+	if len(items) == 0 {
+		t.Skip("no visible items")
+	}
+	if int(ColAge) >= len(items[0].data) {
+		t.Skip("test model has no age column")
+	}
+	blank := "  "
+	// Cache a row
+	row1 := m.buildStyledRow(items[0], widths, blank, true)
+	// Same data → cache hit
+	row2 := m.buildStyledRow(items[0], widths, blank, true)
+	if row1 != row2 {
+		t.Error("same age should be a cache hit")
+	}
+	// Change the raw date to a very different time → cache miss
+	m.RowData[items[0].parentIdx].Data[ColAge] = "2020-01-01T00:00:00"
+	m.invalidateVisibleItems()
+	items = m.getVisibleItems()
+	row3 := m.buildStyledRow(items[0], widths, blank, true)
+	if row3 == row1 {
+		t.Error("different age should cause cache miss")
+	}
+}
+
 func TestRenderPatchView_NoTrailingSpaces(t *testing.T) {
 	m := testModel()
 	m.viewportLines = []string{

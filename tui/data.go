@@ -256,7 +256,7 @@ func seriesToRow(
 			cleaned,
 			aggregateState(patches),
 			displaySubmitter(s.Submitter, s.SubmitterEmail),
-			formatAge(s.Date),
+			s.Date, // raw date; formatAge called at render time so cached rows stay fresh
 			formatCount(commentCount),
 			formatCommentCell(commentCount, commentNames, s.Submitter),
 			formatSeriesReviews(patches, tags),
@@ -293,7 +293,7 @@ func patchToSubRow(
 		cleaned,
 		displayState(p.State),
 		displaySubmitter(p.Submitter, p.SubmitterEmail),
-		formatAge(p.Date),
+		p.Date, // raw date; formatAge called at render time so cached rows stay fresh
 		formatCount(commentCount),
 		formatCommentCell(commentCount, commentNames, p.Submitter),
 		formatPatchReviews(p.ID, tags),

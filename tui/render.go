@@ -242,6 +242,16 @@ func (m *Model) renderRows(
 	m.lastRowsVisible = rendered
 }
 
+// formatCellValue applies column-specific formatting. Age is
+// formatted at render time (not during data preparation) so that
+// cached rows detect staleness as time passes.
+func formatCellValue(col ColIndex, value string) string {
+	if col == ColAge {
+		return formatAge(value)
+	}
+	return value
+}
+
 func (m *Model) buildRawRow(
 	item visibleItem, widths []int,
 ) string {
@@ -251,7 +261,7 @@ func (m *Model) buildRawRow(
 		if widths[j] == 0 {
 			continue
 		}
-		text := cellData
+		text := formatCellValue(ColIndex(j), cellData)
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
@@ -271,7 +281,7 @@ func (m *Model) buildRow(
 			continue
 		}
 		col := ColIndex(j)
-		text := cellData
+		text := formatCellValue(col, cellData)
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
@@ -301,15 +311,21 @@ func (m *Model) buildStyledRow(
 ) string {
 	seriesID, _ := strconv.Atoi(m.RowData[item.parentIdx].Data[ColID])
 
-	// Check cache
+	// Check cache — also verify the age hasn't changed since
+	// the row was cached (age is formatted at render time).
+	var currentAge string
+	if int(ColAge) < len(item.data) {
+		currentAge = formatAge(item.data[ColAge])
+	}
 	if cache {
 		if sc := m.cachedRenderedRows[seriesID]; sc != nil {
 			if item.isSubRow {
 				if item.subRowIdx < len(sc.subRows) &&
-					sc.subRows[item.subRowIdx] != "" {
+					sc.subRows[item.subRowIdx] != "" &&
+					sc.subRowAges[item.subRowIdx] == currentAge {
 					return sc.subRows[item.subRowIdx]
 				}
-			} else if sc.seriesRow != "" {
+			} else if sc.seriesRow != "" && sc.seriesAge == currentAge {
 				return sc.seriesRow
 			}
 		}
@@ -325,7 +341,7 @@ func (m *Model) buildStyledRow(
 			continue
 		}
 		col := ColIndex(j)
-		text := cellData
+		text := formatCellValue(col, cellData)
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
@@ -349,18 +365,21 @@ func (m *Model) buildStyledRow(
 	if cache {
 		sc := m.cachedRenderedRows[seriesID]
 		if sc == nil {
+			nSubs := len(m.RowData[item.parentIdx].SubRows)
 			sc = &seriesRowCache{
-				subRows: make([]string,
-					len(m.RowData[item.parentIdx].SubRows)),
+				subRows:    make([]string, nSubs),
+				subRowAges: make([]string, nSubs),
 			}
 			m.cachedRenderedRows[seriesID] = sc
 		}
 		if item.isSubRow {
 			if item.subRowIdx < len(sc.subRows) {
 				sc.subRows[item.subRowIdx] = row
+				sc.subRowAges[item.subRowIdx] = currentAge
 			}
 		} else {
 			sc.seriesRow = row
+			sc.seriesAge = currentAge
 		}
 	}
 

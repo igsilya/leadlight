@@ -83,8 +83,10 @@ type SyncUpdateMsg struct {
 }
 
 type seriesRowCache struct {
-	seriesRow string
-	subRows   []string
+	seriesRow  string
+	seriesAge  string // formatAge result when seriesRow was cached
+	subRows    []string
+	subRowAges []string // formatAge results when sub-rows were cached
 }
 type StatusUpdateMsg struct{}
 type patchUpdateResultMsg struct{ err error }
@@ -96,6 +98,7 @@ type applyResultMsg struct {
 
 type highlightAnimTickMsg struct{}
 type spinnerTickMsg time.Time
+type ageRefreshMsg struct{}
 
 type applyState int
 
@@ -133,6 +136,11 @@ func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(
 		time.Duration(spinnerInterval)*time.Millisecond,
 		func(t time.Time) tea.Msg { return spinnerTickMsg(t) })
+}
+
+func ageRefreshCmd() tea.Cmd {
+	return tea.Tick(60*time.Second,
+		func(time.Time) tea.Msg { return ageRefreshMsg{} })
 }
 
 type Model struct {
@@ -242,6 +250,7 @@ func NewModel(d *db.DB, states []string, token string) *Model {
 		states:               states,
 		token:                token,
 		highlightAnimating:   true,
+		cachedRenderedRows:   map[int]*seriesRowCache{},
 	}
 	m.reloadData()
 	return m
@@ -442,7 +451,7 @@ func (m *Model) updateSelectedID() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return highlightAnimTickCmd()
+	return tea.Batch(highlightAnimTickCmd(), ageRefreshCmd())
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -472,6 +481,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case ageRefreshMsg:
+		// Triggers a re-render so buildStyledRow can detect stale
+		// ages in cached rows. No data processing needed — the
+		// staleness check happens during rendering by comparing
+		// formatAge(rawDate) against the cached age string.
+		return m, ageRefreshCmd()
 
 	case highlightAnimTickMsg:
 		if !m.highlightAnimating {
