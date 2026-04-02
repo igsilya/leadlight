@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"leadlight/db"
 )
 
@@ -240,23 +242,27 @@ func FormatMbox(p ParsedMbox, width int, collapse bool) string {
 func formatDiff(diff string, width int) string {
 	var b strings.Builder
 	for _, line := range strings.Split(diff, "\n") {
-		line = truncateLine(expandTabs(line, 8), width)
+		line = expandTabs(line, 8)
+		var style lipgloss.Style
 		switch {
 		case strings.HasPrefix(line, "+++ ") ||
 			strings.HasPrefix(line, "--- "):
-			b.WriteString(diffHeaderStyle.Render(line))
+			style = diffHeaderStyle
 		case strings.HasPrefix(line, "+"):
-			b.WriteString(diffAddStyle.Render(line))
+			style = diffAddStyle
 		case strings.HasPrefix(line, "-"):
-			b.WriteString(diffDelStyle.Render(line))
+			style = diffDelStyle
 		case strings.HasPrefix(line, "@@"):
-			b.WriteString(diffHunkStyle.Render(line))
+			style = diffHunkStyle
 		case strings.HasPrefix(line, "diff --git"):
-			b.WriteString(diffHeaderStyle.Render(line))
+			style = diffHeaderStyle
 		default:
-			b.WriteString(plainTextStyle.Render(line))
+			style = plainTextStyle
 		}
-		b.WriteByte('\n')
+		for _, wl := range wrapLine(line, width) {
+			b.WriteString(style.Render(wl))
+			b.WriteByte('\n')
+		}
 	}
 	return b.String()
 }
@@ -553,19 +559,18 @@ func FormatChecks(checks []CheckInfo, width int) string {
 			icon = "?"
 			style = checksPendingStyle
 		}
-		// Colored: icon + context. Uncolored: URL on same line.
+		// Colored: icon + context. Uncolored: URL on same or next line.
+		indent := "      "
 		prefix := fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context)
 		b.WriteString(style.Render(prefix))
 		if c.TargetURL != "" {
-			url := "  " + c.TargetURL
-			remaining := width - len(prefix)
-			if len(url) > remaining && remaining > 5 {
-				url = url[:remaining-1] + "…"
-			}
-			b.WriteString(url)
+			b.WriteByte('\n')
+			url := indent + c.TargetURL
+			b.WriteString(plainTextStyle.Render(
+				truncateLine(url, width)))
 		}
 		b.WriteByte('\n')
-		// Uncolored: description on indented lines below
+		// Description on indented, wrapped lines below
 		if c.Description != "" {
 			for _, descLine := range strings.Split(
 				c.Description, "\n") {
@@ -573,10 +578,10 @@ func FormatChecks(checks []CheckInfo, width int) string {
 				if descLine == "" {
 					continue
 				}
-				line := "      " + descLine
-				line = truncateLine(line, width)
-				b.WriteString(line)
-				b.WriteByte('\n')
+				for _, wl := range wrapLine(descLine, width-len(indent)) {
+					b.WriteString(plainTextStyle.Render(indent + wl))
+					b.WriteByte('\n')
+				}
 			}
 		}
 	}

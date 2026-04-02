@@ -249,13 +249,17 @@ func TestFormatComment_WrapsLongContent(t *testing.T) {
 	}
 }
 
-func TestFormatDiff_StillTruncates(t *testing.T) {
+func TestFormatDiff_WrapsLongLines(t *testing.T) {
 	longDiffLine := "+" + strings.Repeat("x", 200)
 	diff := "diff --git a/f b/f\n--- a/f\n+++ b/f\n" +
 		"@@ -1 +1 @@\n" + longDiffLine + "\n"
 	result := formatDiff(diff, 80)
-	if strings.Contains(result, "↳") {
-		t.Error("diff should truncate, not wrap")
+	if !strings.Contains(result, "↳") {
+		t.Error("long diff line should wrap with ↳ continuation")
+	}
+	// All content should be present (no truncation)
+	if strings.Contains(result, "…") {
+		t.Error("diff should wrap, not truncate")
 	}
 }
 
@@ -888,6 +892,82 @@ func TestFormatMbox_CollapseMarkerCount(t *testing.T) {
 	}
 }
 
+func TestFormatChecks_URLWrapsToNextLine(t *testing.T) {
+	checks := []CheckInfo{{
+		Context:   "ci/build",
+		State:     "success",
+		TargetURL: "https://example.com/builds/12345",
+	}}
+	// Width too narrow for URL on same line as context
+	result := FormatChecks(checks, 40)
+	lines := strings.Split(result, "\n")
+	// URL should be on a separate indented line
+	foundURL := false
+	for _, l := range lines {
+		stripped := stripAnsi(l)
+		if strings.Contains(stripped, "https://") {
+			foundURL = true
+			// Should be on its own line (indented), not on the context line
+			if strings.Contains(stripped, "ci/build") {
+				t.Errorf("URL should be on a separate line from context: %q", stripped)
+			}
+			// Should be fully visible (fits within width on its own line)
+			if !strings.Contains(stripped, "12345") {
+				t.Errorf("URL should not be truncated: %q", stripped)
+			}
+		}
+	}
+	if !foundURL {
+		t.Error("URL should be present in output")
+	}
+}
+
+func TestFormatChecks_DescriptionWraps(t *testing.T) {
+	checks := []CheckInfo{{
+		Context:     "ci/test",
+		State:       "fail",
+		Description: "This is a very long description that should wrap to multiple lines instead of being truncated with an ellipsis character",
+	}}
+	result := FormatChecks(checks, 60)
+	if strings.Contains(result, "…") {
+		t.Error("description should wrap, not truncate")
+	}
+	// All content should be present
+	if !strings.Contains(result, "ellipsis character") {
+		t.Error("full description should be visible")
+	}
+	// All description lines should be indented
+	for _, l := range strings.Split(result, "\n") {
+		if l == "" || strings.HasPrefix(l, "  ") || strings.HasPrefix(l, "Check") {
+			continue
+		}
+		// Strip ANSI codes for checking indentation
+		stripped := stripAnsi(l)
+		if stripped != "" && !strings.HasPrefix(stripped, "  ") {
+			t.Errorf("description line should be indented: %q", stripped)
+		}
+	}
+}
+
+func stripAnsi(s string) string {
+	var buf strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEsc = true
+			continue
+		}
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		buf.WriteRune(r)
+	}
+	return buf.String()
+}
+
 func TestExpandTabs(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"\tcode", "        code"},
@@ -1311,20 +1391,20 @@ func TestFormatChecks_NoDescription(t *testing.T) {
 	}
 	result := FormatChecks(checks, 120)
 	lines := strings.Split(result, "\n")
-	// Should be: header, context+url, empty trailing
+	// Should be: header, context, url, empty trailing
 	nonEmpty := 0
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
 			nonEmpty++
 		}
 	}
-	if nonEmpty != 2 {
-		t.Errorf("got %d non-empty lines, want 2 (header + check)",
+	if nonEmpty != 3 {
+		t.Errorf("got %d non-empty lines, want 3 (header + context + url)",
 			nonEmpty)
 	}
 }
 
-func TestFormatChecks_URLOnContextLine(t *testing.T) {
+func TestFormatChecks_URLAlwaysOnNextLine(t *testing.T) {
 	checks := []CheckInfo{
 		{Context: "build", State: "success",
 			TargetURL:   "https://ci.example.com/build/123",
@@ -1332,12 +1412,16 @@ func TestFormatChecks_URLOnContextLine(t *testing.T) {
 	}
 	result := FormatChecks(checks, 120)
 	lines := strings.Split(result, "\n")
-	// First non-header line should have both context and URL
-	contextLine := lines[1]
+	// Context and URL should be on separate lines
+	contextLine := stripAnsi(lines[1])
+	urlLine := stripAnsi(lines[2])
 	if !strings.Contains(contextLine, "build") {
 		t.Error("context line missing context name")
 	}
-	if !strings.Contains(contextLine, "https://ci.example.com") {
-		t.Error("context line missing URL")
+	if strings.Contains(contextLine, "https://") {
+		t.Error("URL should not be on the context line")
+	}
+	if !strings.Contains(urlLine, "https://ci.example.com") {
+		t.Errorf("URL should be on the next line, got %q", urlLine)
 	}
 }
