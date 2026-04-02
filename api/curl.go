@@ -18,6 +18,7 @@ func execCurl(req *http.Request, skipUA bool) (*http.Response, error) {
 		"-s", // silent
 		"-i", // include response headers
 		"-L", // follow redirects
+		"--max-time", strconv.Itoa(int(httpTimeout.Seconds())),
 		"-X", req.Method,
 	}
 

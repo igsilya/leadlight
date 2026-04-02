@@ -19,7 +19,10 @@ import (
 	"leadlight/config"
 )
 
-const defaultMinDelay = 5 * time.Second
+const (
+	defaultMinDelay = 5 * time.Second
+	httpTimeout     = 60 * time.Second
+)
 
 type transportMode int32
 
@@ -55,7 +58,7 @@ func NewClient(cfg *config.Config) *Client {
 		username: cfg.Username,
 		password: cfg.Password,
 		httpClient: &http.Client{
-			Timeout:   30 * time.Second,
+			Timeout:   httpTimeout,
 			Transport: transport,
 		},
 		minDelay: defaultMinDelay,
