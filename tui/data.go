@@ -377,8 +377,18 @@ func computePatchAFRT(patchID int, tags []db.TagRow) (a, f, r, t int) {
 }
 
 func firstName(s string) string {
-	if i := strings.IndexByte(s, '<'); i > 0 {
-		s = strings.TrimSpace(s[:i])
+	// Strip email: "Name <email>" → "Name", or "<email>" → email
+	if i := strings.IndexByte(s, '<'); i >= 0 {
+		name := strings.TrimSpace(s[:i])
+		if name != "" {
+			s = name
+		} else {
+			end := strings.IndexByte(s, '>')
+			if end < 0 {
+				end = len(s)
+			}
+			s = s[i+1 : end]
+		}
 	}
 	// "Lastname, Firstname" → use Firstname
 	if i := strings.IndexByte(s, ','); i >= 0 {
@@ -386,6 +396,10 @@ func firstName(s string) string {
 		if after != "" {
 			s = after
 		}
+	}
+	// Email address → use local part before @
+	if at := strings.IndexByte(s, '@'); at > 0 {
+		return s[:at]
 	}
 	if i := strings.IndexByte(s, ' '); i > 0 {
 		return s[:i]

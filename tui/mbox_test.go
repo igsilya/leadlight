@@ -968,6 +968,22 @@ func stripAnsi(s string) string {
 	return buf.String()
 }
 
+func TestFormatFrom(t *testing.T) {
+	tests := []struct{ name, email, want string }{
+		{"Lorem", "lorem@ex", "Lorem <lorem@ex>"},
+		{"", "bot@kernel.org", "bot@kernel.org"},
+		{"Lorem", "", "Lorem"},
+		{"", "", ""},
+	}
+	for _, tt := range tests {
+		got := formatFrom(tt.name, tt.email)
+		if got != tt.want {
+			t.Errorf("formatFrom(%q, %q) = %q, want %q",
+				tt.name, tt.email, got, tt.want)
+		}
+	}
+}
+
 func TestFormatChecks_CollapseSuccess(t *testing.T) {
 	var checks []CheckInfo
 	for i := 0; i < 10; i++ {

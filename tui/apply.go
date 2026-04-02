@@ -401,10 +401,7 @@ func (m *Model) collectApplyData() []applyPatch {
 
 		body := injectTags(row.Content, allComment, original, removeSignoff)
 
-		from := row.Submitter
-		if row.SubmitterEmail != "" {
-			from = row.Submitter + " <" + row.SubmitterEmail + ">"
-		}
+		from := formatFrom(row.Submitter, row.SubmitterEmail)
 
 		patches = append(patches, applyPatch{
 			From:    from,

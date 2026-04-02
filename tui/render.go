@@ -772,6 +772,9 @@ func (m *Model) renderCommentBar(maxWidth int) string {
 	for _, c := range m.viewComments {
 		name := firstName(c.Submitter)
 		if name == "" {
+			name = firstName(c.SubmitterEmail)
+		}
+		if name == "" {
 			name = "reply"
 		}
 		label := name + " (" + formatAge(c.Date) + ")"

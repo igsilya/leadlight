@@ -335,6 +335,10 @@ func TestFirstName(t *testing.T) {
 		{"Ipsum , Lorem Dolor", "Lorem"},
 		{"Lorem", "Lorem"},
 		{"", ""},
+		{"<bot@ipsum.example>", "bot"},
+		{"bot@ipsum.example", "bot"},
+		{"lorem-bot+dolor@ipsum.example", "lorem-bot+dolor"},
+		{"amet-tracker-bot@ipsum.example", "amet-tracker-bot"},
 	}
 	for _, tt := range tests {
 		got := firstName(tt.in)

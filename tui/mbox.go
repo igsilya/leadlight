@@ -74,18 +74,27 @@ func fromHeader(headers map[string]interface{}) string {
 	return decodeHeader(compactHeader(headerString(headers, "From")))
 }
 
+// formatFrom constructs a "Name <email>" string, handling the case
+// where the name is empty (returns just the email without brackets
+// or leading spaces).
+func formatFrom(name, email string) string {
+	if name != "" && email != "" {
+		return name + " <" + email + ">"
+	}
+	if name != "" {
+		return name
+	}
+	return email
+}
+
 // BuildParsedMboxFromPatch constructs a ParsedMbox from patch detail
 // data, eliminating the need for a separate mbox HTTP fetch.
 func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 	headers := parseJSONHeaders(row.Headers)
 	if headers == nil {
-		from := row.Submitter
-		if row.SubmitterEmail != "" {
-			from += " <" + row.SubmitterEmail + ">"
-		}
 		return ParsedMbox{
 			Subject: row.Name,
-			From:    from,
+			From:    formatFrom(row.Submitter, row.SubmitterEmail),
 			Date:    row.Date,
 			Body:    row.Content,
 			Diff:    row.Diff,
@@ -681,10 +690,7 @@ func FormatComment(c CommentInfo, width int, collapse bool) string {
 	// the last resort when neither Reply-To nor submitter exist.
 	from := decodeHeader(compactHeader(extractHeader(c.Headers, "Reply-To")))
 	if from == "" {
-		from = c.Submitter
-		if c.SubmitterEmail != "" {
-			from += " <" + c.SubmitterEmail + ">"
-		}
+		from = formatFrom(c.Submitter, c.SubmitterEmail)
 	}
 	if from == "" {
 		from = decodeHeader(compactHeader(extractHeader(c.Headers, "From")))
