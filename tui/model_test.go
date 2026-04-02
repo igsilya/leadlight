@@ -665,8 +665,8 @@ func TestFilterMode(t *testing.T) {
 	m := testModel()
 
 	m = pressKey(m, "/")
-	if !m.filterMode {
-		t.Error("filterMode should be true after /")
+	if !m.filterEditing {
+		t.Error("filterEditing should be true after /")
 	}
 
 	m = pressKey(m, "l")
@@ -708,8 +708,8 @@ func TestFilterMode_Esc(t *testing.T) {
 	m = pressKey(m, "/")
 	m = pressKey(m, "x")
 	m = pressSpecialKey(m, tea.KeyEsc)
-	if m.filterMode {
-		t.Error("filterMode should be false after esc")
+	if m.filterEditing {
+		t.Error("filterEditing should be false after esc")
 	}
 	if m.filterText != "" {
 		t.Errorf("filterText = %q, want empty", m.filterText)
@@ -785,8 +785,8 @@ func TestFilterMode_ClearPreservesSelection(t *testing.T) {
 	// Clear the filter
 	m = pressSpecialKey(m, tea.KeyEsc)
 
-	if m.filterMode {
-		t.Error("filterMode should be false")
+	if m.filterEditing {
+		t.Error("filterEditing should be false")
 	}
 	if m.selectedID != savedID {
 		t.Errorf("selectedID changed: %q -> %q",
@@ -829,6 +829,180 @@ func TestFilterMode_ClearCollapsesExceptSelected(t *testing.T) {
 	}
 	if expandedCount > 1 {
 		t.Errorf("expanded count = %d, want <= 1", expandedCount)
+	}
+}
+
+func TestFilterEditing_AllPrintableKeysAreTextInput(t *testing.T) {
+	// Keys that have special meaning in normal table view
+	// but should be typed into the filter during editing.
+	keys := []string{
+		"j", "k", "g", "G",
+		"q", "a", "f", "p", "s", "d",
+		"/", "`", "e", "w",
+		" ",
+	}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			m := testModel()
+			m = pressKey(m, "/")
+			m = pressKey(m, key)
+			if m.filterText != key {
+				t.Errorf("key %q: filterText = %q, want %q",
+					key, m.filterText, key)
+			}
+		})
+	}
+}
+
+func TestFilterCommit(t *testing.T) {
+	m := testModel()
+	// Enter filter editing, type "lo", commit
+	m = pressKey(m, "/")
+	m = pressKey(m, "l")
+	m = pressKey(m, "o")
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if m.filterEditing {
+		t.Error("filterEditing should be false after commit")
+	}
+	if m.filterText != "lo" {
+		t.Errorf("filterText = %q, want 'lo'", m.filterText)
+	}
+	// Items should still be filtered
+	items := m.getVisibleItems()
+	for _, item := range items {
+		if item.isSubRow {
+			continue
+		}
+		found := false
+		for _, f := range item.data {
+			if strings.Contains(strings.ToLower(f), "lo") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("item %v should match filter 'lo'",
+				item.data)
+		}
+	}
+}
+
+func TestFilterCommit_CollapsesAutoExpanded(t *testing.T) {
+	m := testModel()
+	// Filter for "sub" — auto-expands during editing
+	m = pressKey(m, "/")
+	m = pressKey(m, "s")
+	m = pressKey(m, "u")
+	m = pressKey(m, "b")
+
+	// Verify auto-expanded during editing
+	items := m.getVisibleItems()
+	hasSubRow := false
+	for _, item := range items {
+		if item.isSubRow {
+			hasSubRow = true
+			break
+		}
+	}
+	if !hasSubRow {
+		t.Fatal("sub-rows should be auto-expanded during editing")
+	}
+
+	// Commit — should collapse auto-expanded rows
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	// After commit, only manually expanded rows should show subs
+	expandedCount := 0
+	for _, rd := range m.RowData {
+		if rd.Expanded {
+			expandedCount++
+		}
+	}
+	if expandedCount > 1 {
+		t.Errorf("at most 1 row should be expanded after commit, got %d",
+			expandedCount)
+	}
+}
+
+func TestFilterReEdit(t *testing.T) {
+	m := testModel()
+	// Commit a filter
+	m = pressKey(m, "/")
+	m = pressKey(m, "l")
+	m = pressKey(m, "o")
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	// Re-enter editing with /
+	m = pressKey(m, "/")
+	if !m.filterEditing {
+		t.Error("should be in editing mode after /")
+	}
+	if m.filterText != "lo" {
+		t.Errorf("filterText = %q, want 'lo' (preserved)",
+			m.filterText)
+	}
+
+	// Type more
+	m = pressKey(m, "r")
+	if m.filterText != "lor" {
+		t.Errorf("filterText = %q, want 'lor'", m.filterText)
+	}
+}
+
+func TestFilterCommit_EscClears(t *testing.T) {
+	m := testModel()
+	// Commit a filter
+	m = pressKey(m, "/")
+	m = pressKey(m, "l")
+	m = pressKey(m, "o")
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	// Esc should clear the committed filter
+	m = pressSpecialKey(m, tea.KeyEsc)
+	if m.filterText != "" {
+		t.Errorf("filterText = %q, want empty after esc",
+			m.filterText)
+	}
+	if m.filterEditing {
+		t.Error("filterEditing should be false after esc")
+	}
+}
+
+func TestFilterCommit_QClears(t *testing.T) {
+	m := testModel()
+	// Commit a filter
+	m = pressKey(m, "/")
+	m = pressKey(m, "l")
+	m = pressKey(m, "o")
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	// q should clear the committed filter, not quit
+	m = pressKey(m, "q")
+	if m.filterText != "" {
+		t.Errorf("filterText = %q, want empty after q",
+			m.filterText)
+	}
+}
+
+func TestFilterCommit_NormalNavigation(t *testing.T) {
+	m := testModel()
+	// Commit a filter
+	m = pressKey(m, "/")
+	m = pressKey(m, "l")
+	m = pressKey(m, "o")
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	// Space should toggle expand (not interpreted as filter char)
+	items := m.getVisibleItems()
+	if m.selectedRow < len(items) {
+		parentIdx := items[m.selectedRow].parentIdx
+		wasBefore := m.RowData[parentIdx].Expanded
+		m = pressKey(m, " ")
+		wasAfter := m.RowData[parentIdx].Expanded
+		if wasBefore == wasAfter {
+			t.Error("space should toggle expansion in committed state")
+		}
 	}
 }
 
@@ -1354,7 +1528,7 @@ func TestGetVisibleItems_InvalidateOnFilter(t *testing.T) {
 	items1 := m.getVisibleItems()
 
 	// Apply a filter
-	m.filterMode = true
+	m.filterEditing = true
 	m.filterText = "lorem"
 	m.applyFilter()
 

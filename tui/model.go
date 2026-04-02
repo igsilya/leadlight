@@ -180,7 +180,7 @@ type Model struct {
 
 	selectedID         string
 	showAll            bool
-	filterMode         bool
+	filterEditing      bool
 	filterText         string
 	cachedRenderedRows map[int]*seriesRowCache
 
@@ -377,8 +377,8 @@ func matchesFilter(data []string, filter string) bool {
 }
 
 func (m *Model) startFilter() {
-	m.filterMode = true
-	m.filterText = ""
+	m.filterEditing = true
+	// Keep existing filterText when re-editing with /
 	m.invalidateVisibleItems()
 }
 
@@ -387,6 +387,33 @@ func (m *Model) applyFilter() {
 	m.scrollOffset = 0
 	m.invalidateVisibleItems()
 	m.updateSelectedID()
+}
+
+func (m *Model) commitFilter() {
+	if m.filterText == "" {
+		m.clearFilter()
+		return
+	}
+	// Collapse auto-expanded rows, re-expand only the parent
+	// of the currently selected item.
+	expandParent := -1
+	items := m.getVisibleItems()
+	if m.selectedRow < len(items) {
+		expandParent = items[m.selectedRow].parentIdx
+	}
+
+	m.filterEditing = false
+
+	for i := range m.RowData {
+		m.RowData[i].Expanded = false
+	}
+	if expandParent >= 0 && expandParent < len(m.RowData) {
+		m.RowData[expandParent].Expanded = true
+	}
+
+	m.invalidateVisibleItems()
+	m.restoreSelection()
+	m.ensureSelectedVisible()
 }
 
 func (m *Model) clearFilter() {
@@ -398,7 +425,7 @@ func (m *Model) clearFilter() {
 		expandParent = items[m.selectedRow].parentIdx
 	}
 
-	m.filterMode = false
+	m.filterEditing = false
 	m.filterText = ""
 
 	for i := range m.RowData {
@@ -644,7 +671,8 @@ func (m *Model) getVisibleItems() []visibleItem {
 
 		// Auto-expand series with matching sub-rows during filtering
 		showSubs := rd.Expanded ||
-			(filter != "" && len(matchingSubs) > 0 && !singlePatchSameName(rd))
+			(m.filterEditing && len(matchingSubs) > 0 &&
+				!singlePatchSameName(rd))
 		if showSubs {
 			for si, sub := range rd.SubRows {
 				if filter != "" && !seriesMatch {

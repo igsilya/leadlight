@@ -19,7 +19,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.applyState != applyIdle {
 		return m.handleApplyKey(msg)
 	}
-	if key == "`" {
+	if key == "`" && !m.filterEditing {
 		m.logConsole = !m.logConsole
 		m.logFocused = false
 		if m.logConsole && m.LogBuf != nil {
@@ -65,8 +65,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	if m.filterMode {
+	if m.filterEditing {
 		switch key {
+		case "enter":
+			m.commitFilter()
+			return m, nil
 		case "esc":
 			m.clearFilter()
 			return m, nil
@@ -78,22 +81,31 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.clearFilter()
 			}
 			return m, nil
+		case "up", "down", "pgup", "ctrl+u",
+			"pgdown", "ctrl+d", "home", "end":
+			// Fall through to normal navigation
 		default:
 			if len(key) == 1 && key[0] >= ' ' && key[0] <= '~' {
 				m.filterText += key
 				m.applyFilter()
-				return m, nil
 			}
+			return m, nil
 		}
 	}
 
 	switch key {
 	case "q", "ctrl+c":
-		if m.filterMode {
+		if m.filterText != "" {
 			m.clearFilter()
 			return m, nil
 		}
 		return m, tea.Quit
+
+	case "esc":
+		if m.filterText != "" {
+			m.clearFilter()
+			return m, nil
+		}
 
 	case "/":
 		m.startFilter()

@@ -825,12 +825,14 @@ func (m *Model) renderHelpBar(out *strings.Builder) {
 
 	bright, desc, sep := m.helpStyles()
 
-	if m.filterMode {
+	if m.filterEditing {
 		out.WriteString(desc.Render("Filter: "))
 		out.WriteString(normalOptionStyle.Render(m.filterText + "_"))
 		out.WriteString(sep.Render("  "))
 		out.WriteString(bright.Render("↑/↓") +
 			sep.Render(" ") + bright.Render("pgup/dn"))
+		out.WriteString(helpSepStr(sep))
+		out.WriteString(helpKey(bright, desc, "enter", "commit"))
 		out.WriteString(helpSepStr(sep))
 		out.WriteString(helpKey(bright, desc, "esc", "clear"))
 		return
@@ -858,7 +860,11 @@ func (m *Model) renderHelpBar(out *strings.Builder) {
 			sep.Render("] "))
 	}
 
-	b.WriteString(helpKey(bright, desc, "q", "quit"))
+	if m.filterText != "" {
+		b.WriteString(helpKey(bright, desc, "q", "clear"))
+	} else {
+		b.WriteString(helpKey(bright, desc, "q", "quit"))
+	}
 	b.WriteString(helpSepStr(sep))
 	b.WriteString(bright.Render("↑/↓") +
 		sep.Render(" ") + bright.Render("pgup/dn"))
@@ -867,7 +873,11 @@ func (m *Model) renderHelpBar(out *strings.Builder) {
 	b.WriteString(helpSepStr(sep))
 	b.WriteString(helpKey(bright, desc, "space", "expand"))
 	b.WriteString(helpSepStr(sep))
-	b.WriteString(helpKey(bright, desc, "/", "filter"))
+	if m.filterText != "" {
+		b.WriteString(helpKey(bright, desc, "/", "edit"))
+	} else {
+		b.WriteString(helpKey(bright, desc, "/", "filter"))
+	}
 	b.WriteString(helpSepStr(sep))
 	b.WriteString(helpKey(bright, desc, "f", "fetch"))
 	b.WriteString(helpSepStr(sep))
