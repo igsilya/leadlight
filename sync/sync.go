@@ -211,6 +211,7 @@ func (s *Syncer) Run(ctx context.Context) {
 		s.notify()
 	}
 	s.backfillHistory(ctx)
+	s.incrementalSync(ctx)
 
 	var wg gosync.WaitGroup
 	wg.Add(9)
@@ -295,10 +296,6 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 
 func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	defer wg.Done()
-
-	s.status.Set(status.BgSync, "Checking events...", true)
-	s.incrementalSync(ctx)
-	s.status.Clear(status.BgSync)
 
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
