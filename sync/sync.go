@@ -508,9 +508,9 @@ func (s *Syncer) fetchInitialEvents(ctx context.Context) {
 	if oldest == "" {
 		return
 	}
-	// Cap to 1 week back — older events are redundant since
+	// Cap to 1 day back — older events are redundant since
 	// patches and series were already fetched with full data.
-	cap := time.Now().AddDate(0, 0, -7).Format("2006-01-02T15:04:05")
+	cap := time.Now().AddDate(0, 0, -1).Format("2006-01-02T15:04:05")
 	since := oldest
 	if since < cap {
 		since = cap
@@ -521,7 +521,11 @@ func (s *Syncer) fetchInitialEvents(ctx context.Context) {
 func (s *Syncer) incrementalSync(ctx context.Context) {
 	since := s.db.GetSyncState("last_event_date")
 	if since == "" {
-		return
+		// No event watermark — either initial fetch failed or
+		// this is a fresh DB. Use 1-day fallback so we don't
+		// permanently miss events.
+		since = time.Now().AddDate(0, 0, -1).Format("2006-01-02T15:04:05")
+		log.Printf("SYNC: no event watermark, using 1-day fallback")
 	}
 	s.fetchEventsSince(ctx, since, status.BgSync)
 }

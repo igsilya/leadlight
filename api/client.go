@@ -573,7 +573,7 @@ func (c *Client) BuildEventsURL(
 	params EventListParams,
 ) string {
 	v := url.Values{}
-	v.Set("per_page", "1000")
+	v.Set("per_page", "250")
 	if params.Project != "" {
 		v.Set("project", params.Project)
 	}
