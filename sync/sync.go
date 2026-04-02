@@ -302,9 +302,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 	lastMaintainerRefresh := time.Now()
 
 	doSync := func(syncCtx context.Context) {
-		s.status.Set(status.BgSync, "Checking events...", true)
 		s.incrementalSync(syncCtx)
-		s.status.Clear(status.BgSync)
 		s.status.Clear(status.Sync)
 		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
 			s.fetchMaintainers(syncCtx)
@@ -524,7 +522,9 @@ func (s *Syncer) incrementalSync(ctx context.Context) {
 		since = time.Now().AddDate(0, 0, -1).Format("2006-01-02T15:04:05")
 		log.Printf("SYNC: no event watermark, using 1-day fallback")
 	}
+	s.status.Set(status.BgSync, "Checking events...", true)
 	s.fetchEventsSince(ctx, since, status.BgSync)
+	s.status.Clear(status.BgSync)
 }
 
 func (s *Syncer) fetchEventsSince(
