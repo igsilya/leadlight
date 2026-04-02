@@ -182,8 +182,15 @@ func (c *Client) newRequest(
 }
 
 func isBotResponse(resp *http.Response) bool {
-	ct := resp.Header.Get("Content-Type")
-	return strings.Contains(ct, "text/html")
+	// Bot protection returns HTML challenge pages on specific
+	// status codes (200, 403, 503). Other status codes with HTML
+	// are server errors, not bot protection.
+	switch resp.StatusCode {
+	case 200, 403, 503:
+		ct := resp.Header.Get("Content-Type")
+		return strings.Contains(ct, "text/html")
+	}
+	return false
 }
 
 // doCurlRequest performs an HTTP request via the curl binary.

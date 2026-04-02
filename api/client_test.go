@@ -648,17 +648,39 @@ func TestFixScheme_InPagination(t *testing.T) {
 }
 
 func TestIsBotResponse(t *testing.T) {
-	bot := &http.Response{Header: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}}}
-	if !isBotResponse(bot) {
-		t.Error("text/html should be detected as bot response")
+	tests := []struct {
+		name   string
+		status int
+		ct     string
+		want   bool
+	}{
+		{"200 html = bot", 200, "text/html; charset=utf-8", true},
+		{"200 json = ok", 200, "application/json", false},
+		{"200 empty ct = ok", 200, "", false},
+		{"403 html = bot", 403, "text/html", true},
+		{"503 html = bot", 503, "text/html", true},
+		{"500 html = server error", 500, "text/html", false},
+		{"502 html = server error", 502, "text/html", false},
+		{"504 html = server error", 504, "text/html", false},
+		{"404 html = not bot", 404, "text/html", false},
+		{"401 html = not bot", 401, "text/html", false},
+		{"408 html = not bot", 408, "text/html", false},
 	}
-	ok := &http.Response{Header: http.Header{"Content-Type": []string{"application/json"}}}
-	if isBotResponse(ok) {
-		t.Error("application/json should not be detected as bot response")
-	}
-	empty := &http.Response{Header: http.Header{}}
-	if isBotResponse(empty) {
-		t.Error("missing Content-Type should not be detected as bot response")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: tt.status,
+				Header:     http.Header{},
+			}
+			if tt.ct != "" {
+				resp.Header.Set("Content-Type", tt.ct)
+			}
+			got := isBotResponse(resp)
+			if got != tt.want {
+				t.Errorf("isBotResponse(status=%d, ct=%q) = %v, want %v",
+					tt.status, tt.ct, got, tt.want)
+			}
+		})
 	}
 }
 
