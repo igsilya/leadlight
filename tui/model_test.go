@@ -1552,6 +1552,33 @@ func TestGetVisibleItems_InvalidateOnExpand(t *testing.T) {
 	}
 }
 
+func TestExtractHTTPStatus(t *testing.T) {
+	tests := []struct {
+		line     string
+		wantCode int
+		wantLen  int
+	}{
+		{"HTTP GET (go) -> 200 https://ex", 200, 3},
+		{"HTTP GET (curl) -> 404 https://ex", 404, 3},
+		{"HTTP GET (go) -> 502 https://ex", 502, 3},
+		{"HTTP GET (go) -> error: timeout", -1, 5},
+		{"SYNC: fetching details", 0, 0},
+		{"no arrow here", 0, 0},
+		{"-> abc not a number", 0, 0},
+		{"-> 99 too short", 0, 0},
+		{"-> 200", 200, 3},
+	}
+	for _, tt := range tests {
+		code, _, length := extractHTTPStatus(tt.line)
+		if code != tt.wantCode || length != tt.wantLen {
+			t.Errorf("extractHTTPStatus(%q) = (%d, _, %d), "+
+				"want (%d, _, %d)",
+				tt.line, code, length,
+				tt.wantCode, tt.wantLen)
+		}
+	}
+}
+
 func TestSeriesRowCache_Hit(t *testing.T) {
 	m := testModel()
 	// Populate cache via buildStyledRow with cache=true

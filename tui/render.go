@@ -967,6 +967,50 @@ func helpSepStr(sep lipgloss.Style) string {
 	return sep.Render(" | ")
 }
 
+// extractHTTPStatus finds "-> NNN" or "-> error" in a log line.
+// Returns (code, byteOffset, length). Code is -1 for "error",
+// 100-599 for status codes, 0 if not an HTTP log line.
+func extractHTTPStatus(line string) (code, offset, length int) {
+	idx := strings.Index(line, "-> ")
+	if idx < 0 {
+		return 0, 0, 0
+	}
+	rest := line[idx+3:]
+	if strings.HasPrefix(rest, "error") {
+		return -1, idx + 3, 5
+	}
+	if len(rest) >= 3 {
+		n, err := strconv.Atoi(rest[:3])
+		if err == nil && n >= 100 && n <= 599 {
+			return n, idx + 3, 3
+		}
+	}
+	return 0, 0, 0
+}
+
+func httpStatusStyle(code int) lipgloss.Style {
+	switch {
+	case code < 0:
+		return logHTTPErrStyle
+	case code < 300:
+		return logHTTP2xxStyle
+	case code < 500:
+		return logHTTP4xxStyle
+	default:
+		return logHTTPErrStyle
+	}
+}
+
+func renderHTTPLogLine(
+	out *strings.Builder, text string,
+	code, codeAt, codeLen int,
+) {
+	out.WriteString(logLineStyle.Render(text[:codeAt]))
+	out.WriteString(httpStatusStyle(code).Render(
+		text[codeAt : codeAt+codeLen]))
+	out.WriteString(logLineStyle.Render(text[codeAt+codeLen:]))
+}
+
 func (m *Model) renderLogConsole(height int) string {
 	var out strings.Builder
 
@@ -998,8 +1042,11 @@ func (m *Model) renderLogConsole(height int) string {
 	// can't be filled (entries expired), push anchor forward until
 	// it fills or we reach logLastSeen.
 	type styledLine struct {
-		text    string
-		isApply bool
+		text        string
+		isApply     bool
+		httpCode    int // 0=not HTTP, -1=error, 100-599=status
+		httpCodeAt  int // byte offset of status/error in text
+		httpCodeLen int // byte length of status/error word
 	}
 	var visual []styledLine
 	for m.logAnchor <= m.logLastSeen {
@@ -1012,7 +1059,12 @@ func (m *Model) renderLogConsole(height int) string {
 			isApply := strings.Contains(lines[i], "[apply]")
 			wrapped := wrapLogLine(lines[i], m.width)
 			for j := len(wrapped) - 1; j >= 0; j-- {
-				visual = append(visual, styledLine{wrapped[j], isApply})
+				code, at, codeLen := extractHTTPStatus(wrapped[j])
+				visual = append(visual, styledLine{
+					text: wrapped[j], isApply: isApply,
+					httpCode: code, httpCodeAt: at,
+					httpCodeLen: codeLen,
+				})
 			}
 			if len(visual) >= visibleLines {
 				break
@@ -1035,6 +1087,9 @@ func (m *Model) renderLogConsole(height int) string {
 	for _, vl := range visual {
 		if vl.isApply {
 			out.WriteString(applyLogStyle.Render(vl.text))
+		} else if vl.httpCode != 0 {
+			renderHTTPLogLine(&out, vl.text,
+				vl.httpCode, vl.httpCodeAt, vl.httpCodeLen)
 		} else {
 			out.WriteString(logLineStyle.Render(vl.text))
 		}

@@ -76,6 +76,9 @@ var (
 	wrapIndicatorStyle     lipgloss.Style
 	logLineStyle           lipgloss.Style
 	applyLogStyle          lipgloss.Style
+	logHTTP2xxStyle        lipgloss.Style
+	logHTTP4xxStyle        lipgloss.Style
+	logHTTPErrStyle        lipgloss.Style
 )
 
 type gradientEntry struct{ bg, fg string }
@@ -151,6 +154,9 @@ func buildStyles(t *theme) {
 	wrapIndicatorStyle = fg(t.WrapIndicatorFg)
 	logLineStyle = fg(t.LogLineFg)
 	applyLogStyle = fg(t.ApplyLogFg)
+	logHTTP2xxStyle = fg(t.LogHTTP2xxFg)
+	logHTTP4xxStyle = fg(t.LogHTTP4xxFg)
+	logHTTPErrStyle = fg(t.LogHTTPErrFg)
 
 	bgStyles = map[string]*cachedBgStyle{}
 	gradientPalettes = map[string][256]gradientEntry{}
