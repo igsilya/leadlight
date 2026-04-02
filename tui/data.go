@@ -12,16 +12,16 @@ import (
 )
 
 var PatchworkColumns = []ColumnDef{
-	{Title: "ID", FixedWidth: 9, Visible: true},
+	{Title: "ID", FixedWidth: 10, Visible: true},
 	{Title: "Ver", FixedWidth: 4, Visible: true},
 	{Title: "Name", Visible: true},
-	{Title: "State", FixedWidth: 8, Visible: true},
-	{Title: "Submitter", FixedWidth: 20, Visible: true},
+	{Title: "State", FixedWidth: 9, Visible: true},
+	{Title: "Submitter", FixedWidth: 18, Visible: true},
 	{Title: "Age", FixedWidth: 5, Visible: true},
 	{Title: "C", FixedWidth: 3, Visible: true},
 	{Title: "Comments", FixedWidth: 15, Visible: false},
 	{Title: "A F R T", FixedWidth: 9, Visible: true},
-	{Title: "Checks", FixedWidth: 8, Visible: true},
+	{Title: "Checks", FixedWidth: 9, Visible: true},
 	{Title: "Delegate", FixedWidth: 8, Visible: true},
 }
 

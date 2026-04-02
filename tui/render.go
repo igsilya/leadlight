@@ -1108,5 +1108,5 @@ func truncate(s string, width int) string {
 	if width < 3 {
 		return string(runes[:width])
 	}
-	return string(runes[:width-3]) + "..."
+	return string(runes[:width-2]) + "… "
 }

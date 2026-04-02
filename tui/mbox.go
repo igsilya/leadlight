@@ -508,7 +508,7 @@ func truncateLine(s string, width int) string {
 	if len(runes) <= width {
 		return s
 	}
-	if width < 3 {
+	if width < 2 {
 		return string(runes[:width])
 	}
 	return string(runes[:width-1]) + "…"

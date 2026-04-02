@@ -337,9 +337,9 @@ func copyColumns() []ColumnDef {
 
 func TestColumnWidths_CommentsAutoSwitch(t *testing.T) {
 	// Fixed sum excluding C and Comments:
-	// ID(9)+Ver(4)+State(8)+Submitter(20)+Age(5)+AFRT(9)+Checks(8)+Delegate(8) = 71
-	// Indicator = 2, so remaining = width - 73
-	// Comments visible when remaining - 15 >= 90, i.e. remaining >= 105, i.e. width >= 178
+	// ID(10)+Ver(4)+State(9)+Submitter(18)+Age(5)+AFRT(9)+Checks(9)+Delegate(8) = 72
+	// Indicator = 2, so remaining = width - 74
+	// Comments visible when remaining - 15 >= 90, i.e. remaining >= 105, i.e. width >= 179
 	tests := []struct {
 		name             string
 		width            int
@@ -348,10 +348,10 @@ func TestColumnWidths_CommentsAutoSwitch(t *testing.T) {
 		wantNameWidth    int
 		wantCommentWidth int
 	}{
-		{"wide shows Comments", 178, false, true, 90, 15},
-		{"narrow shows C", 177, true, false, 101, 3},
-		{"very wide", 250, false, true, 162, 15},
-		{"small terminal", 100, true, false, 24, 3},
+		{"wide shows Comments", 179, false, true, 90, 15},
+		{"narrow shows C", 178, true, false, 101, 3},
+		{"very wide", 250, false, true, 161, 15},
+		{"small terminal", 100, true, false, 23, 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
