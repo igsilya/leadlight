@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"mime"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -527,10 +528,36 @@ type CheckInfo struct {
 	Description string
 }
 
-func FormatChecks(checks []CheckInfo, width int) string {
+func FormatChecks(
+	checks []CheckInfo, width int, collapse bool,
+) string {
 	if len(checks) == 0 {
 		return ""
 	}
+
+	// Sort into groups, alphabetical by context within each.
+	var fails, warns, succs, pends []CheckInfo
+	for _, c := range checks {
+		switch c.State {
+		case "fail":
+			fails = append(fails, c)
+		case "warning":
+			warns = append(warns, c)
+		case "success":
+			succs = append(succs, c)
+		default:
+			pends = append(pends, c)
+		}
+	}
+	byCtx := func(s []CheckInfo) {
+		sort.Slice(s, func(i, j int) bool {
+			return s[i].Context < s[j].Context
+		})
+	}
+	byCtx(fails)
+	byCtx(warns)
+	byCtx(succs)
+	byCtx(pends)
 
 	maxCtx := 0
 	for _, c := range checks {
@@ -542,7 +569,9 @@ func FormatChecks(checks []CheckInfo, width int) string {
 	var b strings.Builder
 	b.WriteString(mboxHeaderLabel.Render("Checks:"))
 	b.WriteByte('\n')
-	for _, c := range checks {
+
+	indent := "      "
+	writeCheck := func(c CheckInfo) {
 		icon := "?"
 		style := checksPendingStyle
 		switch c.State {
@@ -555,12 +584,7 @@ func FormatChecks(checks []CheckInfo, width int) string {
 		case "warning":
 			icon = "!"
 			style = checksWarnStyle
-		case "pending":
-			icon = "?"
-			style = checksPendingStyle
 		}
-		// Colored: icon + context. Uncolored: URL on same or next line.
-		indent := "      "
 		prefix := fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context)
 		b.WriteString(style.Render(prefix))
 		if c.TargetURL != "" {
@@ -570,21 +594,58 @@ func FormatChecks(checks []CheckInfo, width int) string {
 				truncateLine(url, width)))
 		}
 		b.WriteByte('\n')
-		// Description on indented, wrapped lines below
 		if c.Description != "" {
-			for _, descLine := range strings.Split(
-				c.Description, "\n") {
-				descLine = strings.TrimSpace(descLine)
-				if descLine == "" {
+			for _, dl := range strings.Split(c.Description, "\n") {
+				dl = strings.TrimSpace(dl)
+				if dl == "" {
 					continue
 				}
-				for _, wl := range wrapLine(descLine, width-len(indent)) {
-					b.WriteString(plainTextStyle.Render(indent + wl))
+				for _, wl := range wrapLine(dl, width-len(indent)) {
+					b.WriteString(
+						plainTextStyle.Render(indent + wl))
 					b.WriteByte('\n')
 				}
 			}
 		}
 	}
+
+	// Failures and warnings — always shown in full.
+	for _, c := range fails {
+		writeCheck(c)
+	}
+	for _, c := range warns {
+		writeCheck(c)
+	}
+
+	// Successes — collapse to 3 when there are many.
+	if collapse && len(succs) > collapseHeaderMax {
+		for _, c := range succs[:collapseHeaderMax] {
+			writeCheck(c)
+		}
+		marker := fmt.Sprintf(
+			"··· %d successful checks total (e to expand) ···",
+			len(succs))
+		b.WriteString("  " + quotedLineStyle.Render(marker))
+		b.WriteByte('\n')
+	} else {
+		for _, c := range succs {
+			writeCheck(c)
+		}
+	}
+
+	// Pending — hide entirely when collapsed.
+	if collapse && len(pends) > 0 {
+		marker := fmt.Sprintf(
+			"··· %d checks pending (e to expand) ···",
+			len(pends))
+		b.WriteString("  " + quotedLineStyle.Render(marker))
+		b.WriteByte('\n')
+	} else {
+		for _, c := range pends {
+			writeCheck(c)
+		}
+	}
+
 	return b.String()
 }
 

@@ -197,7 +197,7 @@ type Model struct {
 	viewCommentIdx int // -1 = patch/cover, 0+ = comment
 	viewportLines  []string
 	viewportOffset int
-	quotesExpanded bool
+	viewExpanded   bool
 	listPrefix     string
 	delegateNames  map[string]string
 	logConsole     bool

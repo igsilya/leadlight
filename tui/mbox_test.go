@@ -899,7 +899,7 @@ func TestFormatChecks_URLWrapsToNextLine(t *testing.T) {
 		TargetURL: "https://example.com/builds/12345",
 	}}
 	// Width too narrow for URL on same line as context
-	result := FormatChecks(checks, 40)
+	result := FormatChecks(checks, 40, false)
 	lines := strings.Split(result, "\n")
 	// URL should be on a separate indented line
 	foundURL := false
@@ -928,7 +928,7 @@ func TestFormatChecks_DescriptionWraps(t *testing.T) {
 		State:       "fail",
 		Description: "This is a very long description that should wrap to multiple lines instead of being truncated with an ellipsis character",
 	}}
-	result := FormatChecks(checks, 60)
+	result := FormatChecks(checks, 60, false)
 	if strings.Contains(result, "…") {
 		t.Error("description should wrap, not truncate")
 	}
@@ -966,6 +966,117 @@ func stripAnsi(s string) string {
 		buf.WriteRune(r)
 	}
 	return buf.String()
+}
+
+func TestFormatChecks_CollapseSuccess(t *testing.T) {
+	var checks []CheckInfo
+	for i := 0; i < 10; i++ {
+		checks = append(checks, CheckInfo{
+			Context: fmt.Sprintf("ci/test-%02d", i),
+			State:   "success",
+		})
+	}
+	result := FormatChecks(checks, 80, true)
+	count := strings.Count(result, "✓")
+	if count != 3 {
+		t.Errorf("got %d success icons, want 3", count)
+	}
+	if !strings.Contains(result, "10 successful checks total") {
+		t.Error("should show collapse marker with total count")
+	}
+}
+
+func TestFormatChecks_CollapsePending(t *testing.T) {
+	var checks []CheckInfo
+	for i := 0; i < 5; i++ {
+		checks = append(checks, CheckInfo{
+			Context: fmt.Sprintf("ci/pending-%02d", i),
+			State:   "pending",
+		})
+	}
+	result := FormatChecks(checks, 80, true)
+	if !strings.Contains(result, "5 checks pending") {
+		t.Error("should show pending collapse marker")
+	}
+	if strings.Contains(result, "ci/pending-00") {
+		t.Error("individual pending checks should be hidden")
+	}
+}
+
+func TestFormatChecks_FailuresAlwaysShown(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "ci/fail-1", State: "fail"},
+		{Context: "ci/fail-2", State: "fail"},
+		{Context: "ci/warn-1", State: "warning"},
+	}
+	for i := 0; i < 10; i++ {
+		checks = append(checks, CheckInfo{
+			Context: fmt.Sprintf("ci/ok-%02d", i),
+			State:   "success",
+		})
+	}
+	for i := 0; i < 3; i++ {
+		checks = append(checks, CheckInfo{
+			Context: fmt.Sprintf("ci/pend-%d", i),
+			State:   "pending",
+		})
+	}
+	result := FormatChecks(checks, 80, true)
+	if !strings.Contains(result, "ci/fail-1") ||
+		!strings.Contains(result, "ci/fail-2") {
+		t.Error("failures should always be shown")
+	}
+	if !strings.Contains(result, "ci/warn-1") {
+		t.Error("warnings should always be shown")
+	}
+	if !strings.Contains(result, "10 successful checks total") {
+		t.Error("successes should be collapsed")
+	}
+	if !strings.Contains(result, "3 checks pending") {
+		t.Error("pending should be collapsed")
+	}
+}
+
+func TestFormatChecks_ExpandShowsAll(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "ci/fail", State: "fail"},
+	}
+	for i := 0; i < 10; i++ {
+		checks = append(checks, CheckInfo{
+			Context: fmt.Sprintf("ci/ok-%02d", i),
+			State:   "success",
+		})
+	}
+	result := FormatChecks(checks, 80, false)
+	count := strings.Count(result, "✓")
+	if count != 10 {
+		t.Errorf("got %d success icons, want 10", count)
+	}
+	if strings.Contains(result, "e to expand") {
+		t.Error("expanded view should not have collapse markers")
+	}
+}
+
+func TestFormatChecks_SortOrder(t *testing.T) {
+	checks := []CheckInfo{
+		{Context: "z-success", State: "success"},
+		{Context: "a-fail", State: "fail"},
+		{Context: "m-pending", State: "pending"},
+		{Context: "b-warning", State: "warning"},
+		{Context: "a-success", State: "success"},
+	}
+	result := FormatChecks(checks, 80, false)
+	failIdx := strings.Index(result, "a-fail")
+	warnIdx := strings.Index(result, "b-warning")
+	succ1Idx := strings.Index(result, "a-success")
+	succ2Idx := strings.Index(result, "z-success")
+	pendIdx := strings.Index(result, "m-pending")
+	if failIdx > warnIdx || warnIdx > succ1Idx ||
+		succ1Idx > succ2Idx || succ2Idx > pendIdx {
+		t.Errorf("wrong order: fail=%d warn=%d succ1=%d "+
+			"succ2=%d pend=%d",
+			failIdx, warnIdx, succ1Idx, succ2Idx, pendIdx)
+	}
 }
 
 func TestExpandTabs(t *testing.T) {
@@ -1284,7 +1395,7 @@ func TestFormatChecks_AllFourStates(t *testing.T) {
 		{Context: "ci/style", State: "warning"},
 		{Context: "ci/deploy", State: "pending"},
 	}
-	result := FormatChecks(checks, 80)
+	result := FormatChecks(checks, 80, false)
 	if !strings.Contains(result, "✓") {
 		t.Error("missing success icon ✓")
 	}
@@ -1310,7 +1421,7 @@ func TestFormatChecks_WarningAndPendingDistinct(t *testing.T) {
 		{Context: "ci/warn", State: "warning"},
 		{Context: "ci/pend", State: "pending"},
 	}
-	result := FormatChecks(checks, 80)
+	result := FormatChecks(checks, 80, false)
 	lines := strings.Split(result, "\n")
 	foundWarn, foundPend := false, false
 	for _, line := range lines {
@@ -1335,7 +1446,7 @@ func TestFormatChecks_WithDescription(t *testing.T) {
 			TargetURL:   "https://ci.example.com/123",
 			Description: "All tests passed"},
 	}
-	result := FormatChecks(checks, 120)
+	result := FormatChecks(checks, 120, false)
 	if !strings.Contains(result, "✓") {
 		t.Error("missing success icon")
 	}
@@ -1371,7 +1482,7 @@ func TestFormatChecks_MultiLineDescription(t *testing.T) {
 				"no warnings/errors;\n" +
 				"no diff in generated;"},
 	}
-	result := FormatChecks(checks, 120)
+	result := FormatChecks(checks, 120, false)
 	lines := strings.Split(result, "\n")
 	descLines := 0
 	for _, line := range lines {
@@ -1389,7 +1500,7 @@ func TestFormatChecks_NoDescription(t *testing.T) {
 		{Context: "ci/build", State: "success",
 			TargetURL: "https://ci.example.com/123"},
 	}
-	result := FormatChecks(checks, 120)
+	result := FormatChecks(checks, 120, false)
 	lines := strings.Split(result, "\n")
 	// Should be: header, context, url, empty trailing
 	nonEmpty := 0
@@ -1410,7 +1521,7 @@ func TestFormatChecks_URLAlwaysOnNextLine(t *testing.T) {
 			TargetURL:   "https://ci.example.com/build/123",
 			Description: "Lorem ipsum"},
 	}
-	result := FormatChecks(checks, 120)
+	result := FormatChecks(checks, 120, false)
 	lines := strings.Split(result, "\n")
 	// Context and URL should be on separate lines
 	contextLine := stripAnsi(lines[1])

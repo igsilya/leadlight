@@ -301,9 +301,9 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewComments = nil
 		m.viewCommentIdx = -1
 		m.viewportLines = nil
-		m.quotesExpanded = false
+		m.viewExpanded = false
 	case "e":
-		m.quotesExpanded = !m.quotesExpanded
+		m.viewExpanded = !m.viewExpanded
 		m.switchToComment()
 	case "up", "k":
 		m.viewportScroll(-1)
@@ -327,7 +327,7 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				commentIdx := barIdx - 1
 				if commentIdx >= -1 && commentIdx < len(m.viewComments) {
 					m.viewCommentIdx = commentIdx
-					m.quotesExpanded = false
+					m.viewExpanded = false
 					m.switchToComment()
 				}
 			}
@@ -574,8 +574,8 @@ func (m *Model) viewportScrollToEnd() {
 func (m *Model) buildViewportContent(
 	parsed ParsedMbox, checks []CheckInfo,
 ) {
-	formatted := FormatMbox(parsed, m.width, !m.quotesExpanded)
-	checksSection := FormatChecks(checks, m.width)
+	formatted := FormatMbox(parsed, m.width, !m.viewExpanded)
+	checksSection := FormatChecks(checks, m.width, !m.viewExpanded)
 	if checksSection != "" {
 		formatted = checksSection + "\n" + formatted
 	}
@@ -590,7 +590,7 @@ func (m *Model) nextComment() {
 	if m.viewCommentIdx >= len(m.viewComments) {
 		m.viewCommentIdx = -1
 	}
-	m.quotesExpanded = false
+	m.viewExpanded = false
 	m.switchToComment()
 }
 
@@ -602,7 +602,7 @@ func (m *Model) prevComment() {
 	if m.viewCommentIdx < -1 {
 		m.viewCommentIdx = len(m.viewComments) - 1
 	}
-	m.quotesExpanded = false
+	m.viewExpanded = false
 	m.switchToComment()
 }
 
@@ -631,7 +631,7 @@ func (m *Model) switchToComment() {
 	if m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
 		formatted := FormatComment(
-			comment, m.width, !m.quotesExpanded)
+			comment, m.width, !m.viewExpanded)
 		m.viewportLines = splitLines(formatted)
 	}
 }

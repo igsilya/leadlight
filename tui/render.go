@@ -80,7 +80,7 @@ func (m *Model) renderPatchView() string {
 	var status string
 	expandKey := func(hb *strings.Builder) {
 		hb.WriteString(helpSepStr(sep))
-		if m.quotesExpanded {
+		if m.viewExpanded {
 			hb.WriteString(helpKey(bright, desc, "e", "collapse"))
 		} else {
 			hb.WriteString(helpKey(bright, desc, "e", "expand"))
