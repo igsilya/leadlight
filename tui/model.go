@@ -280,7 +280,7 @@ func (m *Model) reloadData() {
 	expanded := map[string]bool{}
 	for _, rd := range m.RowData {
 		if rd.Expanded && len(rd.Data) > 0 {
-			expanded[rd.Data[0]] = true
+			expanded[rd.Data[ColID]] = true
 		}
 	}
 
@@ -327,7 +327,7 @@ func (m *Model) reloadData() {
 func (m *Model) restoreSelection() {
 	items := m.getVisibleItems()
 	for i, item := range items {
-		if len(item.data) > 0 && item.data[0] == m.selectedID {
+		if len(item.data) > 0 && item.data[ColID] == m.selectedID {
 			m.selectedRow = i
 			return
 		}
@@ -446,7 +446,7 @@ func (m *Model) invalidateSeriesCache(seriesIDs []int) {
 func (m *Model) updateSelectedID() {
 	items := m.getVisibleItems()
 	if m.selectedRow < len(items) && len(items[m.selectedRow].data) > 0 {
-		m.selectedID = items[m.selectedRow].data[0]
+		m.selectedID = items[m.selectedRow].data[ColID]
 	}
 }
 

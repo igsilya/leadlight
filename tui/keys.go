@@ -509,15 +509,15 @@ func (m *Model) getPatchIDs(item visibleItem) []int {
 		log.Printf("TUI: getPatchIDs: no db or empty data")
 		return nil
 	}
-	id, err := strconv.Atoi(item.data[0])
+	id, err := strconv.Atoi(item.data[ColID])
 	if err != nil {
 		log.Printf("TUI: getPatchIDs: can't parse ID %q: %v",
-			item.data[0], err)
+			item.data[ColID], err)
 		return nil
 	}
 	name := ""
-	if len(item.data) > 1 {
-		name = item.data[1]
+	if int(ColName) < len(item.data) {
+		name = item.data[ColName]
 	}
 	log.Printf("TUI: getPatchIDs: id=%d isSubRow=%v name=%q",
 		id, item.isSubRow, name)
@@ -640,7 +640,7 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 	if m.db == nil {
 		return nil
 	}
-	seriesID, err := strconv.Atoi(item.data[0])
+	seriesID, err := strconv.Atoi(item.data[ColID])
 	if err != nil {
 		return nil
 	}
