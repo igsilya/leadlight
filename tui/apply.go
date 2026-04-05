@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"leadlight/db"
+	"leadlight/gitops"
 	"leadlight/status"
 )
 
@@ -216,24 +217,22 @@ func concat(slices ...[]string) []string {
 // For a series row, it collects all patches in the series ordered by N/M.
 // For a sub-row, it applies just that single patch.
 func (m *Model) startApplyConfirm(seriesID int, patchIDs []int, name string) {
-	if m.CheckGitRepo != nil && !m.CheckGitRepo() {
+	if !gitops.IsRepo() {
 		m.Status.SetTimed(status.Info,
 			"Cannot apply: not a git repository", 5*time.Second)
 		return
 	}
-	if m.CheckGitDirty != nil {
-		dirty, err := m.CheckGitDirty()
-		if err != nil {
-			m.Status.SetTimed(status.Info,
-				"Cannot apply: "+err.Error(), 5*time.Second)
-			return
-		}
-		if dirty {
-			m.Status.SetTimed(status.Info,
-				"Cannot apply: uncommitted changes, commit or stash first",
-				5*time.Second)
-			return
-		}
+	dirty, err := gitops.IsDirty()
+	if err != nil {
+		m.Status.SetTimed(status.Info,
+			"Cannot apply: "+err.Error(), 5*time.Second)
+		return
+	}
+	if dirty {
+		m.Status.SetTimed(status.Info,
+			"Cannot apply: uncommitted changes, commit or stash first",
+			5*time.Second)
+		return
 	}
 
 	m.applySeriesID = seriesID
@@ -309,7 +308,6 @@ func (m *Model) allApplyDataReady() bool {
 func (m *Model) runApply() tea.Cmd {
 	data := m.collectApplyData()
 	signoff := m.Signoff
-	runGitAm := m.RunGitAm
 
 	return func() tea.Msg {
 		mboxContent, err := constructApplyMbox(data)
@@ -329,11 +327,7 @@ func (m *Model) runApply() tea.Cmd {
 		}
 		tmpFile.Close()
 
-		if runGitAm == nil {
-			os.Remove(tmpPath)
-			return applyResultMsg{err: fmt.Errorf("git am not configured")}
-		}
-		output, err := runGitAm(tmpPath, signoff)
+		output, err := gitops.Am(tmpPath, signoff)
 		if err != nil {
 			return applyResultMsg{output: output, err: err, tmpFile: tmpPath}
 		}
@@ -347,8 +341,8 @@ func (m *Model) runApply() tea.Cmd {
 // main goroutine (before starting the tea.Cmd).
 func (m *Model) collectApplyData() []applyPatch {
 	var removeSignoff string
-	if m.Signoff && m.GetGitSignoff != nil {
-		removeSignoff = m.GetGitSignoff()
+	if m.Signoff {
+		removeSignoff = gitops.Signoff()
 	}
 
 	// Collect cover comment tags (apply to all patches)
@@ -424,18 +418,16 @@ func (m *Model) exitApplyMode() {
 }
 
 func (m *Model) doAbortGitAm() {
-	if m.AbortGitAm != nil {
-		output, err := m.AbortGitAm()
-		for _, line := range strings.Split(output, "\n") {
-			if line != "" {
-				log.Printf("[apply] %s", line)
-			}
+	output, err := gitops.AmAbort()
+	for _, line := range strings.Split(output, "\n") {
+		if line != "" {
+			log.Printf("[apply] %s", line)
 		}
-		if err != nil {
-			log.Printf("[apply] Abort failed: %v", err)
-		} else {
-			log.Printf("[apply] Reverted successfully")
-		}
+	}
+	if err != nil {
+		log.Printf("[apply] Abort failed: %v", err)
+	} else {
+		log.Printf("[apply] Reverted successfully")
 	}
 }
 

@@ -3,11 +3,12 @@ package config
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"leadlight/gitops"
 	"time"
 )
 
@@ -96,14 +97,14 @@ func Load(dir string) (*Config, error) {
 		Token:       getWithFallback(dir, "leadlight.token", "pw.token"),
 		Username:    getWithFallback(dir, "leadlight.username", "pw.username"),
 		Password:    getWithFallback(dir, "leadlight.password", "pw.password"),
-		DBPath:      gitConfigGet(dir, "leadlight.db"),
-		LoreURL:     gitConfigGet(dir, "leadlight.lore"),
-		MailArchive: gitConfigGet(dir, "leadlight.mailarchive"),
-		Theme:       gitConfigGet(dir, "leadlight.theme"),
+		DBPath:      gitops.ConfigGet(dir, "leadlight.db"),
+		LoreURL:     gitops.ConfigGet(dir, "leadlight.lore"),
+		MailArchive: gitops.ConfigGet(dir, "leadlight.mailarchive"),
+		Theme:       gitops.ConfigGet(dir, "leadlight.theme"),
 	}
 
 	if cfg.DBPath == "" {
-		gd := gitCommonDir(dir)
+		gd := gitops.CommonDir(dir)
 		if gd != "" {
 			llDir := filepath.Join(gd, "leadlight")
 			os.MkdirAll(llDir, 0755)
@@ -119,7 +120,7 @@ func Load(dir string) (*Config, error) {
 	cfg.BaseURL = deriveBaseURL(cfg.Server)
 	cfg.APIVersion = parseAPIVersion(cfg.Server)
 
-	historyStr := gitConfigGet(dir, "leadlight.history")
+	historyStr := gitops.ConfigGet(dir, "leadlight.history")
 	if historyStr != "" {
 		limit, err := ParseHistoryLimit(historyStr)
 		if err != nil {
@@ -128,7 +129,7 @@ func Load(dir string) (*Config, error) {
 		cfg.HistoryLimit = limit
 	}
 
-	signoffStr := gitConfigGet(dir, "leadlight.signoff")
+	signoffStr := gitops.ConfigGet(dir, "leadlight.signoff")
 	if signoffStr == "false" {
 		f := false
 		cfg.Signoff = &f
@@ -141,35 +142,11 @@ func Load(dir string) (*Config, error) {
 	return cfg, nil
 }
 
-func gitCommonDir(dir string) string {
-	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	gd := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(gd) {
-		gd = filepath.Join(dir, gd)
-	}
-	return gd
-}
-
-func gitConfigGet(dir, key string) string {
-	cmd := exec.Command("git", "config", "--get", key)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func getWithFallback(dir, primary, fallback string) string {
-	if v := gitConfigGet(dir, primary); v != "" {
+	if v := gitops.ConfigGet(dir, primary); v != "" {
 		return v
 	}
-	return gitConfigGet(dir, fallback)
+	return gitops.ConfigGet(dir, fallback)
 }
 
 func parseStates(raw string) []string {

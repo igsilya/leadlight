@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"leadlight/gitops"
 )
 
 func setupGitRepo(t *testing.T, configs map[string]string) string {
@@ -45,7 +47,7 @@ func TestGitConfigGet_KeyExists(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
 		"pw.server": "https://pw.example.com/api/1.2",
 	})
-	got := gitConfigGet(dir, "pw.server")
+	got := gitops.ConfigGet(dir, "pw.server")
 	if got != "https://pw.example.com/api/1.2" {
 		t.Errorf("got %q, want %q", got, "https://pw.example.com/api/1.2")
 	}
@@ -53,7 +55,7 @@ func TestGitConfigGet_KeyExists(t *testing.T) {
 
 func TestGitConfigGet_KeyMissing(t *testing.T) {
 	dir := setupGitRepo(t, nil)
-	got := gitConfigGet(dir, "pw.server")
+	got := gitops.ConfigGet(dir, "pw.server")
 	if got != "" {
 		t.Errorf("got %q, want empty string", got)
 	}
@@ -63,7 +65,7 @@ func TestGitConfigGet_WhitespaceTrimmed(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
 		"pw.server": "  https://example.com/api/1.2  ",
 	})
-	got := gitConfigGet(dir, "pw.server")
+	got := gitops.ConfigGet(dir, "pw.server")
 	if got != "https://example.com/api/1.2" {
 		t.Errorf("got %q, want trimmed value", got)
 	}
@@ -71,7 +73,7 @@ func TestGitConfigGet_WhitespaceTrimmed(t *testing.T) {
 
 func TestGitConfigGet_NotARepo(t *testing.T) {
 	dir := t.TempDir() // no git init
-	got := gitConfigGet(dir, "pw.server")
+	got := gitops.ConfigGet(dir, "pw.server")
 	if got != "" {
 		t.Errorf("got %q, want empty string for non-repo", got)
 	}

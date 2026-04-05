@@ -221,13 +221,7 @@ type Model struct {
 		delegateUsername *string, unsetDelegate bool,
 	)
 
-	// Apply patches via git am
-	CheckGitRepo  func() bool
-	CheckGitDirty func() (bool, error)
-	GetGitSignoff func() string
-	RunGitAm      func(mboxPath string, signoff bool) (string, error)
-	AbortGitAm    func() (string, error)
-	Signoff       bool // add -s to git am (default true)
+	Signoff bool // add -s to git am (default true)
 
 	applyState          applyState
 	applyPatchIDs       []int // patches to apply, in N/M order
