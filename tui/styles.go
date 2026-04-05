@@ -16,7 +16,7 @@ const (
 
 	subRowIndent   = " "
 	scrollBuffer   = 2 // rows kept visible below cursor when scrolling
-	reservedLines  = 3 // header + separator + status bar
+	reservedLines  = 4 // header + separator + status line + help bar
 	indicatorWidth = 2 // "▸ " selection indicator
 )
 

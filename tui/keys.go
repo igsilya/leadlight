@@ -790,7 +790,7 @@ func (m *Model) resetHighlight() tea.Cmd {
 func (m *Model) adjustScrollDown(totalItems int) {
 	visibleRows := m.lastRowsVisible
 	if visibleRows == 0 {
-		visibleRows = max(m.renderHeight()-reservedLines-1, 1)
+		visibleRows = max(m.renderHeight()-reservedLines, 1)
 	}
 	if totalItems > visibleRows &&
 		m.selectedRow >= m.scrollOffset+visibleRows-scrollBuffer {

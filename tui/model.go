@@ -450,12 +450,21 @@ func (m *Model) clearFilter() {
 }
 
 func (m *Model) ensureSelectedVisible() {
+	items := m.getVisibleItems()
 	maxRows := m.maxVisibleRows()
 	if m.selectedRow < m.scrollOffset {
 		m.scrollOffset = m.selectedRow
 	}
 	if m.selectedRow >= m.scrollOffset+maxRows {
 		m.scrollOffset = m.selectedRow - maxRows + 1
+	}
+	// Don't scroll past the end of a short list
+	maxScroll := len(items) - maxRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scrollOffset > maxScroll {
+		m.scrollOffset = maxScroll
 	}
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0

@@ -1006,6 +1006,19 @@ func TestFilterCommit_NormalNavigation(t *testing.T) {
 	}
 }
 
+func TestEnsureSelectedVisible_ShortList(t *testing.T) {
+	m := testModel()
+	// Simulate scrolled state from a previously longer list
+	m.scrollOffset = 40
+	m.selectedRow = 2
+	m.ensureSelectedVisible()
+	// testModel has only 3 rows — scrollOffset should be clamped to 0
+	if m.scrollOffset != 0 {
+		t.Errorf("scrollOffset = %d, want 0 for short list",
+			m.scrollOffset)
+	}
+}
+
 func TestVersionSearch_CommitsFilter(t *testing.T) {
 	m := testModel()
 	m = pressKey(m, "v")
