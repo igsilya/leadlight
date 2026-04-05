@@ -93,36 +93,7 @@ func main() {
 		}, statusReg)
 
 	m.FetchSeriesCover = func(seriesID int) {
-		log.Printf("MAIN: FetchSeriesCover series=%d", seriesID)
-		series, err := client.GetSeries(api.WithNoRateLimit(ctx), seriesID)
-		if err != nil {
-			log.Printf("MAIN: FetchSeriesCover error: %v", err)
-			return
-		}
-		if series.CoverLetter != nil {
-			database.SaveCover(db.CoverRow{
-				ID:       series.CoverLetter.ID,
-				SeriesID: series.ID,
-				Name:     series.CoverLetter.Name,
-				Date:     series.CoverLetter.Date,
-				MsgID:    series.CoverLetter.MsgID,
-				MboxURL:  series.CoverLetter.Mbox,
-				WebURL:   series.CoverLetter.WebURL,
-			})
-		}
-		database.SaveSeries(db.SeriesRow{
-			ID:              series.ID,
-			Name:            series.Name,
-			Date:            series.Date,
-			Version:         series.Version,
-			Submitter:       series.Submitter.Name,
-			SubmitterEmail:  series.Submitter.Email,
-			WebURL:          series.WebURL,
-			MboxURL:         series.Mbox,
-			Complete:        series.ReceivedAll,
-			TotalPatches:    series.Total,
-			ReceivedPatches: series.ReceivedTotal,
-		})
+		syncer.RequestSeriesCover(seriesID)
 	}
 
 	m.RequestSync = func() {
@@ -152,25 +123,8 @@ func main() {
 		patchID int, state *string,
 		delegateUsername *string, unsetDelegate bool,
 	) {
-		stateStr, dlgStr := "<none>", "<none>"
-		if state != nil {
-			stateStr = *state
-		}
-		if unsetDelegate {
-			dlgStr = "(unset)"
-		} else if delegateUsername != nil {
-			dlgStr = *delegateUsername
-		}
-		log.Printf("MAIN: RequestPatchUpdate patchID=%d "+
-			"state=%s delegate=%s", patchID, stateStr, dlgStr)
-		err := syncer.RequestPatchUpdate(
-			appSync.PatchUpdateRequest{
-				PatchID:          patchID,
-				State:            state,
-				DelegateUsername: delegateUsername,
-				UnsetDelegate:    unsetDelegate,
-			})
-		log.Printf("MAIN: RequestPatchUpdate done, err=%v", err)
+		syncer.RequestPatchUpdate(
+			patchID, state, delegateUsername, unsetDelegate)
 	}
 
 	m.Signoff = true

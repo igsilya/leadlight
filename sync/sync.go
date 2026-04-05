@@ -36,7 +36,7 @@ type Syncer struct {
 	status *status.Registry
 
 	// Channels for user-initiated requests, handled by runUserRequests.
-	updateC   chan PatchUpdateRequest
+	updateC   chan patchUpdateRequest
 	commentC  chan CommentRequest
 	checkC    chan int
 	detailC   chan DetailRequest
@@ -58,12 +58,12 @@ type Syncer struct {
 	lastTerminalCheck        time.Time
 }
 
-type PatchUpdateRequest struct {
-	PatchID          int
-	State            *string
-	DelegateUsername *string
-	UnsetDelegate    bool
-	ResultC          chan<- error
+type patchUpdateRequest struct {
+	patchID          int
+	state            *string
+	delegateUsername *string
+	unsetDelegate    bool
+	resultC          chan<- error
 }
 
 type fetchOriginKey struct{}
@@ -114,7 +114,7 @@ func NewSyncer(
 		notify: notify,
 		status: st,
 
-		updateC:     make(chan PatchUpdateRequest, 4),
+		updateC:     make(chan patchUpdateRequest, 4),
 		commentC:    make(chan CommentRequest, 4),
 		checkC:      make(chan int, 4),
 		detailC:     make(chan DetailRequest, 4),
@@ -127,10 +127,18 @@ func NewSyncer(
 	}
 }
 
-func (s *Syncer) RequestPatchUpdate(req PatchUpdateRequest) error {
+func (s *Syncer) RequestPatchUpdate(
+	patchID int, state *string,
+	delegateUsername *string, unsetDelegate bool,
+) error {
 	resultC := make(chan error, 1)
-	req.ResultC = resultC
-	s.updateC <- req
+	s.updateC <- patchUpdateRequest{
+		patchID:          patchID,
+		state:            state,
+		delegateUsername: delegateUsername,
+		unsetDelegate:    unsetDelegate,
+		resultC:          resultC,
+	}
 	return <-resultC
 }
 
@@ -179,6 +187,37 @@ func (s *Syncer) RequestFetchAll(seriesID, patchID int) {
 		SeriesID: seriesID, PatchID: patchID}:
 		s.status.Set(status.FetchAll, "Fetching...", true)
 	default:
+	}
+}
+
+func (s *Syncer) RequestSeriesCover(seriesID int) {
+	ctx := api.WithNoRateLimit(context.Background())
+	series, err := s.client.GetSeries(ctx, seriesID)
+	if err != nil {
+		log.Printf("SYNC: fetch series cover %d: %v",
+			seriesID, err)
+		return
+	}
+	s.db.SaveSeries(db.SeriesRow{
+		ID: series.ID, Name: series.Name,
+		Date: series.Date, Version: series.Version,
+		Submitter:       series.Submitter.Name,
+		SubmitterEmail:  series.Submitter.Email,
+		WebURL:          series.WebURL,
+		MboxURL:         series.Mbox,
+		Complete:        series.ReceivedAll,
+		TotalPatches:    series.Total,
+		ReceivedPatches: series.ReceivedTotal,
+	})
+	if series.CoverLetter != nil {
+		s.db.SaveCover(db.CoverRow{
+			ID: series.CoverLetter.ID, SeriesID: series.ID,
+			Name:    series.CoverLetter.Name,
+			Date:    series.CoverLetter.Date,
+			MsgID:   series.CoverLetter.MsgID,
+			MboxURL: series.CoverLetter.Mbox,
+			WebURL:  series.CoverLetter.WebURL,
+		})
 	}
 }
 
@@ -235,8 +274,8 @@ func (s *Syncer) runUserRequests(ctx context.Context, wg *gosync.WaitGroup) {
 			return
 		case req := <-s.updateC:
 			log.Printf("SYNC: update request for patch %d",
-				req.PatchID)
-			req.ResultC <- s.handlePatchUpdate(ctx, req)
+				req.patchID)
+			req.resultC <- s.handlePatchUpdate(ctx, req)
 		case req := <-s.commentC:
 			go func() {
 				noRL := WithFetchOrigin(
@@ -1436,25 +1475,26 @@ func (s *Syncer) resolveUserID(
 	return id, nil
 }
 
-func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) error {
-	dlgStr := ptrStr(req.DelegateUsername)
-	if req.UnsetDelegate {
+func (s *Syncer) handlePatchUpdate(
+	ctx context.Context, req patchUpdateRequest,
+) error {
+	dlgStr := ptrStr(req.delegateUsername)
+	if req.unsetDelegate {
 		dlgStr = "(unset)"
 	}
 	log.Printf("SYNC: handlePatchUpdate patch %d state=%s delegate=%s",
-		req.PatchID, ptrStr(req.State), dlgStr)
+		req.patchID, ptrStr(req.state), dlgStr)
 	s.status.Set(status.Update, "Updating...", true)
 	ctx = api.WithNoRateLimit(ctx)
 
-	update := api.PatchUpdate{State: req.State}
-	if req.UnsetDelegate {
+	update := api.PatchUpdate{State: req.state}
+	if req.unsetDelegate {
 		update.UnsetDelegate = true
-	} else if req.DelegateUsername != nil {
-		uid, err := s.resolveUserID(
-			ctx, *req.DelegateUsername)
+	} else if req.delegateUsername != nil {
+		uid, err := s.resolveUserID(ctx, *req.delegateUsername)
 		if err != nil {
 			log.Printf("SYNC: resolve delegate %q: %v",
-				*req.DelegateUsername, err)
+				*req.delegateUsername, err)
 			s.status.SetTimed(status.Update,
 				"Failed to resolve delegate: "+
 					err.Error(), 5*time.Second)
@@ -1462,22 +1502,22 @@ func (s *Syncer) handlePatchUpdate(ctx context.Context, req PatchUpdateRequest) 
 		}
 		update.Delegate = &uid
 	}
-	_, err := s.client.UpdatePatch(ctx, req.PatchID, update)
+	_, err := s.client.UpdatePatch(ctx, req.patchID, update)
 	if err != nil {
-		log.Printf("SYNC: patch update %d failed: %v", req.PatchID, err)
-		// "Invalid pk" means the cached user ID is stale — clear it
-		// so the next attempt re-resolves the username.
-		if req.DelegateUsername != nil &&
+		log.Printf("SYNC: patch update %d failed: %v", req.patchID, err)
+		// "Invalid pk" means the cached user ID is stale —
+		// clear it so the next attempt re-resolves the username.
+		if req.delegateUsername != nil &&
 			strings.Contains(err.Error(), "Invalid pk") {
-			s.db.ClearMaintainerUserID(*req.DelegateUsername)
+			s.db.ClearMaintainerUserID(*req.delegateUsername)
 		}
 		s.status.SetTimed(status.Update,
 			fmt.Sprintf("Update failed: %v", err), 5*time.Second)
 		return err
 	}
-	log.Printf("SYNC: patch update %d success, syncing events", req.PatchID)
+	log.Printf("SYNC: patch update %d success, syncing events", req.patchID)
 	s.incrementalSync(ctx)
-	sid := s.lookupSeriesID(req.PatchID, false)
+	sid := s.lookupSeriesID(req.patchID, false)
 	if sid != 0 {
 		s.notify(sid)
 	} else {
