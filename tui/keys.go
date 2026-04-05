@@ -237,6 +237,30 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case "v":
+		items := m.getVisibleItems()
+		if m.selectedRow >= len(items) {
+			break
+		}
+		if int(ColName) >= len(items[m.selectedRow].data) {
+			break
+		}
+		name := stripPosition(items[m.selectedRow].data[ColName])
+		name = strings.TrimRight(name, ".")
+		if name == "" {
+			break
+		}
+		// Save showAll state only when entering from no filter
+		if m.filterText == "" {
+			m.showAllBeforeFilter = m.showAll
+		}
+		m.filterText = name
+		if !m.showAll {
+			m.showAll = true
+			m.reloadData()
+		}
+		m.commitFilter()
+
 	case "a":
 		m.showAll = !m.showAll
 		m.reloadData()

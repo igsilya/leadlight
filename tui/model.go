@@ -178,11 +178,12 @@ type Model struct {
 	commentBarLo  int
 	commentBarHi  int
 
-	selectedID         string
-	showAll            bool
-	filterEditing      bool
-	filterText         string
-	cachedRenderedRows map[int]*seriesRowCache
+	selectedID          string
+	showAll             bool
+	showAllBeforeFilter bool
+	filterEditing       bool
+	filterText          string
+	cachedRenderedRows  map[int]*seriesRowCache
 
 	cachedVisibleItems      []visibleItem
 	cachedVisibleItemsValid bool
@@ -378,7 +379,9 @@ func matchesFilter(data []string, filter string) bool {
 
 func (m *Model) startFilter() {
 	m.filterEditing = true
-	// Keep existing filterText when re-editing with /
+	if m.filterText == "" {
+		m.showAllBeforeFilter = m.showAll
+	}
 	m.invalidateVisibleItems()
 }
 
@@ -418,7 +421,7 @@ func (m *Model) commitFilter() {
 
 func (m *Model) clearFilter() {
 	// Find which parent contains the selected item
-	// BEFORE collapsing, so we can re-expand it
+	// BEFORE collapsing, so we can re-expand it.
 	expandParent := -1
 	items := m.getVisibleItems()
 	if m.selectedRow < len(items) {
@@ -428,10 +431,15 @@ func (m *Model) clearFilter() {
 	m.filterEditing = false
 	m.filterText = ""
 
+	// Revert showAll to pre-filter state
+	if m.showAll != m.showAllBeforeFilter {
+		m.showAll = m.showAllBeforeFilter
+		m.reloadData()
+	}
+
 	for i := range m.RowData {
 		m.RowData[i].Expanded = false
 	}
-
 	if expandParent >= 0 && expandParent < len(m.RowData) {
 		m.RowData[expandParent].Expanded = true
 	}

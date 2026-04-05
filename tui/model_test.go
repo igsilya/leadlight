@@ -1006,6 +1006,95 @@ func TestFilterCommit_NormalNavigation(t *testing.T) {
 	}
 }
 
+func TestVersionSearch_CommitsFilter(t *testing.T) {
+	m := testModel()
+	m = pressKey(m, "v")
+	if m.filterText == "" {
+		t.Error("filterText should be set after v")
+	}
+	if m.filterEditing {
+		t.Error("filter should be committed, not editing")
+	}
+	if strings.Contains(m.filterText, "/") {
+		t.Error("filter should not contain position prefix")
+	}
+}
+
+func TestVersionSearch_EnablesShowAll(t *testing.T) {
+	m := testModel()
+	m.showAll = false
+	m = pressKey(m, "v")
+	if !m.showAll {
+		t.Error("v should enable showAll")
+	}
+}
+
+func TestVersionSearch_RevertsShowAll(t *testing.T) {
+	m := testModel()
+	m.showAll = false
+	m = pressKey(m, "v")
+	if !m.showAll {
+		t.Fatal("v should enable showAll")
+	}
+	m = pressSpecialKey(m, tea.KeyEsc)
+	if m.showAll {
+		t.Error("clearing filter should revert showAll to false")
+	}
+}
+
+func TestVersionSearch_ShowAllAlreadyTrue(t *testing.T) {
+	m := testModel()
+	m.showAll = true
+	m = pressKey(m, "v")
+	m = pressSpecialKey(m, tea.KeyEsc)
+	if !m.showAll {
+		t.Error("showAll should stay true (was true before v)")
+	}
+}
+
+func TestVersionSearch_SubRow(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m.width = 120
+	m.height = 30
+	// Expand first row and navigate to sub-row
+	m = pressKey(m, " ")
+	m = pressSpecialKey(m, tea.KeyDown)
+	items := m.getVisibleItems()
+	if m.selectedRow >= len(items) || !items[m.selectedRow].isSubRow {
+		t.Skip("could not navigate to sub-row")
+	}
+	m = pressKey(m, "v")
+	if m.filterText == "" {
+		t.Error("filterText should be set from sub-row")
+	}
+	if m.filterEditing {
+		t.Error("filter should be committed")
+	}
+}
+
+func TestVersionSearch_ReEditWithSlash(t *testing.T) {
+	m := testModel()
+	m = pressKey(m, "v")
+	original := m.filterText
+	if original == "" {
+		t.Fatal("filterText should be set")
+	}
+	m = pressKey(m, "/")
+	if !m.filterEditing {
+		t.Error("should be in editing mode after /")
+	}
+	if m.filterText != original {
+		t.Errorf("filterText = %q, want %q (preserved)",
+			m.filterText, original)
+	}
+	m = pressKey(m, "x")
+	m = pressSpecialKey(m, tea.KeyEnter)
+	if m.filterText != original+"x" {
+		t.Errorf("filterText = %q, want %q",
+			m.filterText, original+"x")
+	}
+}
+
 func TestFoldAccents(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"lorem", "lorem"},
