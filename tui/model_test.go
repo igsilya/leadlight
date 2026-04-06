@@ -888,9 +888,9 @@ func TestFilterCommit(t *testing.T) {
 	}
 }
 
-func TestFilterCommit_CollapsesAutoExpanded(t *testing.T) {
+func TestFilterCommit_CollapsesNonMatching(t *testing.T) {
 	m := testModel()
-	// Filter for "sub" — auto-expands during editing
+	// Filter for "sub" — matches sub-rows in rows 0 and 2
 	m = pressKey(m, "/")
 	m = pressKey(m, "s")
 	m = pressKey(m, "u")
@@ -909,19 +909,17 @@ func TestFilterCommit_CollapsesAutoExpanded(t *testing.T) {
 		t.Fatal("sub-rows should be auto-expanded during editing")
 	}
 
-	// Commit — should collapse auto-expanded rows
+	// Commit — series with matching sub-rows stay expanded
 	m = pressSpecialKey(m, tea.KeyEnter)
 
-	// After commit, only manually expanded rows should show subs
-	expandedCount := 0
-	for _, rd := range m.RowData {
-		if rd.Expanded {
-			expandedCount++
-		}
+	if !m.RowData[0].Expanded {
+		t.Error("row 0 should be expanded (sub-rows match)")
 	}
-	if expandedCount > 1 {
-		t.Errorf("at most 1 row should be expanded after commit, got %d",
-			expandedCount)
+	if m.RowData[1].Expanded {
+		t.Error("row 1 should not be expanded (no sub-rows)")
+	}
+	if !m.RowData[2].Expanded {
+		t.Error("row 2 should be expanded (sub-row matches)")
 	}
 }
 
@@ -1105,6 +1103,217 @@ func TestVersionSearch_ReEditWithSlash(t *testing.T) {
 	if m.filterText != original+"x" {
 		t.Errorf("filterText = %q, want %q",
 			m.filterText, original+"x")
+	}
+}
+
+func testModelVersions() *Model {
+	columns := []ColumnDef{
+		{Title: "ID", FixedWidth: 10, Visible: true},
+		{Title: "Ver", FixedWidth: 5, Visible: true},
+		{Title: "Name", Visible: true},
+		{Title: "Status", FixedWidth: 15, Visible: true},
+	}
+	// Three versions of the same series, each with 2 patches.
+	// Sub-row names match across versions (version already stripped).
+	rows := []RowData{
+		{
+			Data:  []string{"100", "v1", "[0/2] Lorem refactor", "Accept"},
+			Style: RowStyle{Background: "reviewed"},
+			SubRows: [][]string{
+				{"101", "", "Lorem first change", ""},
+				{"102", "", "Lorem second change", ""},
+			},
+		},
+		{
+			Data:  []string{"200", "v2", "[0/2] Lorem refactor", "Active"},
+			Style: RowStyle{Background: "aging"},
+			SubRows: [][]string{
+				{"201", "", "Lorem first change", ""},
+				{"202", "", "Lorem second change", ""},
+			},
+		},
+		{
+			Data:  []string{"300", "v3", "[0/2] Lorem refactor", "Active"},
+			Style: RowStyle{Background: "aging"},
+			SubRows: [][]string{
+				{"301", "", "Lorem first change", ""},
+				{"302", "", "Lorem second change", ""},
+			},
+		},
+	}
+	m := NewModelWithData(columns, rows, ColIndex(3))
+	m.states = []string{"Active", "Accept"}
+	m.token = "test-token"
+	m.Status = status.NewRegistry(nil)
+	m.width = 120
+	m.height = 30
+	return m
+}
+
+func TestVersionSearch_ExpandsAllVersions(t *testing.T) {
+	m := testModelVersions()
+	// Expand v3 (row 2) and navigate to its first sub-row
+	m = pressKey(m, "j") // row 1
+	m = pressKey(m, "j") // row 2
+	m = pressKey(m, " ") // expand
+	m = pressKey(m, "j") // sub-row 301
+
+	items := m.getVisibleItems()
+	if m.selectedRow >= len(items) || !items[m.selectedRow].isSubRow {
+		t.Fatal("should be on a sub-row")
+	}
+
+	m = pressKey(m, "v")
+
+	// All three series should be expanded — the filter matches
+	// sub-rows in all versions.
+	for i, rd := range m.RowData {
+		if !rd.Expanded {
+			t.Errorf("row %d (%s) should be expanded after v",
+				i, rd.Data[1])
+		}
+	}
+}
+
+func testModelWithSinglePatch() *Model {
+	columns := []ColumnDef{
+		{Title: "ID", FixedWidth: 10, Visible: true},
+		{Title: "Ver", FixedWidth: 5, Visible: true},
+		{Title: "Name", Visible: true},
+		{Title: "Status", FixedWidth: 15, Visible: true},
+	}
+	// ColName = 2 (iota: ColID=0, ColVer=1, ColName=2)
+	rows := []RowData{
+		{
+			Data:  []string{"1", "1", "Lorem", "Active"},
+			Style: RowStyle{Background: "reviewed"},
+			SubRows: [][]string{
+				{"1.1", "", "Sub A", ""},
+				{"1.2", "", "Sub B", ""},
+			},
+		},
+		{
+			Data:  []string{"2", "1", "Dolor", "Pending"},
+			Style: RowStyle{Background: "aging"},
+		},
+		{
+			Data:  []string{"3", "1", "Viverra", "Away"},
+			Style: RowStyle{Background: "closed"},
+			SubRows: [][]string{
+				{"3.1", "", "Viverra", ""},
+			},
+		},
+	}
+	m := NewModelWithData(columns, rows, ColIndex(3))
+	m.states = []string{"Active", "Inactive", "Pending", "Away"}
+	m.token = "test-token"
+	m.Status = status.NewRegistry(nil)
+	m.width = 120
+	m.height = 30
+	return m
+}
+
+func TestFilterCommit_ExpandsAllMatchingSubs(t *testing.T) {
+	m := testModel()
+	// Row 0 has sub-rows "Sub A", "Sub B". Filter "sub" matches them.
+	m = pressKey(m, "/")
+	for _, ch := range "sub" {
+		m = pressKey(m, string(ch))
+	}
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if !m.RowData[0].Expanded {
+		t.Error("row 0 should be expanded (filter matches sub-rows)")
+	}
+}
+
+func TestFilterCommit_CoverOnlyMatchCollapsed(t *testing.T) {
+	m := testModel()
+	// "dolor" matches row 1 (series row) but row 1 has no sub-rows.
+	m = pressKey(m, "/")
+	for _, ch := range "dolor" {
+		m = pressKey(m, string(ch))
+	}
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if m.RowData[1].Expanded {
+		t.Error("row 1 should not be expanded (no sub-rows match)")
+	}
+}
+
+func TestFilterCommit_SinglePatchSeriesRowCollapsed(t *testing.T) {
+	m := testModelWithSinglePatch()
+	// "viverra" matches row 2 (series + its single same-name sub-row).
+	// Selection is on the series row — should not expand.
+	m = pressKey(m, "/")
+	for _, ch := range "viverra" {
+		m = pressKey(m, string(ch))
+	}
+	// Navigate to the series row (not the sub-row)
+	items := m.getVisibleItems()
+	for i, item := range items {
+		if !item.isSubRow && item.parentIdx == 2 {
+			m.selectedRow = i
+			m.updateSelectedID()
+			break
+		}
+	}
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if m.RowData[2].Expanded {
+		t.Error("single-patch-same-name series should not expand when series row selected")
+	}
+}
+
+func TestFilterCommit_SinglePatchSubRowExpanded(t *testing.T) {
+	m := testModelWithSinglePatch()
+	// "viverra" matches row 2. Manually expand and select sub-row.
+	m.RowData[2].Expanded = true
+	m.invalidateVisibleItems()
+	m = pressKey(m, "/")
+	for _, ch := range "viverra" {
+		m = pressKey(m, string(ch))
+	}
+	// Navigate to the sub-row
+	items := m.getVisibleItems()
+	for i, item := range items {
+		if item.isSubRow && item.parentIdx == 2 {
+			m.selectedRow = i
+			m.updateSelectedID()
+			break
+		}
+	}
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if !m.RowData[2].Expanded {
+		t.Error("single-patch-same-name series should stay expanded when sub-row selected")
+	}
+}
+
+func TestFilterClear_SinglePatchNotExpanded(t *testing.T) {
+	m := testModelWithSinglePatch()
+	// Commit filter for "viverra", then clear it.
+	m.RowData[2].Expanded = true
+	m.invalidateVisibleItems()
+	m = pressKey(m, "/")
+	for _, ch := range "viverra" {
+		m = pressKey(m, string(ch))
+	}
+	// Select the sub-row
+	items := m.getVisibleItems()
+	for i, item := range items {
+		if item.isSubRow && item.parentIdx == 2 {
+			m.selectedRow = i
+			m.updateSelectedID()
+			break
+		}
+	}
+	m = pressSpecialKey(m, tea.KeyEnter)
+	// Now clear
+	m = pressSpecialKey(m, tea.KeyEsc)
+
+	if m.RowData[2].Expanded {
+		t.Error("single-patch-same-name series should collapse on filter clear")
 	}
 }
 

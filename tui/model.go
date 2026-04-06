@@ -391,21 +391,35 @@ func (m *Model) commitFilter() {
 		m.clearFilter()
 		return
 	}
-	// Collapse auto-expanded rows, re-expand only the parent
-	// of the currently selected item.
-	expandParent := -1
+
+	selectedParent := -1
+	selectedIsSub := false
 	items := m.getVisibleItems()
 	if m.selectedRow < len(items) {
-		expandParent = items[m.selectedRow].parentIdx
+		selectedParent = items[m.selectedRow].parentIdx
+		selectedIsSub = items[m.selectedRow].isSubRow
+	}
+
+	// Derive which parents have matching sub-rows from already-computed
+	// visible items — no re-filtering needed.
+	hasMatchingSub := map[int]bool{}
+	for _, item := range items {
+		if item.isSubRow {
+			hasMatchingSub[item.parentIdx] = true
+		}
 	}
 
 	m.filterEditing = false
 
-	for i := range m.RowData {
-		m.RowData[i].Expanded = false
-	}
-	if expandParent >= 0 && expandParent < len(m.RowData) {
-		m.RowData[expandParent].Expanded = true
+	// Expand series with matching sub-rows. Single-patch-same-name
+	// series only expand when their sub-row is selected (the series
+	// row already shows the same info).
+	for i, rd := range m.RowData {
+		if hasMatchingSub[i] && singlePatchSameName(rd) {
+			m.RowData[i].Expanded = i == selectedParent && selectedIsSub
+		} else {
+			m.RowData[i].Expanded = hasMatchingSub[i]
+		}
 	}
 
 	m.invalidateVisibleItems()
@@ -416,10 +430,10 @@ func (m *Model) commitFilter() {
 func (m *Model) clearFilter() {
 	// Find which parent contains the selected item
 	// BEFORE collapsing, so we can re-expand it.
-	expandParent := -1
+	selectedParent := -1
 	items := m.getVisibleItems()
 	if m.selectedRow < len(items) {
-		expandParent = items[m.selectedRow].parentIdx
+		selectedParent = items[m.selectedRow].parentIdx
 	}
 
 	m.filterEditing = false
@@ -434,8 +448,9 @@ func (m *Model) clearFilter() {
 	for i := range m.RowData {
 		m.RowData[i].Expanded = false
 	}
-	if expandParent >= 0 && expandParent < len(m.RowData) {
-		m.RowData[expandParent].Expanded = true
+	if selectedParent >= 0 && selectedParent < len(m.RowData) &&
+		!singlePatchSameName(m.RowData[selectedParent]) {
+		m.RowData[selectedParent].Expanded = true
 	}
 
 	m.invalidateVisibleItems()

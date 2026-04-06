@@ -259,6 +259,12 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.showAll = true
 			m.reloadData()
 		}
+		// Enter editing mode and invalidate cached items so
+		// commitFilter's getVisibleItems recomputes with
+		// auto-expanded sub-rows, deriving which series have
+		// matching sub-rows for the Expanded flags.
+		m.filterEditing = true
+		m.invalidateVisibleItems()
 		m.commitFilter()
 
 	case "a":
