@@ -63,7 +63,6 @@ CREATE TABLE IF NOT EXISTS patches (
     diff              TEXT DEFAULT '',
     headers           TEXT DEFAULT '',
     prefixes          TEXT DEFAULT '',
-    mbox_content      TEXT DEFAULT '',
     detail_fetched    INTEGER DEFAULT 0,
     comments_fetched  INTEGER DEFAULT 0,
     updated_at        TEXT
@@ -81,7 +80,6 @@ CREATE TABLE IF NOT EXISTS covers (
     mbox_url          TEXT,
     content           TEXT DEFAULT '',
     headers           TEXT DEFAULT '',
-    mbox_content      TEXT DEFAULT '',
     detail_fetched    INTEGER DEFAULT 0,
     comments_fetched  INTEGER DEFAULT 0,
     has_active_patch  INTEGER DEFAULT 0
