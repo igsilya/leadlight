@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -661,4 +662,33 @@ func GetChecksForPatch(d *db.DB, patchID int) []CheckInfo {
 		}
 	}
 	return checks
+}
+
+type comparePatch struct {
+	id       int
+	position int
+	parsed   ParsedMbox
+}
+
+func buildComparePatches(patches []db.PatchRow) []comparePatch {
+	result := make([]comparePatch, len(patches))
+	for i, p := range patches {
+		result[i] = comparePatch{
+			id:       p.ID,
+			position: patchNumber(p.Name),
+			parsed:   BuildParsedMboxFromPatch(p),
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].position < result[j].position
+	})
+	return result
+}
+
+func buildCompareCover(cover *db.CoverRow) *ParsedMbox {
+	if cover == nil {
+		return nil
+	}
+	parsed := BuildParsedMboxFromCover(*cover)
+	return &parsed
 }

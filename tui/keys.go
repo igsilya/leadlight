@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -54,6 +55,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.viewMode {
 	case viewPatch:
 		return m.handleViewportKey(msg)
+	case viewCompare:
+		return m.handleCompareKey(msg)
 	default:
 		if m.selectorMode != selectorNone {
 			return m.handleSelectorKey(msg)
@@ -104,6 +107,10 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.filterText != "" {
 			m.clearFilter()
+			return m, nil
+		}
+		if m.compareCount > 0 {
+			m.compareCount = 0
 			return m, nil
 		}
 
@@ -236,6 +243,47 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.startApplyConfirm(seriesID, ids, item.data[ColName])
 			}
 		}
+
+	case "c":
+		if m.db == nil {
+			break
+		}
+		items := m.getVisibleItems()
+		if m.selectedRow >= len(items) {
+			break
+		}
+		item := items[m.selectedRow]
+		if len(item.data) == 0 {
+			break
+		}
+		rowID := item.data[ColID]
+		var seriesID int
+		var patchID int
+		if item.isSubRow {
+			seriesID, _ = strconv.Atoi(m.RowData[item.parentIdx].Data[ColID])
+			patchID, _ = strconv.Atoi(rowID)
+		} else {
+			seriesID, _ = strconv.Atoi(rowID)
+			patchID = 0
+		}
+		// Toggle off if same item already marked
+		if m.compareCount == 1 && m.compare[0].mark.rowID == rowID {
+			m.compareCount = 0
+			return m, nil
+		}
+		m.compare[m.compareCount].mark = compareMark{
+			seriesID: seriesID,
+			patchID:  patchID,
+			rowID:    rowID,
+		}
+		m.compareCount++
+		if m.compareCount == 2 {
+			m.enterCompareView()
+		} else {
+			m.Status.SetTimed(status.Info,
+				"Marked for comparison — press c on another", 5*time.Second)
+		}
+		return m, nil
 
 	case "v":
 		items := m.getVisibleItems()
@@ -801,5 +849,208 @@ func (m *Model) adjustScrollDown(totalItems int) {
 	if totalItems > visibleRows &&
 		m.selectedRow >= m.scrollOffset+visibleRows-scrollBuffer {
 		m.scrollOffset++
+	}
+}
+
+func (m *Model) enterCompareView() {
+	m.Status.Clear(status.Info)
+
+	for i := range m.compare {
+		mark := m.compare[i].mark
+		m.compare[i].patches = buildComparePatches(m.db.GetPatchesForSeries(mark.seriesID))
+		cover, _ := m.db.GetCover(mark.seriesID)
+		m.compare[i].cover = buildCompareCover(cover)
+		m.compare[i].ver = fmt.Sprintf("v%d", m.db.GetSeriesVersion(mark.seriesID))
+		m.compare[i].idx = resolveCompareIdx(mark, m.compare[i].patches, m.compare[i].cover)
+	}
+
+	// If both started from series rows, try to align: both show
+	// covers if available, otherwise both show first patches.
+	if m.compare[0].mark.patchID == 0 && m.compare[1].mark.patchID == 0 {
+		if m.compare[0].cover != nil && m.compare[1].cover != nil {
+			m.compare[0].idx = -1
+			m.compare[1].idx = -1
+		} else {
+			m.compare[0].idx = 0
+			m.compare[1].idx = 0
+		}
+	}
+
+	m.comparePrefix = 0
+	m.viewportOffset = 0
+	m.viewExpanded = false
+	m.viewMode = viewCompare
+	m.buildCompareContent()
+}
+
+func resolveCompareIdx(
+	mark compareMark, patches []comparePatch, cover *ParsedMbox,
+) int {
+	if mark.patchID == 0 {
+		if cover != nil {
+			return -1
+		}
+		return 0
+	}
+	for i, p := range patches {
+		if p.id == mark.patchID {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m *Model) compareMinIdx() int {
+	if m.compare[0].cover != nil && m.compare[1].cover != nil {
+		return -1
+	}
+	return 0
+}
+
+func (m *Model) buildCompareContent() {
+	colWidth := (m.width - 1) / 2 // 1 char for │ separator
+	if colWidth < 20 {
+		colWidth = 20
+	}
+	collapse := !m.viewExpanded
+
+	var parts [2][3][]string // [side][headers/body/diff]
+	for i := range m.compare {
+		s := &m.compare[i]
+		parts[i][0], parts[i][1], parts[i][2] = m.compareColumnParts(
+			s.idx, s.patches, s.cover, colWidth, collapse)
+	}
+
+	// Pad headers and body so both columns align at section boundaries.
+	padToEqual(&parts[0][0], &parts[1][0])
+	padToEqual(&parts[0][1], &parts[1][1])
+
+	for i := range m.compare {
+		m.compare[i].lines = concat(parts[i][0], parts[i][1], parts[i][2])
+	}
+	m.viewportOffset = 0
+}
+
+func (m *Model) compareColumnParts(
+	idx int, patches []comparePatch, cover *ParsedMbox,
+	width int, collapse bool,
+) (headers, body, diff []string) {
+	var parsed ParsedMbox
+	switch {
+	case idx == -1 && cover != nil:
+		parsed = *cover
+	case idx >= 0 && idx < len(patches):
+		parsed = patches[idx].parsed
+	default:
+		return []string{"(no content)"}, nil, nil
+	}
+	h, b, d := FormatMboxParts(parsed, width, collapse)
+	return splitLines(h), splitLines(b), splitLines(d)
+}
+
+func padToEqual(a, b *[]string) {
+	if len(*a) < len(*b) {
+		*a = append(*a, make([]string, len(*b)-len(*a))...)
+	} else if len(*b) < len(*a) {
+		*b = append(*b, make([]string, len(*a)-len(*b))...)
+	}
+}
+
+func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "q", "esc":
+		m.viewMode = viewTable
+		m.compareCount = 0
+		return m, nil
+
+	case "up", "k":
+		m.compareScroll(-1)
+	case "down", "j":
+		m.compareScroll(1)
+	case "pgup", "ctrl+u":
+		m.compareScroll(-m.viewportVisibleLines() / 2)
+	case "pgdown", "ctrl+d":
+		m.compareScroll(m.viewportVisibleLines() / 2)
+	case "home", "g":
+		m.viewportOffset = 0
+	case "end", "G":
+		m.compareScrollToEnd()
+
+	case "e":
+		m.viewExpanded = !m.viewExpanded
+		m.buildCompareContent()
+
+	case "1":
+		m.comparePrefix = 1
+	case "2":
+		m.comparePrefix = 2
+
+	case "left", "h":
+		m.compareCycle(-1)
+	case "right", "l":
+		m.compareCycle(1)
+	}
+	return m, nil
+}
+
+func (m *Model) compareCycle(delta int) {
+	if m.comparePrefix == 1 || m.comparePrefix == 2 {
+		s := &m.compare[m.comparePrefix-1]
+		s.idx = m.clampCompareIdx(s.idx+delta, s.patches, s.cover)
+	} else {
+		new0 := m.compare[0].idx + delta
+		new1 := m.compare[1].idx + delta
+		minIdx := m.compareMinIdx()
+		outOfBounds := new0 < minIdx || new1 < minIdx ||
+			new0 >= len(m.compare[0].patches) || new1 >= len(m.compare[1].patches)
+		if outOfBounds {
+			new0 = minIdx
+			new1 = minIdx
+		}
+		m.compare[0].idx = new0
+		m.compare[1].idx = new1
+	}
+	m.comparePrefix = 0
+	m.buildCompareContent()
+}
+
+func (m *Model) clampCompareIdx(idx int, patches []comparePatch, cover *ParsedMbox) int {
+	minIdx := 0
+	if cover != nil {
+		minIdx = -1
+	}
+	if idx < minIdx {
+		return len(patches) - 1
+	}
+	if idx >= len(patches) {
+		return minIdx
+	}
+	return idx
+}
+
+func (m *Model) compareMaxLines() int {
+	return max(len(m.compare[0].lines), len(m.compare[1].lines))
+}
+
+func (m *Model) compareScroll(delta int) {
+	m.viewportOffset += delta
+	if m.viewportOffset < 0 {
+		m.viewportOffset = 0
+	}
+	maxOffset := m.compareMaxLines() - m.viewportVisibleLines()
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.viewportOffset > maxOffset {
+		m.viewportOffset = maxOffset
+	}
+}
+
+func (m *Model) compareScrollToEnd() {
+	m.viewportOffset = m.compareMaxLines() - m.viewportVisibleLines()
+	if m.viewportOffset < 0 {
+		m.viewportOffset = 0
 	}
 }

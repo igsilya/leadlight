@@ -546,6 +546,7 @@ func testModelWithDB(t *testing.T) (*Model, *db.DB) {
 	})
 
 	m := NewModel(d, []string{"new"}, "test-token")
+	m.Status = status.NewRegistry(nil)
 	m.width = 120
 	m.height = 30
 	return m, d
@@ -2286,5 +2287,356 @@ func TestRenderPatchView_LineCount(t *testing.T) {
 					len(lines), want, visible)
 			}
 		})
+	}
+}
+
+func TestCompareMarkSingle(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c")
+	if m.compareCount != 1 {
+		t.Errorf("compareCount = %d, want 1", m.compareCount)
+	}
+	if m.viewMode != viewTable {
+		t.Error("should stay in table view with one mark")
+	}
+}
+
+func TestCompareMarkToggle(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c") // mark
+	if m.compareCount != 1 {
+		t.Fatal("compareCount should be 1")
+	}
+	m = pressKey(m, "c") // same row → unmark
+	if m.compareCount != 0 {
+		t.Errorf("compareCount = %d, want 0 (toggled off)", m.compareCount)
+	}
+}
+
+func TestCompareMarkDouble(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c") // mark first
+	m = pressKey(m, "j") // move down
+	m = pressKey(m, "c") // mark second
+	if m.viewMode != viewCompare {
+		t.Errorf("viewMode = %d, want viewCompare (%d)", m.viewMode, viewCompare)
+	}
+	if m.compareCount != 2 {
+		t.Errorf("compareCount = %d, want 2", m.compareCount)
+	}
+}
+
+func TestCompareEscClearsMark(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c")
+	if m.compareCount != 1 {
+		t.Fatal("compareCount should be 1")
+	}
+	m = pressSpecialKey(m, tea.KeyEsc)
+	if m.compareCount != 0 {
+		t.Errorf("compareCount = %d, want 0 after esc", m.compareCount)
+	}
+}
+
+func TestCompareEscExits(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	m = pressSpecialKey(m, tea.KeyEsc)
+	if m.viewMode != viewTable {
+		t.Errorf("viewMode = %d, want viewTable after esc", m.viewMode)
+	}
+	if m.compareCount != 0 {
+		t.Errorf("compareCount = %d, want 0 after exit", m.compareCount)
+	}
+}
+
+func TestCompareCycleBoth(t *testing.T) {
+	m, d := testModelWithDB(t)
+	// Add a second patch to series 51 so both sides have >1 patch
+	now := time.Now()
+	d.SavePatch(db.PatchRow{
+		ID: 201, SeriesID: 51,
+		Name: "Dolor patch two", State: "new",
+		Date:      now.Add(-5 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Dolor",
+	})
+	m.reloadData()
+
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	origL := m.compare[0].idx
+	origR := m.compare[1].idx
+	m = pressKey(m, "l") // right arrow
+	if m.compare[0].idx == origL || m.compare[1].idx == origR {
+		t.Errorf("cycling right should advance both: L %d→%d, R %d→%d",
+			origL, m.compare[0].idx, origR, m.compare[1].idx)
+	}
+}
+
+func TestComparePrefixLeft(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	origR := m.compare[1].idx
+	m = pressKey(m, "1") // prefix for left panel
+	m = pressKey(m, "l") // right arrow — only left changes
+	if m.compare[1].idx != origR {
+		t.Errorf("right index changed from %d to %d (should stay)",
+			origR, m.compare[1].idx)
+	}
+	if m.comparePrefix != 0 {
+		t.Error("prefix should be cleared after use")
+	}
+}
+
+func TestComparePrefixRight(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	origL := m.compare[0].idx
+	m = pressKey(m, "2") // prefix for right panel
+	m = pressKey(m, "l") // right arrow — only right changes
+	if m.compare[0].idx != origL {
+		t.Errorf("left index changed from %d to %d (should stay)",
+			origL, m.compare[0].idx)
+	}
+	if m.comparePrefix != 0 {
+		t.Error("prefix should be cleared after use")
+	}
+}
+
+func TestCompareAlignSections(t *testing.T) {
+	a := []string{"line1", "line2"}
+	b := []string{"line1", "line2", "line3", "line4"}
+	padToEqual(&a, &b)
+	if len(a) != len(b) {
+		t.Errorf("len(a)=%d, len(b)=%d, should be equal", len(a), len(b))
+	}
+	if len(a) != 4 {
+		t.Errorf("len(a)=%d, want 4", len(a))
+	}
+}
+
+func TestFormatMboxParts_Roundtrip(t *testing.T) {
+	p := ParsedMbox{
+		Subject: "Lorem ipsum dolor sit amet",
+		From:    "Test <test@example.com>",
+		Date:    "2025-01-01T00:00:00",
+		Body:    "Consectetur adipiscing elit.\n",
+		Diff:    "diff --git a/foo b/foo\n--- a/foo\n+++ b/foo\n",
+	}
+	whole := FormatMbox(p, 80, false)
+	headers, body, diff := FormatMboxParts(p, 80, false)
+	reassembled := headers + body + diff
+	if whole != reassembled {
+		t.Error("FormatMboxParts should produce the same output as FormatMbox")
+	}
+}
+
+func TestIsCompareMarked(t *testing.T) {
+	m := testModel()
+	m.compareCount = 1
+	m.compare[0].mark = compareMark{rowID: "1"}
+	items := m.getVisibleItems()
+	found := false
+	for _, item := range items {
+		if len(item.data) > 0 && item.data[ColID] == "1" {
+			if !m.isCompareMarked(item) {
+				t.Error("item with ID '1' should be marked")
+			}
+			found = true
+		} else if len(item.data) > 0 {
+			if m.isCompareMarked(item) {
+				t.Errorf("item with ID %q should not be marked",
+					item.data[ColID])
+			}
+		}
+	}
+	if !found {
+		t.Error("did not find item with ID '1'")
+	}
+}
+
+func TestCompareStartsAtSelectedPatch(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	now := time.Now()
+	d.SaveSeriesSummary(60, "[0/3] Lorem refactor",
+		now.Format("2006-01-02T15:04:05"), 1)
+	d.SaveSeriesSummary(61, "[0/3] Lorem refactor",
+		now.Format("2006-01-02T15:04:05"), 1)
+
+	// Series 60: date order differs from position order.
+	// By date: 2/3 (earliest), 3/3, 1/3 (latest).
+	// By position: 1/3, 2/3, 3/3.
+	d.SavePatch(db.PatchRow{
+		ID: 400, SeriesID: 60,
+		Name:  "[2/3] Dolor second",
+		Date:  now.Add(-3 * time.Hour).Format("2006-01-02T15:04:05"),
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 401, SeriesID: 60,
+		Name:  "[3/3] Amet third",
+		Date:  now.Add(-2 * time.Hour).Format("2006-01-02T15:04:05"),
+		State: "new", Submitter: "Lorem",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 402, SeriesID: 60,
+		Name:  "[1/3] Ipsum first",
+		Date:  now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05"),
+		State: "new", Submitter: "Lorem",
+	})
+
+	// Series 61: normal date order matching position.
+	d.SavePatch(db.PatchRow{
+		ID: 500, SeriesID: 61,
+		Name:  "[1/3] Ipsum first",
+		Date:  now.Add(-3 * time.Hour).Format("2006-01-02T15:04:05"),
+		State: "new", Submitter: "Dolor",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 501, SeriesID: 61,
+		Name:  "[2/3] Dolor second",
+		Date:  now.Add(-2 * time.Hour).Format("2006-01-02T15:04:05"),
+		State: "new", Submitter: "Dolor",
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 502, SeriesID: 61,
+		Name:  "[3/3] Amet third",
+		Date:  now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05"),
+		State: "new", Submitter: "Dolor",
+	})
+
+	m := NewModel(d, []string{"new"}, "test-token")
+	m.Status = status.NewRegistry(nil)
+	m.width = 120
+	m.height = 30
+
+	// Expand series 60 and navigate to patch 402 "[1/3] Ipsum first".
+	// In the table, patches are ordered by ID (from GetAllPatchesBatch),
+	// so subrow order is: 400 [2/3], 401 [3/3], 402 [1/3].
+	// Patch 402 is at subRowIdx=2 in the table.
+	items := m.getVisibleItems()
+	seriesRow := -1
+	for i, item := range items {
+		if !item.isSubRow && len(item.data) > 0 && item.data[ColID] == "60" {
+			seriesRow = i
+			break
+		}
+	}
+	if seriesRow < 0 {
+		t.Fatal("series 60 not found")
+	}
+	m.selectedRow = seriesRow
+	m = pressKey(m, " ") // expand
+
+	// Find the sub-row for patch 402
+	items = m.getVisibleItems()
+	patchRow := -1
+	for i, item := range items {
+		if item.isSubRow && len(item.data) > 0 && item.data[ColID] == "402" {
+			patchRow = i
+			break
+		}
+	}
+	if patchRow < 0 {
+		t.Fatal("patch 402 not found in sub-rows")
+	}
+	m.selectedRow = patchRow
+	m.updateSelectedID()
+	m = pressKey(m, "c") // mark patch 402 [1/3]
+
+	if m.compareCount != 1 {
+		t.Fatalf("compareCount = %d, want 1", m.compareCount)
+	}
+
+	// Navigate to series 61, expand, find patch 502 "[3/3] Amet third"
+	items = m.getVisibleItems()
+	seriesRow = -1
+	for i, item := range items {
+		if !item.isSubRow && len(item.data) > 0 && item.data[ColID] == "61" {
+			seriesRow = i
+			break
+		}
+	}
+	if seriesRow < 0 {
+		t.Fatal("series 61 not found")
+	}
+	m.selectedRow = seriesRow
+	m = pressKey(m, " ") // expand
+
+	items = m.getVisibleItems()
+	patchRow = -1
+	for i, item := range items {
+		if item.isSubRow && len(item.data) > 0 && item.data[ColID] == "502" {
+			patchRow = i
+			break
+		}
+	}
+	if patchRow < 0 {
+		t.Fatal("patch 502 not found in sub-rows")
+	}
+	m.selectedRow = patchRow
+	m.updateSelectedID()
+	m = pressKey(m, "c") // mark patch 502 [3/3]
+
+	if m.viewMode != viewCompare {
+		t.Fatalf("viewMode = %d, want viewCompare", m.viewMode)
+	}
+
+	// Left side should show patch 402 "[1/3] Ipsum first"
+	if m.compare[0].idx < 0 || m.compare[0].idx >= len(m.compare[0].patches) {
+		t.Fatalf("compare[0].idx = %d out of range [0, %d)",
+			m.compare[0].idx, len(m.compare[0].patches))
+	}
+	gotL := m.compare[0].patches[m.compare[0].idx].id
+	if gotL != 402 {
+		t.Errorf("left patch ID = %d, want 402 ([1/3])", gotL)
+	}
+
+	// Right side should show patch 502 "[3/3] Amet third"
+	if m.compare[1].idx < 0 || m.compare[1].idx >= len(m.compare[1].patches) {
+		t.Fatalf("compare[1].idx = %d out of range [0, %d)",
+			m.compare[1].idx, len(m.compare[1].patches))
+	}
+	gotR := m.compare[1].patches[m.compare[1].idx].id
+	if gotR != 502 {
+		t.Errorf("right patch ID = %d, want 502 ([3/3])", gotR)
+	}
+
+	// Verify left patches are sorted by position, not date/ID.
+	// Position order: [1/3]=402, [2/3]=400, [3/3]=401
+	if len(m.compare[0].patches) != 3 {
+		t.Fatalf("compare[0].patches has %d patches, want 3",
+			len(m.compare[0].patches))
+	}
+	wantOrder := []int{402, 400, 401}
+	for i, want := range wantOrder {
+		if m.compare[0].patches[i].id != want {
+			t.Errorf("compare[0].patches[%d].id = %d, want %d",
+				i, m.compare[0].patches[i].id, want)
+		}
 	}
 }

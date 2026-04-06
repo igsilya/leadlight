@@ -570,6 +570,12 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	return result
 }
 
+func (d *DB) GetSeriesVersion(seriesID int) int {
+	var v int
+	d.conn.QueryRow("SELECT COALESCE(version, 1) FROM series WHERE id = ?", seriesID).Scan(&v)
+	return v
+}
+
 func (d *DB) GetSeriesTotalPatches(seriesID int) int {
 	var total int
 	d.conn.QueryRow(

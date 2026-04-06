@@ -36,6 +36,8 @@ type theme struct {
 	LogHTTP2xxFg string // dim green for successful HTTP responses
 	LogHTTP4xxFg string // dim amber for client errors
 	LogHTTPErrFg string // dim red for server errors and failures
+
+	CompareSepFg string // separator line between compare columns
 }
 
 // Dark theme FG colors inspired by the Catppuccin Mocha palette.
@@ -56,6 +58,8 @@ var darkTheme = theme{
 		"closed": {rgb{0x35, 0x35, 0x35}, rgb{0xcc, 0xcc, 0xcc}},
 		// dark blue-grey bg, bright cool slate text
 		"stale": {rgb{0x1a, 0x1a, 0x24}, rgb{0xb8, 0xc0, 0xd8}},
+		// bright violet bg, white text — compare mark
+		"compare": {rgb{0x50, 0x20, 0x80}, rgb{0xff, 0xff, 0xff}},
 	},
 	GradientStart:   rgb{95, 0, 255},    // electric violet
 	GradientFgStart: rgb{255, 255, 255}, // pure white
@@ -101,6 +105,8 @@ var darkTheme = theme{
 	LogHTTP2xxFg: "#74c7a4", // muted green
 	LogHTTP4xxFg: "#c7b374", // muted amber
 	LogHTTPErrFg: "#c77474", // muted red
+
+	CompareSepFg: "#585b70", // catppuccin Surface2
 }
 
 var lightTheme = theme{
@@ -119,6 +125,8 @@ var lightTheme = theme{
 		"closed": {rgb{0xd8, 0xd8, 0xd8}, rgb{0x44, 0x44, 0x44}},
 		// pale grey bg, mid-grey text
 		"stale": {rgb{0xc0, 0xc0, 0xc0}, rgb{0x55, 0x55, 0x55}},
+		// bright lavender bg, dark purple text — compare mark
+		"compare": {rgb{0xc0, 0xa0, 0xf0}, rgb{0x1a, 0x0a, 0x30}},
 	},
 	GradientStart:   rgb{140, 120, 255}, // soft periwinkle
 	GradientFgStart: rgb{0, 0, 0},       // pure black
@@ -164,4 +172,6 @@ var lightTheme = theme{
 	LogHTTP2xxFg: "#2e7d52", // dim green
 	LogHTTP4xxFg: "#7d6b2e", // dim amber
 	LogHTTPErrFg: "#7d2e2e", // dim red
+
+	CompareSepFg: "#9ca0b0", // catppuccin Overlay0
 }

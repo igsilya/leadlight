@@ -124,7 +124,23 @@ type viewMode int
 const (
 	viewTable viewMode = iota
 	viewPatch
+	viewCompare
 )
+
+type compareMark struct {
+	seriesID int    // series ID
+	patchID  int    // 0 = cover/series row, >0 = specific patch ID
+	rowID    string // ColID of the item for highlight matching
+}
+
+type compareSide struct {
+	mark    compareMark
+	lines   []string
+	patches []comparePatch
+	cover   *ParsedMbox
+	idx     int    // -1 = cover, 0+ = patch index
+	ver     string // "v1", "v2", etc.
+}
 
 func highlightAnimTickCmd() tea.Cmd {
 	return tea.Tick(
@@ -201,12 +217,17 @@ type Model struct {
 	viewExpanded   bool
 	listPrefix     string
 	delegateNames  map[string]string
-	logConsole     bool
-	logFocused     bool
-	LogBuf         *LogBuffer
-	logLastSeen    int // LogBuf.Count() as of last render
-	logAnchor      int // absolute log entry the viewport bottom is pinned to
-	logLastCount   int
+
+	compare       [2]compareSide
+	compareCount  int // 0, 1, or 2
+	comparePrefix int // 0=none, 1=left, 2=right (for 1/2+arrow)
+
+	logConsole   bool
+	logFocused   bool
+	LogBuf       *LogBuffer
+	logLastSeen  int // LogBuf.Count() as of last render
+	logAnchor    int // absolute log entry the viewport bottom is pinned to
+	logLastCount int
 
 	FetchSeriesCover   func(seriesID int)
 	RequestSync        func()
@@ -494,6 +515,19 @@ func (m *Model) invalidateSeriesCache(seriesIDs []int) {
 		delete(m.cachedRenderedRows, sid)
 	}
 	m.cachedVisibleItemsValid = false
+}
+
+func (m *Model) isCompareMarked(item visibleItem) bool {
+	if m.compareCount == 0 || len(item.data) == 0 {
+		return false
+	}
+	id := item.data[ColID]
+	for i := 0; i < m.compareCount; i++ {
+		if m.compare[i].mark.rowID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) updateSelectedID() {

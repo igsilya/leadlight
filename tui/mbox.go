@@ -216,37 +216,55 @@ func writeHeader(b *strings.Builder, label, value string, collapse bool, labelWi
 }
 
 func FormatMbox(p ParsedMbox, width int, collapse bool) string {
+	headers, body, diff := FormatMboxParts(p, width, collapse)
 	var b strings.Builder
+	b.WriteString(headers)
+	b.WriteString(body)
+	b.WriteString(diff)
+	return b.String()
+}
+
+// FormatMboxParts returns the three sections of a formatted mbox
+// separately so the compare view can align them between two patches.
+func FormatMboxParts(
+	p ParsedMbox, width int, collapse bool,
+) (headers, body, diff string) {
 	labelWidth := 9 // "Subject: " length
 	valWidth := width - labelWidth
 	if valWidth < 20 {
 		valWidth = 20
 	}
 
-	writeHeader(&b, "Subject: ", p.Subject, false, labelWidth, valWidth)
-	writeHeader(&b, "From:    ", p.From, false, labelWidth, valWidth)
-	writeHeader(&b, "To:      ", p.To, collapse, labelWidth, valWidth)
-	writeHeader(&b, "Cc:      ", p.Cc, collapse, labelWidth, valWidth)
-	writeHeader(&b, "Date:    ", p.Date, false, labelWidth, valWidth)
+	var hb strings.Builder
+	writeHeader(&hb, "Subject: ", p.Subject, false, labelWidth, valWidth)
+	writeHeader(&hb, "From:    ", p.From, false, labelWidth, valWidth)
+	writeHeader(&hb, "To:      ", p.To, collapse, labelWidth, valWidth)
+	writeHeader(&hb, "Cc:      ", p.Cc, collapse, labelWidth, valWidth)
+	writeHeader(&hb, "Date:    ", p.Date, false, labelWidth, valWidth)
+	headers = hb.String()
 
 	if p.Body != "" {
-		b.WriteByte('\n')
-		body := replaceControlChars(p.Body)
-		for _, line := range strings.Split(body, "\n") {
+		var bb strings.Builder
+		bb.WriteByte('\n')
+		cleaned := replaceControlChars(p.Body)
+		for _, line := range strings.Split(cleaned, "\n") {
 			quoted := isQuotedLine(line)
 			for _, wl := range wrapLine(line, width) {
-				writeStyledLine(&b, wl, quoted)
-				b.WriteByte('\n')
+				writeStyledLine(&bb, wl, quoted)
+				bb.WriteByte('\n')
 			}
 		}
+		body = bb.String()
 	}
 
 	if p.Diff != "" {
-		b.WriteByte('\n')
-		b.WriteString(formatDiff(replaceControlChars(p.Diff), width))
+		var df strings.Builder
+		df.WriteByte('\n')
+		df.WriteString(formatDiff(replaceControlChars(p.Diff), width))
+		diff = df.String()
 	}
 
-	return b.String()
+	return headers, body, diff
 }
 
 func formatDiff(diff string, width int) string {

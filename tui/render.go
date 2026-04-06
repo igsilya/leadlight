@@ -22,8 +22,11 @@ func (m *Model) View() string {
 }
 
 func (m *Model) renderMainView() string {
-	if m.viewMode == viewPatch {
+	switch m.viewMode {
+	case viewPatch:
 		return m.renderPatchView()
+	case viewCompare:
+		return m.renderCompareView()
 	}
 
 	widths := m.columnWidths()
@@ -134,6 +137,97 @@ func (m *Model) renderPatchView() string {
 	return body + "\n" + statusLine + "\n" + status
 }
 
+func (m *Model) renderCompareView() string {
+	visible := m.viewportVisibleLines()
+	leftWidth := (m.width - 1) / 2
+	rightWidth := m.width - 1 - leftWidth
+	sep := compareSepStyle.Render("│")
+
+	maxLines := m.compareMaxLines()
+	start := m.viewportOffset
+	if start > maxLines {
+		start = maxLines
+	}
+	end := start + visible
+	if end > maxLines {
+		end = maxLines
+	}
+
+	lines := make([]string, visible)
+	for i := 0; i < visible; i++ {
+		idx := start + i
+		left := ""
+		if idx < len(m.compare[0].lines) {
+			left = m.compare[0].lines[idx]
+		}
+		right := ""
+		if idx < len(m.compare[1].lines) {
+			right = m.compare[1].lines[idx]
+		}
+		lw := lipgloss.Width(left)
+		if lw < leftWidth {
+			left += strings.Repeat(" ", leftWidth-lw)
+		}
+		rw := lipgloss.Width(right)
+		if rw < rightWidth {
+			right += strings.Repeat(" ", rightWidth-rw)
+		}
+		lines[i] = left + sep + right
+	}
+	body := strings.Join(lines, "\n")
+
+	pct := 0
+	maxOff := maxLines - visible
+	if maxOff > 0 {
+		pct = m.viewportOffset * 100 / maxOff
+	}
+
+	bright, desc, sepS := m.helpStyles()
+	var hb strings.Builder
+	labelL := comparePositionLabel(
+		m.compare[0].idx, len(m.compare[0].patches), m.compare[0].ver)
+	labelR := comparePositionLabel(
+		m.compare[1].idx, len(m.compare[1].patches), m.compare[1].ver)
+	hb.WriteString(desc.Render(labelL + " vs " + labelR))
+	hb.WriteString(helpSepStr(sepS))
+	hb.WriteString(bright.Render("←/→"))
+	hb.WriteString(helpSepStr(sepS))
+	hb.WriteString(helpKey(bright, desc, "1/2+←/→", "single"))
+	hb.WriteString(helpSepStr(sepS))
+	if m.viewExpanded {
+		hb.WriteString(helpKey(bright, desc, "e", "collapse"))
+	} else {
+		hb.WriteString(helpKey(bright, desc, "e", "expand"))
+	}
+	hb.WriteString(helpSepStr(sepS))
+	hb.WriteString(bright.Render("↑/↓") +
+		sepS.Render(" ") + bright.Render("pgup/dn"))
+	hb.WriteString(helpSepStr(sepS))
+	hb.WriteString(helpKey(bright, desc, "esc", "back"))
+	hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
+	helpText := hb.String()
+
+	var statusLine string
+	msg, spinning := m.Status.Active()
+	if msg != "" {
+		if spinning {
+			statusLine = statusStyle.Render(
+				fmt.Sprintf("%s %s", spinnerFrames[m.spinnerFrame], msg))
+		} else {
+			statusLine = statusStyle.Render(msg)
+		}
+	}
+
+	return body + "\n" + statusLine + "\n" + helpText
+}
+
+func comparePositionLabel(idx, total int, ver string) string {
+	if idx == -1 {
+		return fmt.Sprintf("%s [0/%d]", ver, total)
+	}
+	return fmt.Sprintf("%s [%d/%d]", ver, idx+1, total)
+}
+
 func (m *Model) renderHeader(out *strings.Builder, widths []int) {
 	out.WriteString(strings.Repeat(" ", indicatorWidth))
 	for i, col := range m.ColumnDefs {
@@ -221,8 +315,12 @@ func (m *Model) renderRows(
 				row = ind + m.buildRow(
 					items[i], widths, m.selectorHighlightCol)
 			} else {
+				selItem := items[i]
+				if m.isCompareMarked(selItem) {
+					selItem.style.Background = "compare"
+				}
 				row = m.renderSelectedRow(
-					items[i], widths, ind,
+					selItem, widths, ind,
 					checksStart, checksWidth,
 					afrtStart, afrtWidth,
 					commentStart, commentWidth)
@@ -230,6 +328,10 @@ func (m *Model) renderRows(
 		} else if fetching {
 			prefix := " " + spinnerFrames[m.spinnerFrame]
 			row = m.buildStyledRow(items[i], widths, prefix, false)
+		} else if m.isCompareMarked(items[i]) {
+			marked := items[i]
+			marked.style.Background = "compare"
+			row = m.buildStyledRow(marked, widths, blank, false)
 		} else {
 			row = m.buildStyledRow(items[i], widths, blank, true)
 		}
