@@ -3,6 +3,7 @@ package tui
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -394,6 +395,7 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 		patches  []db.PatchRow
 		prefix   string
 		wantName string
+		wantTags string
 	}{
 		{
 			"elevate subsystem to series",
@@ -403,7 +405,7 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 				{Name: "[dolor,v6,2/3] Lorem second", Date: d, State: "new"},
 				{Name: "[dolor,v6,3/3] Lorem third", Date: d, State: "new"},
 			},
-			"", "[dolor,0/3] Lorem tailroom",
+			"", "[0/3] Lorem tailroom", "dolor ",
 		},
 		{
 			"elevate branch tag with list prefix stripped",
@@ -412,7 +414,7 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 				{Name: "[lorem-dev,branch-2.5,1/2] Ipsum set", Date: d, State: "new"},
 				{Name: "[lorem-dev,branch-2.5,2/2] Dolor prep", Date: d, State: "new"},
 			},
-			"lorem-dev", "[branch-2.5,0/2] Lorem release",
+			"lorem-dev", "[0/2] Lorem release", "branch-2.5 ",
 		},
 		{
 			"no tags to elevate",
@@ -421,7 +423,7 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 				{Name: "[v5,1/2] Lorem first", Date: d, State: "new"},
 				{Name: "[v5,2/2] Lorem second", Date: d, State: "new"},
 			},
-			"", "[0/2] Lorem debugfs",
+			"", "[0/2] Lorem debugfs", "",
 		},
 		{
 			"no duplication when series name has tag",
@@ -432,7 +434,7 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 				{Name: "[WIP,3/4] Lorem third", Date: d, State: "new"},
 				{Name: "[WIP,4/4] Lorem fourth", Date: d, State: "new"},
 			},
-			"", "[WIP,0/4] Lorem bindings",
+			"", "[0/4] Lorem bindings", "WIP ",
 		},
 		{
 			"single patch no position",
@@ -440,7 +442,7 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 			[]db.PatchRow{
 				{Name: "[sit,v3] Lorem fix", Date: d, State: "new"},
 			},
-			"", "[sit] Lorem fix",
+			"", "Lorem fix", "sit ",
 		},
 	}
 	for _, tt := range tests {
@@ -450,6 +452,82 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 			t.Errorf("%s: Name = %q, want %q",
 				tt.name, row.Data[ColName], tt.wantName)
 		}
+		if row.Data[ColTags] != tt.wantTags {
+			t.Errorf("%s: Tags = %q, want %q",
+				tt.name, row.Data[ColTags], tt.wantTags)
+		}
+	}
+}
+
+func TestStripTags(t *testing.T) {
+	tests := []struct {
+		name string
+		tags map[string]bool
+		want string
+	}{
+		{"[dolor,1/3] Lorem", map[string]bool{"dolor": true}, "[1/3] Lorem"},
+		{"[dolor,sit,1/3] Lorem", map[string]bool{"dolor": true}, "[sit,1/3] Lorem"},
+		{"[dolor] Lorem", map[string]bool{"dolor": true}, "Lorem"},
+		{"[1/3] Lorem", map[string]bool{"dolor": true}, "[1/3] Lorem"},
+		{"Lorem", map[string]bool{"dolor": true}, "Lorem"},
+		{"", nil, ""},
+	}
+	for _, tt := range tests {
+		got := stripTags(tt.name, tt.tags)
+		if got != tt.want {
+			t.Errorf("stripTags(%q, %v) = %q, want %q",
+				tt.name, tt.tags, got, tt.want)
+		}
+	}
+}
+
+func TestSeriesToRow_SubRowStripsElevated(t *testing.T) {
+	d := time.Now().Format("2006-01-02T15:04:05")
+	s := db.SeriesRow{
+		ID: 1, Name: "Lorem tailroom", Date: d, TotalPatches: 3,
+	}
+	patches := []db.PatchRow{
+		{Name: "[dolor,v2,1/3] Lorem first", Date: d, State: "new"},
+		{Name: "[dolor,v2,2/3] Lorem second", Date: d, State: "new"},
+		{Name: "[dolor,v2,3/3] Lorem third", Date: d, State: "new"},
+	}
+	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil)
+
+	// Sub-rows should have "dolor" stripped (elevated to series)
+	for i, sub := range row.SubRows {
+		if strings.Contains(sub[ColName], "dolor") {
+			t.Errorf("SubRow[%d] Name = %q, should not contain elevated tag",
+				i, sub[ColName])
+		}
+		if sub[ColTags] != "" {
+			t.Errorf("SubRow[%d] Tags = %q, want empty",
+				i, sub[ColTags])
+		}
+	}
+	// But sub-rows should still have position
+	if !strings.HasPrefix(row.SubRows[0][ColName], "[1/3]") {
+		t.Errorf("SubRow[0] Name = %q, should start with position",
+			row.SubRows[0][ColName])
+	}
+}
+
+func TestSeriesToRow_FilterMatchesTags(t *testing.T) {
+	d := time.Now().Format("2006-01-02T15:04:05")
+	s := db.SeriesRow{
+		ID: 1, Name: "Lorem tailroom", Date: d, TotalPatches: 3,
+	}
+	patches := []db.PatchRow{
+		{Name: "[dolor,v2,1/3] Lorem first", Date: d, State: "new"},
+		{Name: "[dolor,v2,2/3] Lorem second", Date: d, State: "new"},
+		{Name: "[dolor,v2,3/3] Lorem third", Date: d, State: "new"},
+	}
+	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil)
+
+	// Filter should match against ColTags content
+	filter := strings.ToLower("dolor")
+	if !matchesFilter(row.Data, filter) {
+		t.Errorf("matchesFilter should match 'dolor' in Tags %q",
+			row.Data[ColTags])
 	}
 }
 
@@ -934,23 +1012,23 @@ func TestSeriesToRow(t *testing.T) {
 
 	row := seriesToRow(s, patches, "", nil, tags, 1, nil, nil, nil)
 
-	if row.Data[0] != "50" {
-		t.Errorf("ID = %q", row.Data[0])
+	if row.Data[ColID] != "50" {
+		t.Errorf("ID = %q", row.Data[ColID])
 	}
-	if row.Data[1] != "" {
-		t.Errorf("Ver = %q, want empty (v1)", row.Data[1])
+	if row.Data[ColVer] != "" {
+		t.Errorf("Ver = %q, want empty (v1)", row.Data[ColVer])
 	}
-	if row.Data[2] != "Lorem series" {
-		t.Errorf("Name = %q", row.Data[2])
+	if row.Data[ColName] != "Lorem series" {
+		t.Errorf("Name = %q", row.Data[ColName])
 	}
-	if row.Data[3] != "new" {
-		t.Errorf("State = %q", row.Data[3])
+	if row.Data[ColState] != "new" {
+		t.Errorf("State = %q", row.Data[ColState])
 	}
-	if row.Data[4] != "Lorem Ipsum" {
-		t.Errorf("Submitter = %q", row.Data[4])
+	if row.Data[ColSubmitter] != "Lorem Ipsum" {
+		t.Errorf("Submitter = %q", row.Data[ColSubmitter])
 	}
 	// Age column stores raw date; formatAge is called at render time
-	if row.Data[5] == "" {
+	if row.Data[ColAge] == "" {
 		t.Error("Age should contain raw date")
 	}
 	if row.Data[ColC] != "1" {
@@ -975,8 +1053,11 @@ func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
 			State: "new", Submitter: "Lorem"},
 	}
 	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil)
-	if row.Data[2] != "[PATCH] Lorem ipsum" {
-		t.Errorf("Name = %q, want first patch name", row.Data[2])
+	if row.Data[ColName] != "Lorem ipsum" {
+		t.Errorf("Name = %q, want %q", row.Data[ColName], "Lorem ipsum")
+	}
+	if row.Data[ColTags] != "PATCH " {
+		t.Errorf("Tags = %q, want %q", row.Data[ColTags], "PATCH ")
 	}
 }
 

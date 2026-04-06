@@ -299,6 +299,15 @@ func (m *Model) renderRows(
 		afrtWidth = widths[ColAFRT]
 	}
 
+	nameStart := indicatorWidth
+	for c := 0; c < int(ColName) && c < len(widths); c++ {
+		nameStart += widths[c]
+	}
+	nameWidth := 0
+	if int(ColName) < len(widths) {
+		nameWidth = widths[ColName]
+	}
+
 	for i := m.scrollOffset; i < len(items); i++ {
 		if rendered >= maxRows {
 			break
@@ -323,7 +332,8 @@ func (m *Model) renderRows(
 					selItem, widths, ind,
 					checksStart, checksWidth,
 					afrtStart, afrtWidth,
-					commentStart, commentWidth)
+					commentStart, commentWidth,
+					nameStart, nameWidth)
 			}
 		} else if fetching {
 			prefix := " " + spinnerFrames[m.spinnerFrame]
@@ -367,7 +377,12 @@ func (m *Model) buildRawRow(
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
-		b.WriteString(renderCell(text, widths[j]))
+		sfx := m.suffixFor(item, j)
+		if sfx != "" {
+			b.WriteString(renderRawCellWithSuffix(text, sfx, widths[j]))
+		} else {
+			b.WriteString(renderCell(text, widths[j]))
+		}
 	}
 	return b.String()
 }
@@ -447,7 +462,11 @@ func (m *Model) buildStyledRow(
 		if item.isSubRow && j == 0 {
 			text = subRowIndent + text
 		}
-		if col == m.ChecksColIdx {
+		sfx := m.suffixFor(item, j)
+		if sfx != "" {
+			b.WriteString(renderCellWithSuffix(
+				text, sfx, widths[j], item.style.Background))
+		} else if col == m.ChecksColIdx {
 			b.WriteString(renderChecksCellWithBg(
 				text, widths[j], item.style.Background))
 		} else if col == ColC || col == ColAFRT {
@@ -493,6 +512,7 @@ func (m *Model) renderSelectedRow(
 	checksStart, checksWidth int,
 	afrtStart, afrtWidth int,
 	commentStart, commentWidth int,
+	nameStart, nameWidth int,
 ) string {
 	raw := m.buildRawRow(item, widths)
 	fullRaw := indicator + raw
@@ -513,17 +533,29 @@ func (m *Model) renderSelectedRow(
 		}
 		commentText = item.data[cCol]
 	}
+	// Compute suffix position for dimming in the gradient row.
+	// The suffix (right-aligned tags) occupies the end of the
+	// column that precedes the suffix column.
+	sfxStart, sfxEnd := 0, 0
+	sfx := m.suffixFor(item, int(ColName))
+	if sfx != "" && nameWidth > 0 {
+		sfxLen := len([]rune(sfx))
+		sfxStart = nameStart + nameWidth - sfxLen
+		sfxEnd = nameStart + nameWidth
+	}
 	return m.renderGradientRow(
 		fullRaw, bgName, checksStart, checksWidth, checksText,
 		afrtStart, afrtWidth, afrtText,
-		commentStart, commentWidth, commentText)
+		commentStart, commentWidth, commentText,
+		sfxStart, sfxEnd)
 }
 
 func (m *Model) renderGradientRow(
-	rawRow, bgName string,
+	rawRow string, bgName string,
 	checksStart, checksWidth int, checksText string,
 	afrtStart, afrtWidth int, afrtText string,
 	commentStart, commentWidth int, commentText string,
+	suffixStart, suffixEnd int,
 ) string {
 	runes := []rune(rawRow)
 	total := len(runes)
@@ -598,6 +630,11 @@ func (m *Model) renderGradientRow(
 				fg = afrtColors[ai]
 				bold = afrtColors[ai] != checkZeroColor
 			}
+		}
+
+		// Dim the suffix portion of the column (flat region only)
+		if suffixStart > 0 && pos >= suffixStart && pos < suffixEnd && !bold && cached != nil {
+			fg = cached.suffixFg
 		}
 
 		// Apply lavender/dim overlay for the count prefix in both
@@ -698,6 +735,48 @@ func buildCheckColors(text string) []string {
 		}
 	}
 	return result
+}
+
+// renderCellWithSuffix renders a column with a right-aligned dimmed
+// suffix sharing the same column width. The main text is truncated
+// to leave room for the suffix.
+func renderCellWithSuffix(text, sfx string, width int, bgName string) string {
+	cached := bgStyles[bgName]
+	if cached == nil {
+		return renderCell(text, width)
+	}
+	sfxLen := len([]rune(sfx))
+	subjectMax := width - sfxLen
+	if subjectMax < 10 {
+		return cached.row.Render(renderCell(text, width))
+	}
+	subj := truncate(text, subjectMax)
+	subjRendered := cached.row.Render(subj)
+	padLen := width - lipgloss.Width(subjRendered) - sfxLen
+	if padLen < 0 {
+		padLen = 0
+	}
+	pad := cached.row.Render(strings.Repeat(" ", padLen))
+	sfxRendered := cached.suffix.Render(sfx)
+	return subjRendered + pad + sfxRendered
+}
+
+// renderRawCellWithSuffix builds a plain-text cell with a right-aligned
+// suffix for the gradient row's raw string.
+func renderRawCellWithSuffix(text, sfx string, width int) string {
+	sfxLen := len([]rune(sfx))
+	subjectMax := width - sfxLen
+	if subjectMax < 10 {
+		return renderCell(text, width)
+	}
+	subj := truncate(text, subjectMax)
+	padLen := width - len([]rune(subj)) - sfxLen
+	if padLen < 0 {
+		padLen = 0
+	}
+	raw := subj + strings.Repeat(" ", padLen) + sfx
+	return lipgloss.NewStyle().Width(width).MaxWidth(width).
+		Inline(true).Render(raw)
 }
 
 // padStyledCell pads a pre-rendered cell to the target width using

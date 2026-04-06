@@ -19,8 +19,9 @@ import (
 
 type ColumnDef struct {
 	Title      string
-	FixedWidth int  // 0 = flex column (gets remainder)
-	Visible    bool // false = skip during rendering
+	FixedWidth int
+	Visible    bool
+	Suffix     bool // right-aligned, shares space with previous column
 }
 
 type RowStyle struct {
@@ -525,6 +526,19 @@ func (m *Model) invalidateSeriesCache(seriesIDs []int) {
 	m.cachedVisibleItemsValid = false
 }
 
+// suffixFor returns the text from the next column if it's a suffix
+// column, or empty string otherwise.
+func (m *Model) suffixFor(item visibleItem, col int) string {
+	next := col + 1
+	if next >= len(m.ColumnDefs) || !m.ColumnDefs[next].Suffix {
+		return ""
+	}
+	if next >= len(item.data) {
+		return ""
+	}
+	return item.data[next]
+}
+
 func (m *Model) isCompareMarked(item visibleItem) bool {
 	if m.compareCount == 0 || len(item.data) == 0 {
 		return false
@@ -802,7 +816,7 @@ func (m *Model) columnWidths() []int {
 		if hasDynamic && (ci == ColC || ci == ColComments) {
 			continue
 		}
-		if !col.Visible {
+		if !col.Visible || col.Suffix {
 			continue
 		}
 		if col.FixedWidth > 0 {

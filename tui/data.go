@@ -16,6 +16,7 @@ var PatchworkColumns = []ColumnDef{
 	{Title: "ID", FixedWidth: 10, Visible: true},
 	{Title: "Ver", FixedWidth: 4, Visible: true},
 	{Title: "Name", Visible: true},
+	{Title: "", Visible: true, Suffix: true}, // ColTags
 	{Title: "State", FixedWidth: 9, Visible: true},
 	{Title: "Submitter", FixedWidth: 18, Visible: true},
 	{Title: "Age", FixedWidth: 5, Visible: true},
@@ -94,6 +95,7 @@ const (
 	ColID ColIndex = iota
 	ColVer
 	ColName
+	ColTags // right-aligned suffix sharing Name's space
 	ColState
 	ColSubmitter
 	ColAge
@@ -276,6 +278,30 @@ func commonBracketTags(patches []db.PatchRow, listPrefix string) []string {
 	return result
 }
 
+// stripTags removes specified tokens from a name's bracket, keeping
+// position tokens and anything not in the strip set.
+func stripTags(name string, tags map[string]bool) string {
+	if len(tags) == 0 || !strings.HasPrefix(name, "[") {
+		return name
+	}
+	close := strings.Index(name, "]")
+	if close < 0 {
+		return name
+	}
+	subject := strings.TrimSpace(name[close+1:])
+	var kept []string
+	for _, tok := range strings.Split(name[1:close], ",") {
+		tok = strings.TrimSpace(tok)
+		if tok != "" && !tags[tok] {
+			kept = append(kept, tok)
+		}
+	}
+	if len(kept) > 0 {
+		return "[" + strings.Join(kept, ",") + "] " + subject
+	}
+	return subject
+}
+
 func detectListPrefixFromPatches(allPatches map[int][]db.PatchRow) string {
 	var names []string
 	for _, patches := range allPatches {
@@ -348,14 +374,25 @@ func seriesToRow(
 			bracketTokens = append(bracketTokens, tag)
 		}
 	}
+	// Position marker goes back to the beginning of ColName
 	if s.TotalPatches > 1 {
-		bracketTokens = append(bracketTokens,
-			fmt.Sprintf("0/%d", s.TotalPatches))
+		subject = fmt.Sprintf("[0/%d] %s", s.TotalPatches, subject)
 	}
+	// Tags go to ColTags as space-padded comma-separated
+	// (spaces replace brackets for natural padding)
+	tagsSuffix := ""
 	if len(bracketTokens) > 0 {
-		cleaned = "[" + strings.Join(bracketTokens, ",") + "] " + subject
-	} else {
-		cleaned = subject
+		tagsSuffix = strings.Join(bracketTokens, ",") + " "
+	}
+	// Build set of elevated tags for stripping from sub-rows
+	elevatedSet := map[string]bool{}
+	for _, tag := range elevated {
+		elevatedSet[tag] = true
+	}
+	if existing != nil {
+		for k := range existing {
+			elevatedSet[k] = true
+		}
 	}
 	ver := ""
 	if s.Version > 1 {
@@ -365,7 +402,8 @@ func seriesToRow(
 		Data: []string{
 			strconv.Itoa(s.ID),
 			ver,
-			cleaned,
+			subject,
+			tagsSuffix,
 			aggregateState(patches),
 			displaySubmitter(s.Submitter, s.SubmitterEmail),
 			s.Date, // raw date; formatAge called at render time so cached rows stay fresh
@@ -384,7 +422,7 @@ func seriesToRow(
 	row.SubRowStyles = make([]RowStyle, len(patches))
 	for i, p := range patches {
 		row.SubRows[i] = patchToSubRow(
-			p, listPrefix, delegateNames, tags,
+			p, listPrefix, elevatedSet, delegateNames, tags,
 			patchComments[p.ID], patchCommentNames[p.ID])
 		row.SubRowStyles[i] = RowStyle{
 			Background: "sub:" + colorForPatch(p, tags, patchComments[p.ID]),
@@ -394,15 +432,17 @@ func seriesToRow(
 }
 
 func patchToSubRow(
-	p db.PatchRow, listPrefix string,
+	p db.PatchRow, listPrefix string, elevated map[string]bool,
 	dlgNames map[string]string, tags []db.TagRow,
 	commentCount int, commentNames []string,
 ) []string {
 	cleaned, ver := parsePatchName(p.Name, listPrefix)
+	cleaned = stripTags(cleaned, elevated)
 	return []string{
 		strconv.Itoa(p.ID),
 		ver,
 		cleaned,
+		"", // ColTags — tags elevated to series row
 		displayState(p.State),
 		displaySubmitter(p.Submitter, p.SubmitterEmail),
 		p.Date, // raw date; formatAge called at render time so cached rows stay fresh

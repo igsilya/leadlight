@@ -92,6 +92,8 @@ var (
 
 type cachedBgStyle struct {
 	row       lipgloss.Style
+	suffix    lipgloss.Style // dimmed FG for right-aligned suffix columns
+	suffixFg  string         // hex color for suffix dim in gradient row
 	afrt      lipgloss.Style
 	checkPass lipgloss.Style
 	checkFail lipgloss.Style
@@ -170,17 +172,17 @@ func buildStyles(t *theme) {
 	aFg := afrtStyle.GetForeground()
 
 	for name, c := range t.BgColors {
-		bgHex := c.bg.hex()
-		fgHex := c.fg.hex()
-
-		makeCachedStyle := func(bHex, fHex string) *cachedBgStyle {
-			bC := lipgloss.Color(bHex)
-			fC := lipgloss.Color(fHex)
+		makeCachedStyle := func(bg, fg rgb) *cachedBgStyle {
+			bC := lipgloss.Color(bg.hex())
+			fC := lipgloss.Color(fg.hex())
+			dimFg := fg.lerp(bg, 0.45)
 			b := lipgloss.NewStyle().Background(bC)
 			return &cachedBgStyle{
-				bgHex:     bHex,
-				fgHex:     fHex,
+				bgHex:     bg.hex(),
+				fgHex:     fg.hex(),
 				row:       b.Foreground(fC),
+				suffix:    b.Foreground(lipgloss.Color(dimFg.hex())),
+				suffixFg:  dimFg.hex(),
 				afrt:      b.Foreground(aFg).Bold(true),
 				checkPass: b.Foreground(passFg).Bold(true),
 				checkFail: b.Foreground(failFg).Bold(true),
@@ -188,7 +190,7 @@ func buildStyles(t *theme) {
 				checkZero: b.Foreground(zeroFg),
 			}
 		}
-		bgStyles[name] = makeCachedStyle(bgHex, fgHex)
+		bgStyles[name] = makeCachedStyle(c.bg, c.fg)
 
 		makePalette := func(targetBg, targetFg rgb) [256]gradientEntry {
 			var p [256]gradientEntry
@@ -209,7 +211,7 @@ func buildStyles(t *theme) {
 		// "sub:" to the parent's color name (e.g., "sub:active").
 		subBg := c.bg.lerp(t.SubRowBgAnchor, t.SubRowBgBlend)
 		subFg := c.fg.lerp(t.SubRowFgAnchor, t.SubRowFgBlend)
-		bgStyles["sub:"+name] = makeCachedStyle(subBg.hex(), subFg.hex())
+		bgStyles["sub:"+name] = makeCachedStyle(subBg, subFg)
 		gradientPalettes["sub:"+name] = makePalette(subBg, subFg)
 	}
 }
