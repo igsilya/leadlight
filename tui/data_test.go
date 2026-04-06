@@ -225,6 +225,26 @@ func TestParsePatchName(t *testing.T) {
 	}
 }
 
+func TestStripBrackets(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"[net] net: openvswitch", "net: openvswitch"},
+		{"[1/3] Fix foo", "Fix foo"},
+		{"[net,v2,1/3] Fix foo", "Fix foo"},
+		{"[PATCH][net,v2,1/3] Fix foo", "Fix foo"},
+		{"[net] [RFC] Fix foo", "Fix foo"},
+		{"Plain subject", "Plain subject"},
+		{"[incomplete", "[incomplete"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := stripBrackets(tt.in)
+		if got != tt.want {
+			t.Errorf("stripBrackets(%q) = %q, want %q",
+				tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestStripPosition(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"[07/10,net-next] net: convert", "[net-next] net: convert"},

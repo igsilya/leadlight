@@ -293,7 +293,7 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if int(ColName) >= len(items[m.selectedRow].data) {
 			break
 		}
-		name := stripPosition(items[m.selectedRow].data[ColName])
+		name := stripBrackets(items[m.selectedRow].data[ColName])
 		name = strings.TrimRight(name, ".")
 		if name == "" {
 			break

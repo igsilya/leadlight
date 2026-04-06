@@ -1151,6 +1151,24 @@ func testModelVersions() *Model {
 	return m
 }
 
+func TestVersionSearch_StripsBracketPrefix(t *testing.T) {
+	m := testModelWithSinglePatch()
+	// Simulate a name with list prefix bracket still present
+	m.RowData[0].Data[ColName] = "[net] Lorem first change"
+	m.RowData[0].SubRows[0][ColName] = "[net,1/2] Lorem first change"
+	m.RowData[0].SubRows[1][ColName] = "[net,2/2] Lorem second change"
+	m.invalidateVisibleItems()
+
+	m = pressKey(m, "v")
+
+	if strings.Contains(m.filterText, "[") {
+		t.Errorf("filter should not contain brackets: %q", m.filterText)
+	}
+	if m.filterText != "Lorem first change" {
+		t.Errorf("filter = %q, want %q", m.filterText, "Lorem first change")
+	}
+}
+
 func TestVersionSearch_ExpandsAllVersions(t *testing.T) {
 	m := testModelVersions()
 	// Expand v3 (row 2) and navigate to its first sub-row

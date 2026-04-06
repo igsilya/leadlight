@@ -118,6 +118,17 @@ var (
 	positionRe = regexp.MustCompile(`^\d+/\d+$`)
 )
 
+func stripBrackets(name string) string {
+	for strings.HasPrefix(name, "[") {
+		i := strings.Index(name, "]")
+		if i < 0 {
+			break
+		}
+		name = strings.TrimSpace(name[i+1:])
+	}
+	return name
+}
+
 func stripPosition(name string) string {
 	if !strings.HasPrefix(name, "[") {
 		return name
