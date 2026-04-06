@@ -306,15 +306,11 @@ func (m *Model) reloadData() {
 	} else {
 		seriesList = m.db.GetActiveSeries(m.states)
 	}
-	if m.listPrefix == "" && len(seriesList) > 0 {
-		names := make([]string, len(seriesList))
-		for i, s := range seriesList {
-			names[i] = s.Name
-		}
-		m.listPrefix = detectListPrefix(names)
-	}
 	m.delegateNames = m.db.GetDelegateDisplayNames()
 	allPatches := m.db.GetAllPatchesBatch(m.showAll, m.states)
+	if m.listPrefix == "" && len(allPatches) > 0 {
+		m.listPrefix = detectListPrefixFromPatches(allPatches)
+	}
 	allTags := m.db.GetTagsBatch(m.showAll, m.states)
 	allComments := m.db.GetCommentCountsBatch(m.showAll, m.states)
 	allPatchComments := m.db.GetPatchCommentCountsBatch(m.showAll, m.states)

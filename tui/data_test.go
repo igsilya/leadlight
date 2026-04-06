@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -282,6 +284,172 @@ func TestDetectListPrefix_Empty(t *testing.T) {
 	got := detectListPrefix(names)
 	if got != "" {
 		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestDetectListPrefix_ThresholdRejectsMinority(t *testing.T) {
+	// ipsum-next only appears in 2 of 5 bracket names — not 100%
+	names := []string{
+		"[ipsum-next,v1,1/3] Lorem ipsum",
+		"[ipsum-next,v2] Dolor sit amet",
+		"[dolor,v3] Consectetur",
+		"[sit-next] Adipiscing",
+		"[WIP] Elit sed do",
+	}
+	got := detectListPrefix(names)
+	if got != "" {
+		t.Errorf("got %q, want empty (ipsum-next is not 100%%)", got)
+	}
+}
+
+func TestExtractBracketTags(t *testing.T) {
+	tests := []struct {
+		name, prefix string
+		want         []string // sorted
+	}{
+		{"[ipsum-next,v5,1/3] subject", "", []string{"ipsum-next"}},
+		{"[lorem-dev,branch-2.5,1/2] subject", "lorem-dev", []string{"branch-2.5"}},
+		{"[WIP,dolor,v2] subject", "", []string{"WIP", "dolor"}},
+		{"[v3,1/5] subject", "", nil},
+		{"[lorem-dev] subject", "lorem-dev", nil},
+		{"Plain subject", "", nil},
+	}
+	for _, tt := range tests {
+		got := extractBracketTags(tt.name, tt.prefix)
+		var sorted []string
+		for k := range got {
+			sorted = append(sorted, k)
+		}
+		sort.Strings(sorted)
+		if len(sorted) == 0 {
+			sorted = nil
+		}
+		if !reflect.DeepEqual(sorted, tt.want) {
+			t.Errorf("extractBracketTags(%q, %q) = %v, want %v",
+				tt.name, tt.prefix, sorted, tt.want)
+		}
+	}
+}
+
+func TestCommonBracketTags(t *testing.T) {
+	tests := []struct {
+		name    string
+		patches []db.PatchRow
+		prefix  string
+		want    []string
+	}{
+		{
+			"all share subsystem",
+			[]db.PatchRow{
+				{Name: "[dolor,v2,1/3] Lorem"},
+				{Name: "[dolor,v2,2/3] Ipsum"},
+				{Name: "[dolor,v2,3/3] Amet"},
+			},
+			"", []string{"dolor"},
+		},
+		{
+			"mixed subsystems",
+			[]db.PatchRow{
+				{Name: "[dolor,1/2] Lorem"},
+				{Name: "[sit,2/2] Ipsum"},
+			},
+			"", nil,
+		},
+		{
+			"strip list prefix",
+			[]db.PatchRow{
+				{Name: "[lorem-dev,branch-2.5,1/2] Ipsum"},
+				{Name: "[lorem-dev,branch-2.5,2/2] Dolor"},
+			},
+			"lorem-dev", []string{"branch-2.5"},
+		},
+		{
+			"multiple common tags",
+			[]db.PatchRow{
+				{Name: "[WIP,ipsum-next,1/4] Lorem"},
+				{Name: "[WIP,ipsum-next,2/4] Dolor"},
+			},
+			"", []string{"WIP", "ipsum-next"},
+		},
+		{
+			"empty",
+			[]db.PatchRow{},
+			"", nil,
+		},
+	}
+	for _, tt := range tests {
+		got := commonBracketTags(tt.patches, tt.prefix)
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: commonBracketTags() = %v, want %v",
+				tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestSeriesToRow_ElevatesTags(t *testing.T) {
+	d := time.Now().Format("2006-01-02T15:04:05")
+	tests := []struct {
+		name     string
+		series   db.SeriesRow
+		patches  []db.PatchRow
+		prefix   string
+		wantName string
+	}{
+		{
+			"elevate subsystem to series",
+			db.SeriesRow{ID: 1, Name: "Lorem tailroom", Date: d, TotalPatches: 3},
+			[]db.PatchRow{
+				{Name: "[dolor,v6,1/3] Lorem first", Date: d, State: "new"},
+				{Name: "[dolor,v6,2/3] Lorem second", Date: d, State: "new"},
+				{Name: "[dolor,v6,3/3] Lorem third", Date: d, State: "new"},
+			},
+			"", "[dolor,0/3] Lorem tailroom",
+		},
+		{
+			"elevate branch tag with list prefix stripped",
+			db.SeriesRow{ID: 2, Name: "Lorem release", Date: d, TotalPatches: 2},
+			[]db.PatchRow{
+				{Name: "[lorem-dev,branch-2.5,1/2] Ipsum set", Date: d, State: "new"},
+				{Name: "[lorem-dev,branch-2.5,2/2] Dolor prep", Date: d, State: "new"},
+			},
+			"lorem-dev", "[branch-2.5,0/2] Lorem release",
+		},
+		{
+			"no tags to elevate",
+			db.SeriesRow{ID: 3, Name: "Lorem debugfs", Date: d, TotalPatches: 2},
+			[]db.PatchRow{
+				{Name: "[v5,1/2] Lorem first", Date: d, State: "new"},
+				{Name: "[v5,2/2] Lorem second", Date: d, State: "new"},
+			},
+			"", "[0/2] Lorem debugfs",
+		},
+		{
+			"no duplication when series name has tag",
+			db.SeriesRow{ID: 4, Name: "[WIP,1/4] Lorem bindings", Date: d, TotalPatches: 4},
+			[]db.PatchRow{
+				{Name: "[WIP,1/4] Lorem first", Date: d, State: "new"},
+				{Name: "[WIP,2/4] Lorem second", Date: d, State: "new"},
+				{Name: "[WIP,3/4] Lorem third", Date: d, State: "new"},
+				{Name: "[WIP,4/4] Lorem fourth", Date: d, State: "new"},
+			},
+			"", "[WIP,0/4] Lorem bindings",
+		},
+		{
+			"single patch no position",
+			db.SeriesRow{ID: 5, Name: "Lorem fix", Date: d, TotalPatches: 1},
+			[]db.PatchRow{
+				{Name: "[sit,v3] Lorem fix", Date: d, State: "new"},
+			},
+			"", "[sit] Lorem fix",
+		},
+	}
+	for _, tt := range tests {
+		row := seriesToRow(tt.series, tt.patches, tt.prefix,
+			nil, nil, 0, nil, nil, nil)
+		if row.Data[ColName] != tt.wantName {
+			t.Errorf("%s: Name = %q, want %q",
+				tt.name, row.Data[ColName], tt.wantName)
+		}
 	}
 }
 

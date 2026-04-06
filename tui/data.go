@@ -185,8 +185,13 @@ func parsePatchName(
 	return cleaned, version
 }
 
+// detectListPrefix finds a bracket token that appears as the first
+// non-version token in every single patch name. Only a token present
+// in 100% of bracket-containing names qualifies — anything less is a
+// meaningful subsystem tag (e.g., net-next, bpf), not list noise.
 func detectListPrefix(names []string) string {
 	counts := map[string]int{}
+	total := 0
 	for _, name := range names {
 		if !strings.HasPrefix(name, "[") {
 			continue
@@ -201,6 +206,7 @@ func detectListPrefix(names []string) string {
 		if tok != "" && !versionRe.MatchString(tok) {
 			counts[tok]++
 		}
+		total++
 	}
 	best, bestN := "", 0
 	for tok, n := range counts {
@@ -208,22 +214,86 @@ func detectListPrefix(names []string) string {
 			best, bestN = tok, n
 		}
 	}
-	return best
+	if total > 0 && bestN == total {
+		return best
+	}
+	return ""
+}
+
+// extractBracketTags returns the non-prefix, non-version, non-position
+// tokens from a patch name's bracket.
+func extractBracketTags(name, listPrefix string) map[string]bool {
+	if !strings.HasPrefix(name, "[") {
+		return nil
+	}
+	close := strings.Index(name, "]")
+	if close < 0 {
+		return nil
+	}
+	tags := map[string]bool{}
+	for _, tok := range strings.Split(name[1:close], ",") {
+		tok = strings.TrimSpace(tok)
+		switch {
+		case tok == "" || tok == listPrefix:
+		case versionRe.MatchString(tok):
+		case positionRe.MatchString(tok):
+		default:
+			tags[tok] = true
+		}
+	}
+	return tags
+}
+
+// commonBracketTags returns bracket tags common to ALL patches in a
+// series, excluding list prefix, version, and position tokens. Used
+// to elevate subsystem tags (net, bpf-next, branch-3.7) from patches
+// to the series display name.
+func commonBracketTags(patches []db.PatchRow, listPrefix string) []string {
+	if len(patches) == 0 {
+		return nil
+	}
+	var common map[string]bool
+	for i, p := range patches {
+		tags := extractBracketTags(p.Name, listPrefix)
+		if i == 0 {
+			common = tags
+		} else {
+			for k := range common {
+				if !tags[k] {
+					delete(common, k)
+				}
+			}
+		}
+		if len(common) == 0 {
+			return nil
+		}
+	}
+	result := make([]string, 0, len(common))
+	for k := range common {
+		result = append(result, k)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func detectListPrefixFromPatches(allPatches map[int][]db.PatchRow) string {
+	var names []string
+	for _, patches := range allPatches {
+		for _, p := range patches {
+			names = append(names, p.Name)
+		}
+	}
+	return detectListPrefix(names)
 }
 
 func LoadFromDB(
 	d *db.DB, states []string,
 ) ([]RowData, error) {
 	seriesList := d.GetActiveSeries(states)
-
-	var names []string
-	for _, s := range seriesList {
-		names = append(names, s.Name)
-	}
-	listPrefix := detectListPrefix(names)
 	delegateNames := d.GetDelegateDisplayNames()
 
 	allPatches := d.GetAllPatchesBatch(false, states)
+	listPrefix := detectListPrefixFromPatches(allPatches)
 	allTags := d.GetTagsBatch(false, states)
 	allComments := d.GetCommentCountsBatch(false, states)
 	allPatchComments := d.GetPatchCommentCountsBatch(false, states)
@@ -253,9 +323,39 @@ func seriesToRow(
 	}
 	cleaned, _ := parsePatchName(name, listPrefix)
 	cleaned = stripPosition(cleaned)
+
+	// Elevate bracket tags common to all patches (e.g., net, RFC,
+	// branch-3.7) that the API strips from the series name. Merge
+	// existing bracket tags, elevated tags, and position marker
+	// into a single bracket.
+	existing := extractBracketTags(cleaned, listPrefix)
+	elevated := commonBracketTags(patches, listPrefix)
+	subject := stripBrackets(cleaned)
+
+	var bracketTokens []string
+	// Keep tags already in the series name
+	if existing != nil {
+		sorted := make([]string, 0, len(existing))
+		for k := range existing {
+			sorted = append(sorted, k)
+		}
+		sort.Strings(sorted)
+		bracketTokens = append(bracketTokens, sorted...)
+	}
+	// Add elevated tags not already present
+	for _, tag := range elevated {
+		if !existing[tag] {
+			bracketTokens = append(bracketTokens, tag)
+		}
+	}
 	if s.TotalPatches > 1 {
-		cleaned = fmt.Sprintf("[0/%d] %s",
-			s.TotalPatches, cleaned)
+		bracketTokens = append(bracketTokens,
+			fmt.Sprintf("0/%d", s.TotalPatches))
+	}
+	if len(bracketTokens) > 0 {
+		cleaned = "[" + strings.Join(bracketTokens, ",") + "] " + subject
+	} else {
+		cleaned = subject
 	}
 	ver := ""
 	if s.Version > 1 {
