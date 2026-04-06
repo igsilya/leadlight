@@ -449,12 +449,18 @@ func (m *Model) commitFilter() {
 }
 
 func (m *Model) clearFilter() {
-	// Find which parent contains the selected item
-	// BEFORE collapsing, so we can re-expand it.
-	selectedParent := -1
+	// Capture the selected series ID and whether it needs to stay
+	// expanded. reloadData may rebuild RowData with different contents.
+	selectedSeriesID := ""
+	keepExpanded := false
 	items := m.getVisibleItems()
 	if m.selectedRow < len(items) {
-		selectedParent = items[m.selectedRow].parentIdx
+		item := items[m.selectedRow]
+		parentIdx := item.parentIdx
+		if parentIdx < len(m.RowData) && len(m.RowData[parentIdx].Data) > 0 {
+			selectedSeriesID = m.RowData[parentIdx].Data[ColID]
+			keepExpanded = m.RowData[parentIdx].Expanded || item.isSubRow
+		}
 	}
 
 	m.filterEditing = false
@@ -469,9 +475,15 @@ func (m *Model) clearFilter() {
 	for i := range m.RowData {
 		m.RowData[i].Expanded = false
 	}
-	if selectedParent >= 0 && selectedParent < len(m.RowData) &&
-		!singlePatchSameName(m.RowData[selectedParent]) {
-		m.RowData[selectedParent].Expanded = true
+	if keepExpanded {
+		for i, rd := range m.RowData {
+			if len(rd.Data) > 0 &&
+				rd.Data[ColID] == selectedSeriesID &&
+				!singlePatchSameName(rd) {
+				m.RowData[i].Expanded = true
+				break
+			}
+		}
 	}
 
 	m.invalidateVisibleItems()

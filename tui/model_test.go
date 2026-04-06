@@ -1318,6 +1318,69 @@ func TestFilterClear_SinglePatchNotExpanded(t *testing.T) {
 	}
 }
 
+func TestFilterClear_RespectsCollapsedState(t *testing.T) {
+	m := testModel()
+	// Filter "sub" — matches sub-rows in rows 0 and 2
+	m = pressKey(m, "/")
+	for _, ch := range "sub" {
+		m = pressKey(m, string(ch))
+	}
+	m = pressSpecialKey(m, tea.KeyEnter) // commit — rows 0,2 expanded
+
+	if !m.RowData[0].Expanded {
+		t.Fatal("row 0 should be expanded after commit")
+	}
+
+	// Manually collapse row 0
+	m.RowData[0].Expanded = false
+	m.invalidateVisibleItems()
+
+	m = pressSpecialKey(m, tea.KeyEsc) // clear
+
+	if m.RowData[0].Expanded {
+		t.Error("row 0 was collapsed before clear, should stay collapsed")
+	}
+}
+
+func TestFilterClear_NoStaleIndex(t *testing.T) {
+	m, d := testModelWithDB(t)
+	now := time.Now()
+	// Add an "accepted" series — only visible when showAll is true.
+	d.SaveSeriesSummary(52, "Sit amet series",
+		now.Add(-1*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
+	d.SavePatch(db.PatchRow{
+		ID: 300, SeriesID: 52,
+		Name:      "Sit patch",
+		State:     "accepted",
+		Date:      now.Add(-1 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Sit",
+	})
+	m.showAll = false
+	m.reloadData()
+	beforeCount := len(m.RowData)
+
+	// v search enables showAll; esc clears and reverts showAll.
+	// This triggers reloadData which rebuilds RowData — old
+	// parentIdx would point to a wrong series.
+	m = pressKey(m, "v")
+	m = pressSpecialKey(m, tea.KeyEsc)
+
+	if len(m.RowData) != beforeCount {
+		t.Fatalf("RowData length changed: %d → %d",
+			beforeCount, len(m.RowData))
+	}
+	expandedCount := 0
+	for _, rd := range m.RowData {
+		if rd.Expanded {
+			expandedCount++
+		}
+	}
+	if expandedCount > 1 {
+		t.Errorf("at most 1 series should be expanded, got %d",
+			expandedCount)
+	}
+}
+
 func TestFoldAccents(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"lorem", "lorem"},
