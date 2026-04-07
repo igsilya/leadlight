@@ -850,6 +850,13 @@ func (m *Model) adjustScrollDown(totalItems int) {
 		m.selectedRow >= m.scrollOffset+visibleRows-scrollBuffer {
 		m.scrollOffset++
 	}
+	maxScroll := totalItems - visibleRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scrollOffset > maxScroll {
+		m.scrollOffset = maxScroll
+	}
 }
 
 func (m *Model) enterCompareView() {

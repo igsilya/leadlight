@@ -2721,3 +2721,26 @@ func TestCompareStartsAtSelectedPatch(t *testing.T) {
 		}
 	}
 }
+
+func TestScrollDown_DoesNotOverscroll(t *testing.T) {
+	m := testModel()
+	m.height = 10 // small height to force scrolling
+	items := m.getVisibleItems()
+	// Navigate to last row
+	m.selectedRow = len(items) - 1
+	m.updateSelectedID()
+	m.scrollOffset = 0
+	// Repeatedly up+down should not keep scrolling
+	for i := 0; i < 20; i++ {
+		m = pressKey(m, "k") // up
+		m = pressKey(m, "j") // down
+	}
+	maxScroll := len(items) - m.maxVisibleRows()
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scrollOffset > maxScroll {
+		t.Errorf("scrollOffset = %d, maxScroll = %d (overscrolled)",
+			m.scrollOffset, maxScroll)
+	}
+}
