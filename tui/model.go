@@ -666,6 +666,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 		} else if m.viewMode == viewCompare {
 			m.buildCompareContent()
+			maxOffset := m.compareMaxLines() - m.viewportVisibleLines()
+			if maxOffset < 0 {
+				maxOffset = 0
+			}
+			if m.viewportOffset > maxOffset {
+				m.viewportOffset = maxOffset
+			}
 		}
 		return m, nil
 

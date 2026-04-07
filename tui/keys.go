@@ -935,7 +935,6 @@ func (m *Model) buildCompareContent() {
 	for i := range m.compare {
 		m.compare[i].lines = concat(parts[i][0], parts[i][1], parts[i][2])
 	}
-	m.viewportOffset = 0
 }
 
 func (m *Model) compareColumnParts(
@@ -987,6 +986,7 @@ func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "e":
 		m.viewExpanded = !m.viewExpanded
+		m.viewportOffset = 0
 		m.buildCompareContent()
 
 	case "1":
@@ -1020,6 +1020,7 @@ func (m *Model) compareCycle(delta int) {
 		m.compare[1].idx = new1
 	}
 	m.comparePrefix = 0
+	m.viewportOffset = 0
 	m.buildCompareContent()
 }
 

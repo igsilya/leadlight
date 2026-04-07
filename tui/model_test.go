@@ -2788,6 +2788,32 @@ func TestResizePreservesCoverView(t *testing.T) {
 	}
 }
 
+func TestResizePreservesCompareScroll(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	maxLines := m.compareMaxLines()
+	if maxLines < 3 {
+		t.Skip("not enough compare content to test scrolling")
+	}
+	m.viewportOffset = 2
+
+	// Resize to a height where content still exceeds the viewport
+	newHeight := maxLines // viewport = height - 2 (status + help)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: newHeight})
+
+	if m.viewportOffset == 0 {
+		t.Errorf("resize should preserve compare scroll position "+
+			"(offset=%d, maxLines=%d, visible=%d)",
+			m.viewportOffset, m.compareMaxLines(),
+			m.viewportVisibleLines())
+	}
+}
+
 func TestScrollDown_DoesNotOverscroll(t *testing.T) {
 	m := testModel()
 	m.height = 10 // small height to force scrolling
