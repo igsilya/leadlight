@@ -30,6 +30,7 @@ type theme struct {
 	MboxHeaderLabelFg, MboxHeaderValueFg string
 	DiffAddFg, DiffDelFg, DiffHunkFg     string
 	QuotedLineFg, WrapIndicatorFg        string
+	CollapseMarkerFg                     string // mid-brightness for collapsed section markers
 
 	LogLineFg    string
 	ApplyLogFg   string // bright color for [apply] log lines
@@ -92,13 +93,14 @@ var darkTheme = theme{
 	ChecksZeroFg:    "240", // mid-grey
 	ChecksPendingFg: "247", // light grey (mbox view: incomplete checks)
 
-	MboxHeaderLabelFg: "15",  // bright white
-	MboxHeaderValueFg: "252", // near-white
-	DiffAddFg:         "34",  // forest green
-	DiffDelFg:         "196", // bright red
-	DiffHunkFg:        "6",   // dark cyan
-	QuotedLineFg:      "168", // dusty rose
-	WrapIndicatorFg:   "242", // dim grey
+	MboxHeaderLabelFg: "15",      // bright white
+	MboxHeaderValueFg: "252",     // near-white
+	DiffAddFg:         "34",      // forest green
+	DiffDelFg:         "196",     // bright red
+	DiffHunkFg:        "6",       // dark cyan
+	QuotedLineFg:      "168",     // dusty rose
+	WrapIndicatorFg:   "242",     // dim grey
+	CollapseMarkerFg:  "#7f849c", // catppuccin Overlay1 — between quoted and text
 
 	LogLineFg:    "245",     // soft grey
 	ApplyLogFg:   "#cdd6f4", // catppuccin Text — bright, clearly readable
@@ -159,13 +161,14 @@ var lightTheme = theme{
 	ChecksZeroFg:    "245", // mid-grey
 	ChecksPendingFg: "242", // cool grey (mbox view: incomplete checks)
 
-	MboxHeaderLabelFg: "0",   // black
-	MboxHeaderValueFg: "238", // dark grey
-	DiffAddFg:         "28",  // dark green
-	DiffDelFg:         "124", // dark red
-	DiffHunkFg:        "30",  // dark teal
-	QuotedLineFg:      "125", // muted plum
-	WrapIndicatorFg:   "245", // mid-grey
+	MboxHeaderLabelFg: "0",       // black
+	MboxHeaderValueFg: "238",     // dark grey
+	DiffAddFg:         "28",      // dark green
+	DiffDelFg:         "124",     // dark red
+	DiffHunkFg:        "30",      // dark teal
+	QuotedLineFg:      "125",     // muted plum
+	WrapIndicatorFg:   "245",     // mid-grey
+	CollapseMarkerFg:  "#8c8fa1", // catppuccin Overlay0 — between quoted and text
 
 	LogLineFg:    "242",     // cool grey
 	ApplyLogFg:   "#4c4f69", // catppuccin Text — dark, clearly readable

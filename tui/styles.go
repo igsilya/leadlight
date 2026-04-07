@@ -73,6 +73,7 @@ var (
 	diffHeaderStyle        lipgloss.Style
 	plainTextStyle         lipgloss.Style
 	quotedLineStyle        lipgloss.Style
+	collapseMarkerStyle    lipgloss.Style
 	wrapIndicatorStyle     lipgloss.Style
 	logLineStyle           lipgloss.Style
 	applyLogStyle          lipgloss.Style
@@ -154,6 +155,7 @@ func buildStyles(t *theme) {
 	diffHeaderStyle = lipgloss.NewStyle().Bold(true)
 	plainTextStyle = lipgloss.NewStyle()
 	quotedLineStyle = fg(t.QuotedLineFg)
+	collapseMarkerStyle = fg(t.CollapseMarkerFg)
 	wrapIndicatorStyle = fg(t.WrapIndicatorFg)
 	logLineStyle = fg(t.LogLineFg)
 	applyLogStyle = fg(t.ApplyLogFg)

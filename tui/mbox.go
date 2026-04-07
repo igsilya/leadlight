@@ -219,7 +219,7 @@ func writeHeader(b *strings.Builder, label, value string, collapse bool, labelWi
 		total := strings.Count(value, ", ") + 1
 		marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
 		b.WriteString(strings.Repeat(" ", labelWidth))
-		b.WriteString(quotedLineStyle.Render(marker))
+		b.WriteString(collapseMarkerStyle.Render(marker))
 		b.WriteByte('\n')
 		return
 	}
@@ -419,6 +419,8 @@ func writeStyledLine(b *strings.Builder, line string, quoted bool) {
 	line = expandTabs(line, 8) // position-aware tabs before lipgloss
 	if quoted {
 		b.WriteString(quotedLineStyle.Render(line))
+	} else if strings.HasPrefix(line, "  ···") {
+		b.WriteString(collapseMarkerStyle.Render(line))
 	} else if strings.HasPrefix(line, "↳ ") {
 		b.WriteString(wrapIndicatorStyle.Render("↳ "))
 		b.WriteString(plainTextStyle.Render(line[len("↳ "):]))
@@ -669,7 +671,7 @@ func FormatChecks(
 		marker := fmt.Sprintf(
 			"··· %d successful checks total (e to expand) ···",
 			len(succs))
-		b.WriteString("  " + quotedLineStyle.Render(marker))
+		b.WriteString("  " + collapseMarkerStyle.Render(marker))
 		b.WriteByte('\n')
 	} else {
 		for _, c := range succs {
@@ -682,7 +684,7 @@ func FormatChecks(
 		marker := fmt.Sprintf(
 			"··· %d checks pending (e to expand) ···",
 			len(pends))
-		b.WriteString("  " + quotedLineStyle.Render(marker))
+		b.WriteString("  " + collapseMarkerStyle.Render(marker))
 		b.WriteByte('\n')
 	} else {
 		for _, c := range pends {
