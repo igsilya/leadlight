@@ -2722,6 +2722,72 @@ func TestCompareStartsAtSelectedPatch(t *testing.T) {
 	}
 }
 
+func TestResizePreservesCommentView(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m.viewMode = viewPatch
+	m.viewingPatchID = 100
+	m.viewComments = []CommentInfo{
+		{ID: 1, Submitter: "Lorem", Date: "2026-01-01",
+			Subject: "Re: test", Content: "Ipsum dolor sit amet"},
+	}
+	m.viewCommentIdx = 0
+	m.switchToComment()
+
+	contentBefore := strings.Join(m.viewportLines, "\n")
+	if !strings.Contains(contentBefore, "Ipsum dolor") {
+		t.Fatal("should be showing comment content")
+	}
+
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	contentAfter := strings.Join(m.viewportLines, "\n")
+	if !strings.Contains(contentAfter, "Ipsum dolor") {
+		t.Error("resize should preserve comment view")
+	}
+	if m.viewCommentIdx != 0 {
+		t.Errorf("viewCommentIdx = %d, want 0", m.viewCommentIdx)
+	}
+}
+
+func TestResizePreservesCoverView(t *testing.T) {
+	m, d := testModelWithDB(t)
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50, Name: "Lorem cover",
+		Date: "2026-03-10",
+	})
+	// Long content that wraps at narrow widths
+	longContent := strings.Repeat("Amet consectetur adipiscing elit sed do eiusmod. ", 5)
+	d.UpdateCoverDetail(99, longContent, "")
+
+	m.viewMode = viewPatch
+	m.viewingCoverID = 50 // GetCover takes series ID
+	m.viewCommentIdx = -1
+	m.width = 40 // narrow — forces wrapping
+	m.refreshViewport()
+
+	linesBefore := len(m.viewportLines)
+	if linesBefore == 0 {
+		t.Fatal("should have viewport content")
+	}
+	contentBefore := strings.Join(m.viewportLines, "\n")
+	if !strings.Contains(contentBefore, "Amet consectetur") {
+		t.Fatal("should be showing cover content")
+	}
+
+	// Resize wider — content should re-wrap with fewer lines
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+
+	linesAfter := len(m.viewportLines)
+	contentAfter := strings.Join(m.viewportLines, "\n")
+	if !strings.Contains(contentAfter, "Amet consectetur") {
+		t.Error("resize should preserve cover view")
+	}
+	if linesAfter >= linesBefore {
+		t.Errorf("wider window should reduce line count: %d -> %d",
+			linesBefore, linesAfter)
+	}
+}
+
 func TestScrollDown_DoesNotOverscroll(t *testing.T) {
 	m := testModel()
 	m.height = 10 // small height to force scrolling

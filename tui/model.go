@@ -662,8 +662,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.invalidateAllCaches()
-		if m.viewMode == viewPatch && m.viewingPatchID != 0 {
+		if m.viewMode == viewPatch {
 			m.refreshViewport()
+		} else if m.viewMode == viewCompare {
+			m.buildCompareContent()
 		}
 		return m, nil
 
@@ -676,6 +678,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) refreshViewport() {
 	if m.db == nil {
+		return
+	}
+	// If viewing a comment, re-render at the new width
+	if m.viewCommentIdx >= 0 && m.viewCommentIdx < len(m.viewComments) {
+		comment := m.viewComments[m.viewCommentIdx]
+		formatted := FormatComment(
+			comment, m.width, !m.viewExpanded)
+		m.viewportLines = splitLines(formatted)
 		return
 	}
 	if m.viewingCoverID != 0 {
