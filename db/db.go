@@ -3,36 +3,69 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 
 	_ "modernc.org/sqlite"
 )
 
 type DB struct {
-	conn    *sql.DB
-	writeMu sync.Mutex // SQLite allows concurrent reads but only one writer
+	conn     *sql.DB
+	writeMu  sync.Mutex // SQLite allows concurrent reads but only one writer
+	lockFile *os.File   // advisory lock to prevent concurrent instances
 }
 
 func Open(path string) (*DB, error) {
+	var lockFile *os.File
+	if path != ":memory:" {
+		lf, err := os.OpenFile(path+".lock",
+			os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, fmt.Errorf("open lock file: %w", err)
+		}
+		if err := syscall.Flock(int(lf.Fd()),
+			syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			lf.Close()
+			return nil, fmt.Errorf(
+				"database already in use by another instance")
+		}
+		lockFile = lf
+	}
+
 	conn, err := sql.Open("sqlite", path)
 	if err != nil {
+		releaseLock(lockFile)
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 	// WAL mode allows the TUI to read while the syncer writes concurrently.
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		conn.Close()
+		releaseLock(lockFile)
 		return nil, fmt.Errorf("set journal mode: %w", err)
 	}
 	if err := migrate(conn); err != nil {
 		conn.Close()
+		releaseLock(lockFile)
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	return &DB{conn: conn}, nil
+	return &DB{conn: conn, lockFile: lockFile}, nil
+}
+
+func releaseLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	os.Remove(f.Name())
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	f.Close()
 }
 
 func (d *DB) Close() error {
-	return d.conn.Close()
+	err := d.conn.Close()
+	releaseLock(d.lockFile)
+	return err
 }
 
 type SeriesRow struct {

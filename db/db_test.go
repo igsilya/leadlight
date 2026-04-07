@@ -2,6 +2,8 @@ package db
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +15,25 @@ func openTestDB(t *testing.T) *DB {
 	}
 	t.Cleanup(func() { d.Close() })
 	return d
+}
+
+func TestOpen_RejectsSecondInstance(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d1.Close()
+
+	_, err = Open(path)
+	if err == nil {
+		t.Fatal("second Open should fail")
+	}
+	if !strings.Contains(err.Error(), "already in use") {
+		t.Errorf("unexpected error: %v", err)
+	}
 }
 
 func TestOpen(t *testing.T) {
