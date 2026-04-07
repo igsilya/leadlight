@@ -1636,11 +1636,11 @@ func TestFilterHeaders(t *testing.T) {
 	if strings.Contains(result, "Received") {
 		t.Error("should not contain Received")
 	}
-	if strings.Contains(result, "Subject") {
-		t.Error("should not contain Subject (stored separately)")
+	if !strings.Contains(result, "Subject: Re:") {
+		t.Error("missing Subject")
 	}
-	if strings.Contains(result, "Message-ID") {
-		t.Error("should not contain Message-ID (stored separately)")
+	if !strings.Contains(result, "Message-ID: <abc123") {
+		t.Error("missing Message-ID")
 	}
 }
 

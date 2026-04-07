@@ -1263,10 +1263,10 @@ func (s *Syncer) fetchDetailForPatch(
 		s.db.RecomputeActiveFlag(seriesID)
 	}
 	prefixes, _ := json.Marshal(detail.Prefixes)
-	headers, _ := json.Marshal(detail.Headers)
+	headers := filterHeaders(detail.Headers)
 	s.db.UpdatePatchDetail(patchID,
 		detail.Content, detail.Diff,
-		string(headers), string(prefixes))
+		headers, string(prefixes))
 	if detail.Content != "" {
 		s.db.ClearTags(patchID, 0, "original")
 		tags := extractReviewTags(detail.Content)
@@ -1290,9 +1290,9 @@ func (s *Syncer) fetchDetailForCover(
 			fetchOrigin(ctx), coverID, err)
 		return err
 	}
-	hdrs, _ := json.Marshal(cover.Headers)
+	hdrs := filterHeaders(cover.Headers)
 	s.db.UpdateCoverDetail(coverID,
-		cover.Content, string(hdrs))
+		cover.Content, hdrs)
 	if cover.Content != "" {
 		s.db.ClearTags(0, coverID, "original")
 		tags := extractReviewTags(cover.Content)
@@ -1387,8 +1387,14 @@ func MigrateTags(d *db.DB) {
 }
 
 var keepHeaders = []string{
-	"From", "Date", "To", "Cc",
-	"In-Reply-To", "References", "Content-Type",
+	"Subject", "From", "Reply-To", "To", "Cc", "Date",
+	"In-Reply-To", "References", "Message-ID", "Message-Id",
+	"Content-Type", "Content-Transfer-Encoding", "MIME-Version",
+	"User-Agent", "X-Mailer",
+	"List-Id", "Sender",
+	"X-Patchwork-Delegate", "X-Patchwork-State",
+	"X-B4-Tracking",
+	"X-Developer-Key", "X-Developer-Signature",
 }
 
 func filterHeaders(raw map[string]interface{}) string {

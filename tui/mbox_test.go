@@ -1267,6 +1267,61 @@ func TestFromHeader_MIMEEncoded(t *testing.T) {
 	}
 }
 
+func TestGetHeader_JSON(t *testing.T) {
+	headers := `{"From": "Lorem <lorem@example.com>", "To": "dev@example.org"}`
+	if got := getHeader(headers, "From"); got != "Lorem <lorem@example.com>" {
+		t.Errorf("From = %q", got)
+	}
+	if got := getHeader(headers, "To"); got != "dev@example.org" {
+		t.Errorf("To = %q", got)
+	}
+	if got := getHeader(headers, "Cc"); got != "" {
+		t.Errorf("Cc = %q, want empty", got)
+	}
+}
+
+func TestGetHeader_Compact(t *testing.T) {
+	headers := "From: Lorem <lorem@example.com>\nTo: dev@example.org\nCc: other@example.org\n"
+	if got := getHeader(headers, "From"); got != "Lorem <lorem@example.com>" {
+		t.Errorf("From = %q", got)
+	}
+	if got := getHeader(headers, "To"); got != "dev@example.org" {
+		t.Errorf("To = %q", got)
+	}
+	if got := getHeader(headers, "Cc"); got != "other@example.org" {
+		t.Errorf("Cc = %q", got)
+	}
+	if got := getHeader(headers, "Date"); got != "" {
+		t.Errorf("Date = %q, want empty", got)
+	}
+}
+
+func TestBuildParsedMboxFromPatch_CompactHeaders(t *testing.T) {
+	headers := "Reply-To: Lorem Ipsum <lorem@example.com>\n" +
+		"To: dev@example.org\n" +
+		"Cc: other@example.org\n" +
+		"Date: Mon, 13 Oct 2025 13:39:44 +0300\n"
+	row := db.PatchRow{
+		Name:    "[dev] Fix the widget",
+		Content: "This fixes the widget.\n\nSigned-off-by: Lorem",
+		Diff:    "--- a/widget.c\n+++ b/widget.c\n@@ -1 +1 @@",
+		Headers: headers,
+	}
+	p := BuildParsedMboxFromPatch(row)
+	if p.From != "Lorem Ipsum <lorem@example.com>" {
+		t.Errorf("From = %q", p.From)
+	}
+	if p.To != "dev@example.org" {
+		t.Errorf("To = %q", p.To)
+	}
+	if p.Cc != "other@example.org" {
+		t.Errorf("Cc = %q", p.Cc)
+	}
+	if !strings.Contains(p.Date, "13 Oct 2025") {
+		t.Errorf("Date = %q", p.Date)
+	}
+}
+
 func TestBuildParsedMboxFromPatch(t *testing.T) {
 	headers := `{
 		"Reply-To": "Lorem Ipsum <lorem@example.com>",

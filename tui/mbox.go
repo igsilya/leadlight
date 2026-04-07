@@ -64,6 +64,17 @@ func headerString(headers map[string]interface{}, key string) string {
 	return ""
 }
 
+// getHeader extracts a header value from either the compact
+// "Key: value\n" format (used for new data) or the legacy JSON
+// format (existing data). Format is detected by the leading "{".
+func getHeader(headers, key string) string {
+	if strings.HasPrefix(headers, "{") {
+		h := parseJSONHeaders(headers)
+		return headerString(h, key)
+	}
+	return extractHeader(headers, key)
+}
+
 // fromHeader returns the sender from email headers. Prefers Reply-To
 // (avoids mailing list mangling like "Name via dev <list@example>")
 // and falls back to From. Values are MIME-decoded for non-ASCII names.
@@ -90,8 +101,7 @@ func formatFrom(name, email string) string {
 // BuildParsedMboxFromPatch constructs a ParsedMbox from patch detail
 // data, eliminating the need for a separate mbox HTTP fetch.
 func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
-	headers := parseJSONHeaders(row.Headers)
-	if headers == nil {
+	if row.Headers == "" || row.Headers == "{}" {
 		return ParsedMbox{
 			Subject: row.Name,
 			From:    formatFrom(row.Submitter, row.SubmitterEmail),
@@ -100,19 +110,23 @@ func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 			Diff:    row.Diff,
 		}
 	}
-	subject := decodeHeader(compactHeader(headerString(headers, "Subject")))
+	subject := decodeHeader(compactHeader(getHeader(row.Headers, "Subject")))
 	if subject == "" {
 		subject = compactHeader(row.Name)
 	}
-	date := compactHeader(headerString(headers, "Date"))
+	from := decodeHeader(compactHeader(getHeader(row.Headers, "Reply-To")))
+	if from == "" {
+		from = decodeHeader(compactHeader(getHeader(row.Headers, "From")))
+	}
+	date := compactHeader(getHeader(row.Headers, "Date"))
 	if date == "" {
 		date = row.Date
 	}
 	return ParsedMbox{
 		Subject: subject,
-		From:    fromHeader(headers),
-		To:      decodeHeader(compactHeader(headerString(headers, "To"))),
-		Cc:      decodeHeader(compactHeader(headerString(headers, "Cc"))),
+		From:    from,
+		To:      decodeHeader(compactHeader(getHeader(row.Headers, "To"))),
+		Cc:      decodeHeader(compactHeader(getHeader(row.Headers, "Cc"))),
 		Date:    date,
 		Body:    row.Content,
 		Diff:    row.Diff,
@@ -122,27 +136,30 @@ func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 // BuildParsedMboxFromCover constructs a ParsedMbox from cover letter
 // detail data.
 func BuildParsedMboxFromCover(row db.CoverRow) ParsedMbox {
-	headers := parseJSONHeaders(row.Headers)
-	if headers == nil {
+	if row.Headers == "" || row.Headers == "{}" {
 		return ParsedMbox{
 			Subject: row.Name,
 			Date:    row.Date,
 			Body:    row.Content,
 		}
 	}
-	subject := decodeHeader(compactHeader(headerString(headers, "Subject")))
+	subject := decodeHeader(compactHeader(getHeader(row.Headers, "Subject")))
 	if subject == "" {
 		subject = compactHeader(row.Name)
 	}
-	date := compactHeader(headerString(headers, "Date"))
+	from := decodeHeader(compactHeader(getHeader(row.Headers, "Reply-To")))
+	if from == "" {
+		from = decodeHeader(compactHeader(getHeader(row.Headers, "From")))
+	}
+	date := compactHeader(getHeader(row.Headers, "Date"))
 	if date == "" {
 		date = row.Date
 	}
 	return ParsedMbox{
 		Subject: subject,
-		From:    fromHeader(headers),
-		To:      decodeHeader(compactHeader(headerString(headers, "To"))),
-		Cc:      decodeHeader(compactHeader(headerString(headers, "Cc"))),
+		From:    from,
+		To:      decodeHeader(compactHeader(getHeader(row.Headers, "To"))),
+		Cc:      decodeHeader(compactHeader(getHeader(row.Headers, "Cc"))),
 		Date:    date,
 		Body:    row.Content,
 	}
