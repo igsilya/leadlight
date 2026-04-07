@@ -1138,11 +1138,12 @@ func (d *DB) GetCommentSubmittersBatch(
 	showAll bool, states []string,
 ) map[int][]string {
 	sub, subArgs := d.seriesIDSubquery(showAll, states)
+	submitter := `CASE WHEN c.submitter != '' THEN c.submitter ELSE c.submitter_email END`
 	query := `SELECT sub.series_id, sub.submitter FROM (
-		SELECT p.series_id, c.submitter, c.date FROM comments c
+		SELECT p.series_id, ` + submitter + ` AS submitter, c.date FROM comments c
 		JOIN patches p ON c.patch_id = p.id WHERE p.series_id IN (` + sub + `)
 		UNION ALL
-		SELECT cv.series_id, c.submitter, c.date FROM comments c
+		SELECT cv.series_id, ` + submitter + ` AS submitter, c.date FROM comments c
 		JOIN covers cv ON c.cover_id = cv.id WHERE cv.series_id IN (` + sub + `)
 	) sub ORDER BY sub.series_id, sub.date`
 	args := append(subArgs, subArgs...)
@@ -1174,7 +1175,9 @@ func (d *DB) GetPatchCommentSubmittersBatch(
 	showAll bool, states []string,
 ) map[int][]string {
 	sub, subArgs := d.seriesIDSubquery(showAll, states)
-	query := `SELECT c.patch_id, c.submitter FROM comments c
+	query := `SELECT c.patch_id,
+		CASE WHEN c.submitter != '' THEN c.submitter ELSE c.submitter_email END
+		FROM comments c
 		JOIN patches p ON c.patch_id = p.id
 		WHERE p.series_id IN (` + sub + `)
 		ORDER BY c.patch_id, c.date`

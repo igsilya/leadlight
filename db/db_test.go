@@ -871,6 +871,46 @@ func TestGetPatchCommentSubmittersBatch(t *testing.T) {
 	}
 }
 
+func TestGetCommentSubmittersBatch_EmptyNameFallback(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "p1",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	d.InsertComment(CommentRow{
+		ID: 500, PatchID: 100, Submitter: "",
+		SubmitterEmail: "bot+ci@example.com",
+		Date:           "2026-03-11", Subject: "Re: p1", Content: "CI pass",
+	})
+	d.InsertComment(CommentRow{
+		ID: 501, PatchID: 100, Submitter: "Dolor Amet",
+		SubmitterEmail: "dolor@example.com",
+		Date:           "2026-03-12", Subject: "Re: p1", Content: "ok",
+	})
+
+	m := d.GetCommentSubmittersBatch(false, []string{"new"})
+	names := m[50]
+	if len(names) != 2 {
+		t.Fatalf("series 50: %d names, want 2", len(names))
+	}
+	if names[0] != "bot+ci@example.com" {
+		t.Errorf("names[0] = %q, want email fallback", names[0])
+	}
+	if names[1] != "Dolor Amet" {
+		t.Errorf("names[1] = %q, want Dolor Amet", names[1])
+	}
+
+	pm := d.GetPatchCommentSubmittersBatch(false, []string{"new"})
+	pnames := pm[100]
+	if len(pnames) != 2 {
+		t.Fatalf("patch 100: %d names, want 2", len(pnames))
+	}
+	if pnames[0] != "bot+ci@example.com" {
+		t.Errorf("pnames[0] = %q, want email fallback", pnames[0])
+	}
+}
+
 func TestGetAllPatchesBatch_MultipleStates(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(50, "s1", "2026-03-10", 1)
