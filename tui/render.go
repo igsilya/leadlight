@@ -1066,6 +1066,8 @@ func (m *Model) renderHelpBar(out *strings.Builder) {
 	b.WriteString(helpSepStr(sep))
 	b.WriteString(helpKey(bright, desc, "v", "versions"))
 	b.WriteString(helpSepStr(sep))
+	b.WriteString(helpKey(bright, desc, "c", "compare"))
+	b.WriteString(helpSepStr(sep))
 	if m.showAll {
 		b.WriteString(helpKey(bright, desc, "a", "active"))
 	} else {
