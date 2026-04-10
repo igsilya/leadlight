@@ -400,6 +400,248 @@ func TestCollapseQuotedBlocks_HeadTailOverlap(t *testing.T) {
 	}
 }
 
+func TestCollapseQuotedBlocks_DashDashClearer(t *testing.T) {
+	var lines []string
+	for i := 0; i < 25; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "> --")
+	lines = append(lines, "> 2.53.0")
+	lines = append(lines, "> lorem list footer")
+	lines = append(lines, "Looks good.")
+	got := collapseQuotedBlocks(lines)
+	// -- is a clearer, not an anchor. Tail should use fallback
+	// (last 20 lines), not start at --.
+	markerIdx := -1
+	for i, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			markerIdx = i
+		}
+	}
+	if markerIdx < 0 {
+		t.Fatal("missing collapse marker")
+	}
+	// Tail should NOT start at --
+	if markerIdx+1 < len(got) && got[markerIdx+1] == "> --" {
+		t.Error("-- should not be used as anchor (it's a clearer)")
+	}
+	if got[len(got)-1] != "Looks good." {
+		t.Errorf("last = %q, want reply", got[len(got)-1])
+	}
+}
+
+func TestCollapseQuotedBlocks_TripleDashClearer(t *testing.T) {
+	var lines []string
+	for i := 0; i < 25; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "> ---")
+	lines = append(lines, ">  lorem.c | 3 +++")
+	lines = append(lines, ">  1 file changed")
+	lines = append(lines, "Acked.")
+	got := collapseQuotedBlocks(lines)
+	markerIdx := -1
+	for i, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			markerIdx = i
+		}
+	}
+	if markerIdx < 0 {
+		t.Fatal("missing collapse marker")
+	}
+	// --- is a clearer, not an anchor
+	if markerIdx+1 < len(got) && got[markerIdx+1] == "> ---" {
+		t.Error("--- should not be used as anchor (it's a clearer)")
+	}
+}
+
+func TestCollapseQuotedBlocks_TrailerLastLineSkipped(t *testing.T) {
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "> --") // last line of block
+	lines = append(lines, "Reply.")
+	got := collapseQuotedBlocks(lines)
+	markerIdx := -1
+	for i, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			markerIdx = i
+		}
+	}
+	if markerIdx < 0 {
+		t.Fatal("missing collapse marker")
+	}
+	// -- as last line should be skipped as anchor; fallback tail used
+	if markerIdx+1 < len(got) && got[markerIdx+1] == "> --" {
+		t.Error("'--' as last line should not be used as anchor")
+	}
+}
+
+func TestCollapseQuotedBlocks_NoReplyShortTail(t *testing.T) {
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	// No reply after — tail should be capped at collapseTailNoReply (8)
+	got := collapseQuotedBlocks(lines)
+	hasMarker := false
+	for _, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			hasMarker = true
+		}
+	}
+	if !hasMarker {
+		t.Fatal("should have collapse marker")
+	}
+	// head(3) + marker(1) + tail(8) = 12
+	if len(got) > 12 {
+		t.Errorf("len = %d, want <= 12 (short tail for no-reply)",
+			len(got))
+	}
+}
+
+func TestCollapseQuotedBlocks_ReplyFullTail(t *testing.T) {
+	var lines []string
+	for i := 0; i < 50; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "my reply")
+	got := collapseQuotedBlocks(lines)
+	// head(3) + marker(1) + tail(20) = 24 + "my reply" = 25
+	if len(got) > 26 {
+		t.Errorf("len = %d, want <= 26 (full tail with reply)",
+			len(got))
+	}
+	if len(got) < 20 {
+		t.Errorf("len = %d, want >= 20 (tail should be ~20)",
+			len(got))
+	}
+}
+
+func TestCollapseQuotedBlocks_AnchorTailUncapped(t *testing.T) {
+	var lines []string
+	for i := 0; i < 10; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "> @@ -1,3 +1,30 @@")
+	for i := 0; i < 25; i++ {
+		lines = append(lines,
+			fmt.Sprintf("> +new code line %d", i))
+	}
+	lines = append(lines, "Review comment.")
+	got := collapseQuotedBlocks(lines)
+	// @@ anchor found — tail is uncapped, shows all 26 lines from @@
+	foundHunk := false
+	tailCount := 0
+	inTail := false
+	for _, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			inTail = true
+			continue
+		}
+		if inTail && strings.HasPrefix(l, ">") {
+			tailCount++
+		}
+		if strings.Contains(l, "@@ -1,3") {
+			foundHunk = true
+		}
+	}
+	if !foundHunk {
+		t.Error("@@ anchor should be in tail")
+	}
+	if tailCount != 26 {
+		t.Errorf("tail = %d lines, want 26 (uncapped)", tailCount)
+	}
+}
+
+func TestCollapseQuotedBlocks_NoReplyIgnoresAnchor(t *testing.T) {
+	var lines []string
+	for i := 0; i < 15; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "> @@ -1,3 +1,6 @@")
+	for i := 0; i < 10; i++ {
+		lines = append(lines,
+			fmt.Sprintf("> +code %d", i))
+	}
+	// No reply after — anchor should be ignored
+	got := collapseQuotedBlocks(lines)
+	markerIdx := -1
+	for i, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			markerIdx = i
+		}
+	}
+	if markerIdx < 0 {
+		t.Fatal("missing collapse marker")
+	}
+	tailCount := 0
+	for i := markerIdx + 1; i < len(got); i++ {
+		tailCount++
+	}
+	if tailCount > collapseTailNoReply {
+		t.Errorf("no-reply tail = %d, want <= %d",
+			tailCount, collapseTailNoReply)
+	}
+}
+
+func TestCollapseQuotedBlocks_ClearerStopsSearch(t *testing.T) {
+	// @@ early in block, then -- later (not last line).
+	// Backward search finds -- first → break → fallback used.
+	// The @@ is NOT used as an anchor (tail doesn't start there).
+	var lines []string
+	for i := 0; i < 25; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "> @@ -1,3 +1,6 @@")
+	lines = append(lines, "> +lorem ipsum")
+	lines = append(lines, "> --")
+	lines = append(lines, "> 2.53.0")
+	for i := 0; i < 10; i++ {
+		lines = append(lines, fmt.Sprintf("> reply line %d", i))
+	}
+	lines = append(lines, "My reply.")
+	got := collapseQuotedBlocks(lines)
+	markerIdx := -1
+	for i, l := range got {
+		if strings.Contains(l, "quoted lines hidden") {
+			markerIdx = i
+		}
+	}
+	if markerIdx < 0 {
+		t.Fatal("missing collapse marker")
+	}
+	// Tail should NOT start at @@ (it's before the clearer)
+	if markerIdx+1 < len(got) &&
+		strings.Contains(got[markerIdx+1], "@@ -1,3") {
+		t.Error("@@ before clearer should not start the tail")
+	}
+}
+
+func TestCollapseQuotedBlocks_LastLineClearerSkipped(t *testing.T) {
+	var lines []string
+	for i := 0; i < 15; i++ {
+		lines = append(lines, fmt.Sprintf("> line %d", i))
+	}
+	lines = append(lines, "> @@ -1,3 +1,6 @@")
+	lines = append(lines, "> +lorem ipsum")
+	lines = append(lines, "> +dolor sit amet")
+	lines = append(lines, "> --") // last line — skipped as clearer
+	lines = append(lines, "Reply.")
+	got := collapseQuotedBlocks(lines)
+	// -- as last line skipped, @@ found → anchor used
+	foundHunk := false
+	for _, l := range got {
+		if strings.Contains(l, "@@ -1,3") {
+			foundHunk = true
+		}
+	}
+	if !foundHunk {
+		t.Error("@@ should be used as anchor when -- is last line")
+	}
+}
+
 func TestFormatComment_CollapseQuotes(t *testing.T) {
 	var content strings.Builder
 	for i := 0; i < 40; i++ {

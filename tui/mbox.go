@@ -432,10 +432,11 @@ func writeStyledLine(b *strings.Builder, line string, quoted bool) {
 }
 
 const (
-	collapseMinBlock  = 8  // don't collapse quotes shorter than this
-	collapseHead      = 3  // show first N lines of a collapsed quote
-	collapseTailFall  = 20 // tail lines shown when no @@ hunk header found
-	collapseHeaderMax = 3  // max header lines before collapsing To/Cc
+	collapseMinBlock    = 8  // don't collapse quotes shorter than this
+	collapseHead        = 3  // show first N lines of a collapsed quote
+	collapseTailMax     = 20 // max tail lines when reply follows
+	collapseTailNoReply = 8  // max tail lines when no reply follows
+	collapseHeaderMax   = 3  // max header lines before collapsing To/Cc
 )
 
 func collapseQuotedBlocks(lines []string) []string {
@@ -456,7 +457,19 @@ func collapseQuotedBlocks(lines []string) []string {
 			result = append(result, block...)
 			continue
 		}
-		tail := collapseTail(block)
+		// Shorter tail when no reply follows the quote block
+		tailMax := collapseTailMax
+		hasReply := false
+		for j := i; j < len(lines); j++ {
+			if lines[j] != "" {
+				hasReply = true
+				break
+			}
+		}
+		if !hasReply {
+			tailMax = collapseTailNoReply
+		}
+		tail := collapseTail(block, tailMax, hasReply)
 		head := collapseHead
 		if head+len(tail) >= len(block) {
 			result = append(result, block...)
@@ -472,19 +485,32 @@ func collapseQuotedBlocks(lines []string) []string {
 	return result
 }
 
-func collapseTail(block []string) []string {
-	// Search backward for a diff hunk header — the most useful anchor
-	// point when a reply quotes a diff. Fall back to the last N lines.
-	for i := len(block) - 1; i >= 0; i-- {
-		trimmed := strings.TrimLeft(block[i], " >")
-		if strings.HasPrefix(trimmed, "@@ ") {
-			return block[i:]
+func collapseTail(block []string, maxLines int, useAnchors bool) []string {
+	// Search backward for a diff hunk anchor (@@ ) — only when
+	// a reply follows the quoted block. Email signature (--)
+	// and git separator (---) are clearers: finding one means
+	// there's no useful @@ anchor below, so we fall through to
+	// the fallback. Clearers on the very last line are skipped
+	// (trailing separator with nothing after it).
+	if useAnchors {
+		for i := len(block) - 1; i >= 0; i-- {
+			trimmed := strings.TrimLeft(block[i], " >")
+			if strings.HasPrefix(trimmed, "@@ ") {
+				return block[i:]
+			}
+			if trimmed == "--" || trimmed == "-- " ||
+				trimmed == "---" || trimmed == "--- " {
+				if i == len(block)-1 {
+					continue
+				}
+				break
+			}
 		}
 	}
-	if len(block) <= collapseTailFall {
+	if len(block) <= maxLines {
 		return block
 	}
-	return block[len(block)-collapseTailFall:]
+	return block[len(block)-maxLines:]
 }
 
 func wrapLine(s string, width int) []string {
