@@ -74,20 +74,21 @@ func ParseHistoryLimit(s string) (HistoryLimit, error) {
 }
 
 type Config struct {
-	Server       string
-	Project      string
-	Token        string
-	Username     string
-	Password     string
-	DBPath       string
-	States       []string
-	LoreURL      string
-	MailArchive  string
-	Theme        string
-	BaseURL      string
-	APIVersion   string
-	HistoryLimit HistoryLimit
-	Signoff      *bool // nil = default (true), false = don't add -s to git am
+	Server           string
+	Project          string
+	Token            string
+	Username         string
+	Password         string
+	DBPath           string
+	States           []string
+	LoreURL          string
+	MailArchive      string
+	Theme            string
+	BaseURL          string
+	APIVersion       string
+	HistoryLimit     HistoryLimit
+	Signoff          *bool // nil = default (true), false = don't add -s to git am
+	FixGmailWrapping *bool // nil = default (true), false = disable quote rejoin
 }
 
 func Load(dir string) (*Config, error) {
@@ -133,6 +134,12 @@ func Load(dir string) (*Config, error) {
 	if signoffStr == "false" {
 		f := false
 		cfg.Signoff = &f
+	}
+
+	fixWrapStr := gitops.ConfigGet(dir, "leadlight.fix-gmail-wrapping")
+	if fixWrapStr == "false" {
+		f := false
+		cfg.FixGmailWrapping = &f
 	}
 
 	if err := validate(cfg); err != nil {

@@ -721,7 +721,7 @@ func (m *Model) switchToComment() {
 	if m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
 		formatted := FormatComment(
-			comment, m.width, !m.viewExpanded)
+			comment, m.width, !m.viewExpanded, m.viewSourceLines)
 		m.viewportLines = splitLines(formatted)
 	}
 }
@@ -749,6 +749,12 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 		m.viewComments = GetCommentsForCover(m.db, cover.ID)
 		m.viewCommentIdx = -1
 		m.viewportOffset = 0
+		if m.FixGmailWrapping && cover.DetailFetched {
+			m.viewSourceLines = buildSourceLines(
+				cover.Content, "", m.viewComments)
+		} else {
+			m.viewSourceLines = nil
+		}
 
 		if m.FetchCoverComments != nil && m.db.NeedsCoverComments(cover.ID) {
 			m.FetchCoverComments(cover.ID)
@@ -809,6 +815,12 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	m.viewComments = GetCommentsForPatch(m.db, patchID)
 	m.viewCommentIdx = -1
 	m.viewportOffset = 0
+	if m.FixGmailWrapping && row.DetailFetched {
+		m.viewSourceLines = buildSourceLines(
+			row.Content, row.Diff, m.viewComments)
+	} else {
+		m.viewSourceLines = nil
+	}
 
 	if m.FetchPatchComments != nil && m.db.NeedsPatchComments(patchID) {
 		m.FetchPatchComments(patchID)

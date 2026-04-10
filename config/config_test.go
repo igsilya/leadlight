@@ -584,3 +584,33 @@ func TestHistoryLimit_Before(t *testing.T) {
 		t.Errorf("Before() = %v, want ~%v", before, expected)
 	}
 }
+
+func TestFixGmailWrapping_Default(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"leadlight.server":  "https://lorem.example/api/1.3/",
+		"leadlight.project": "lorem",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FixGmailWrapping != nil {
+		t.Errorf("default should be nil (true), got %v",
+			*cfg.FixGmailWrapping)
+	}
+}
+
+func TestFixGmailWrapping_Disabled(t *testing.T) {
+	dir := setupGitRepo(t, map[string]string{
+		"leadlight.server":             "https://lorem.example/api/1.3/",
+		"leadlight.project":            "lorem",
+		"leadlight.fix-gmail-wrapping": "false",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FixGmailWrapping == nil || *cfg.FixGmailWrapping {
+		t.Error("should be false when explicitly disabled")
+	}
+}

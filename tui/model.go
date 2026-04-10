@@ -208,16 +208,17 @@ type Model struct {
 	renderBuf   strings.Builder // reused by renderMainView each frame
 	gradientBuf strings.Builder // reused by renderGradientRow each frame
 
-	viewMode       viewMode
-	viewingPatchID int
-	viewingCoverID int
-	viewComments   []CommentInfo
-	viewCommentIdx int // -1 = patch/cover, 0+ = comment
-	viewportLines  []string
-	viewportOffset int
-	viewExpanded   bool
-	listPrefix     string
-	delegateNames  map[string]string
+	viewMode        viewMode
+	viewingPatchID  int
+	viewingCoverID  int
+	viewComments    []CommentInfo
+	viewCommentIdx  int // -1 = patch/cover, 0+ = comment
+	viewSourceLines map[string]bool
+	viewportLines   []string
+	viewportOffset  int
+	viewExpanded    bool
+	listPrefix      string
+	delegateNames   map[string]string
 
 	compare       [2]compareSide
 	compareCount  int // 0, 1, or 2
@@ -243,7 +244,8 @@ type Model struct {
 		delegateUsername *string, unsetDelegate bool,
 	)
 
-	Signoff bool // add -s to git am (default true)
+	Signoff          bool // add -s to git am (default true)
+	FixGmailWrapping bool // rejoin broken quoted lines (default true)
 
 	applyState          applyState
 	applyPatchIDs       []int // patches to apply, in N/M order
@@ -691,7 +693,7 @@ func (m *Model) refreshViewport() {
 	if m.viewCommentIdx >= 0 && m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
 		formatted := FormatComment(
-			comment, m.width, !m.viewExpanded)
+			comment, m.width, !m.viewExpanded, m.viewSourceLines)
 		m.viewportLines = splitLines(formatted)
 		return
 	}
@@ -726,8 +728,19 @@ func (m *Model) refreshViewportComments() {
 			return
 		}
 		m.viewComments = GetCommentsForCover(m.db, cover.ID)
+		if m.FixGmailWrapping && cover.DetailFetched {
+			m.viewSourceLines = buildSourceLines(
+				cover.Content, "", m.viewComments)
+		}
 	} else if m.viewingPatchID != 0 {
 		m.viewComments = GetCommentsForPatch(m.db, m.viewingPatchID)
+		if m.FixGmailWrapping {
+			row, err := m.db.GetPatch(m.viewingPatchID)
+			if err == nil && row.DetailFetched {
+				m.viewSourceLines = buildSourceLines(
+					row.Content, row.Diff, m.viewComments)
+			}
+		}
 	}
 }
 

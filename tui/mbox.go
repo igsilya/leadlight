@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -707,7 +709,157 @@ type CommentInfo struct {
 	ListArchiveURL string
 }
 
-func FormatComment(c CommentInfo, width int, collapse bool) string {
+func quoteDepth(line string) int {
+	depth := 0
+	s := line
+	for {
+		s = strings.TrimLeft(s, " ")
+		if len(s) == 0 || s[0] != '>' {
+			break
+		}
+		depth++
+		s = s[1:]
+		if len(s) > 0 && s[0] == ' ' {
+			s = s[1:]
+		}
+	}
+	return depth
+}
+
+func stripQuoteMarkers(line string) (prefix, content string) {
+	depth := quoteDepth(line)
+	if depth == 0 {
+		return "", line
+	}
+	s := line
+	for d := 0; d < depth; d++ {
+		s = strings.TrimLeft(s, " ")
+		if len(s) > 0 && s[0] == '>' {
+			s = s[1:]
+			if len(s) > 0 && s[0] == ' ' {
+				s = s[1:]
+			}
+		}
+	}
+	return line[:len(line)-len(s)], s
+}
+
+func buildSourceLines(patchContent, patchDiff string, comments []CommentInfo) map[string]bool {
+	lines := map[string]bool{}
+	for _, line := range strings.Split(patchContent, "\n") {
+		line = normalizeNBSP(strings.TrimRight(line, "\r"))
+		if line != "" {
+			lines[line] = true
+		}
+	}
+	for _, line := range strings.Split(patchDiff, "\n") {
+		line = normalizeNBSP(strings.TrimRight(line, "\r"))
+		if line != "" {
+			lines[line] = true
+		}
+	}
+	for _, c := range comments {
+		for _, line := range strings.Split(c.Content, "\n") {
+			_, stripped := stripQuoteMarkers(strings.TrimRight(line, "\r"))
+			stripped = normalizeNBSP(stripped)
+			if stripped != "" {
+				lines[stripped] = true
+			}
+		}
+	}
+	return lines
+}
+
+// endsAlphanumeric checks if the last rune in s is a letter or digit.
+func endsAlphanumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(s)
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// normalizeNBSP replaces non-breaking spaces (U+00A0) with regular
+// spaces. Some mail clients insert NBSPs when re-quoting content.
+func normalizeNBSP(s string) string {
+	return strings.ReplaceAll(s, "\u00a0", " ")
+}
+
+// tryJoin attempts to concatenate two stripped line parts and match
+// against source lines. Tries space join first, then no-space join
+// if the left part ends with a non-alphanumeric character (handles
+// mid-path breaks like "b/tests/" + "file.at"). Non-breaking spaces
+// are normalized before matching.
+func tryJoin(left, right string, sourceLines map[string]bool) (string, bool) {
+	nLeft := normalizeNBSP(left)
+	nRight := normalizeNBSP(right)
+	candidate := nLeft + " " + nRight
+	if sourceLines[candidate] {
+		return candidate, true
+	}
+	if !endsAlphanumeric(nLeft) {
+		candidate = nLeft + nRight
+		if sourceLines[candidate] {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func rejoinQuoteContinuations(lines []string, sourceLines map[string]bool) []string {
+	if len(sourceLines) == 0 {
+		return lines
+	}
+	result := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		curr := lines[i]
+		for i+1 < len(lines) {
+			next := lines[i+1]
+			k := quoteDepth(curr)
+			m := quoteDepth(next)
+			_, sNextCheck := stripQuoteMarkers(next)
+			if k < m || (k == 0 && m == 0) || sNextCheck == "" {
+				break
+			}
+			prefix, sCurr := stripQuoteMarkers(curr)
+			_, sNext := stripQuoteMarkers(next)
+			if sCurr == "" {
+				break
+			}
+			if joined, ok := tryJoin(sCurr, sNext, sourceLines); ok {
+				curr = prefix + joined
+				i++
+				continue
+			}
+			// Look further ahead for a multi-line match
+			extended := sCurr + " " + sNext
+			matched := false
+			j := i + 2
+			for j < len(lines) {
+				jm := quoteDepth(lines[j])
+				_, sj := stripQuoteMarkers(lines[j])
+				if k <= jm || sj == "" {
+					break
+				}
+				if joined, ok := tryJoin(extended, sj, sourceLines); ok {
+					curr = prefix + joined
+					i = j
+					matched = true
+					break
+				}
+				extended += " " + sj
+				j++
+			}
+			if !matched {
+				break
+			}
+		}
+		result = append(result, curr)
+	}
+	return result
+}
+
+func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[string]bool) string {
 	var b strings.Builder
 	labelWidth := 9
 	valWidth := width - labelWidth
@@ -756,6 +908,7 @@ func FormatComment(c CommentInfo, width int, collapse bool) string {
 		b.WriteByte('\n')
 		content := replaceControlChars(c.Content)
 		contentLines := strings.Split(content, "\n")
+		contentLines = rejoinQuoteContinuations(contentLines, sourceLines)
 		if collapse {
 			contentLines = collapseQuotedBlocks(contentLines)
 		}

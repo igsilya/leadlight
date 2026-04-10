@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -57,7 +58,7 @@ func TestFormatComment(t *testing.T) {
 		Subject:   "Re: [PATCH] Lorem ipsum",
 		Content:   "Looks good.\n\nAcked-by: Lorem <lorem@ipsum.example>",
 	}
-	formatted := FormatComment(c, 120, false)
+	formatted := FormatComment(c, 120, false, nil)
 	if formatted == "" {
 		t.Error("formatted is empty")
 	}
@@ -71,7 +72,7 @@ func TestFormatComment(t *testing.T) {
 
 func TestFormatComment_Empty(t *testing.T) {
 	c := CommentInfo{}
-	_ = FormatComment(c, 120, false)
+	_ = FormatComment(c, 120, false, nil)
 }
 
 func TestReplaceControlChars(t *testing.T) {
@@ -115,7 +116,7 @@ func TestFormatComment_ControlChars(t *testing.T) {
 		Subject: "Re: test",
 		Content: "looks good\x0c\nAcked-by: Lorem <lorem@ipsum.example>",
 	}
-	result := FormatComment(c, 80, false)
+	result := FormatComment(c, 80, false, nil)
 	if !strings.Contains(result, "^L") {
 		t.Error("form feed should render as ^L")
 	}
@@ -240,7 +241,7 @@ func TestFormatComment_WrapsLongContent(t *testing.T) {
 		Subject: "Re: test",
 		Content: longLine,
 	}
-	result := FormatComment(c, 80, false)
+	result := FormatComment(c, 80, false, nil)
 	if strings.Contains(result, "…") {
 		t.Error("comment should wrap, not truncate")
 	}
@@ -409,7 +410,7 @@ func TestFormatComment_CollapseQuotes(t *testing.T) {
 		Subject: "Re: test",
 		Content: content.String(),
 	}
-	result := FormatComment(c, 80, true)
+	result := FormatComment(c, 80, true, nil)
 	if !strings.Contains(result, "quoted lines hidden") {
 		t.Error("should collapse with collapseQuotes=true")
 	}
@@ -425,7 +426,7 @@ func TestFormatComment_ExpandQuotes(t *testing.T) {
 		Subject: "Re: test",
 		Content: content.String(),
 	}
-	result := FormatComment(c, 80, false)
+	result := FormatComment(c, 80, false, nil)
 	if strings.Contains(result, "quoted lines hidden") {
 		t.Error("should not collapse with collapseQuotes=false")
 	}
@@ -531,7 +532,7 @@ func TestFormatComment_WithHeaders(t *testing.T) {
 			"Cc: sit@amet.example\n",
 		ListArchiveURL: "https://archive.example.com/lorem/123",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if !strings.Contains(result, "lorem@ipsum.example") {
 		t.Error("should show submitter email")
 	}
@@ -556,7 +557,7 @@ func TestFormatComment_HeaderFallback(t *testing.T) {
 		Date:      "2025-12-04T09:17:04",
 		Content:   "Looks good.",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if !strings.Contains(result, "Lorem Ipsum") {
 		t.Error("should fall back to Submitter")
 	}
@@ -576,7 +577,7 @@ func TestFormatComment_FromPrefersReplyTo(t *testing.T) {
 			"Reply-To: Lorem Ipsum <lorem@ipsum.example>\n" +
 			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if !strings.Contains(result, "lorem@ipsum.example") {
 		t.Error("should use Reply-To email")
 	}
@@ -597,7 +598,7 @@ func TestFormatComment_FromFallsBackToSubmitter(t *testing.T) {
 		Headers: "From: Lorem Ipsum <lorem@real.example>\n" +
 			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if !strings.Contains(result, "lorem@ipsum.example") {
 		t.Error("should use API submitter over raw From")
 	}
@@ -612,7 +613,7 @@ func TestFormatComment_FromLastResort(t *testing.T) {
 		Headers: "From: Lorem Ipsum <lorem@last.example>\n" +
 			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if !strings.Contains(result, "lorem@last.example") {
 		t.Error("should fall back to From header as last resort")
 	}
@@ -624,7 +625,7 @@ func TestFormatComment_SubjectCompacted(t *testing.T) {
 		Date:    "2025-12-04T09:17:04",
 		Content: "Looks good.",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if strings.Contains(result, "\n dolor") {
 		t.Error("Subject should be compacted, fold not removed")
 	}
@@ -640,7 +641,7 @@ func TestFormatComment_FromFallbackNoEmail(t *testing.T) {
 		Date:      "2025-12-04T09:17:04",
 		Content:   "Looks good.",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if !strings.Contains(result, "Lorem Ipsum") {
 		t.Error("should show submitter name")
 	}
@@ -660,7 +661,7 @@ func TestFormatComment_DecodesHeaderMIME(t *testing.T) {
 			"Cc: =?utf-8?q?S=C3=ADt?= <sit@amet.example>\n" +
 			"Date: Thu, 04 Dec 2025 14:57:28 +0530\n",
 	}
-	result := FormatComment(c, 120, false)
+	result := FormatComment(c, 120, false, nil)
 	if !strings.Contains(result, "Dolör Amet") {
 		t.Error("To header should be MIME decoded")
 	}
@@ -865,12 +866,12 @@ func TestFormatComment_CollapseLongCc(t *testing.T) {
 		Content: "Looks good.",
 	}
 
-	collapsed := FormatComment(c, 80, true)
+	collapsed := FormatComment(c, 80, true, nil)
 	if !strings.Contains(collapsed, "total (e to expand) ···") {
 		t.Error("collapsed comment Cc should contain collapse marker")
 	}
 
-	expanded := FormatComment(c, 80, false)
+	expanded := FormatComment(c, 80, false, nil)
 	if strings.Contains(expanded, "total (e to expand) ···") {
 		t.Error("expanded comment Cc should not contain collapse marker")
 	}
@@ -1230,6 +1231,483 @@ func TestHeaderString_Missing(t *testing.T) {
 	got := headerString(headers, "To")
 	if got != "" {
 		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestQuoteDepth(t *testing.T) {
+	tests := []struct {
+		line string
+		want int
+	}{
+		{"", 0},
+		{"lorem ipsum", 0},
+		{"> lorem", 1},
+		{"> > lorem", 2},
+		{"> > > lorem", 3},
+		{">lorem", 1},
+		{">", 1},
+		{"> >     lorem ns=$1", 2},
+	}
+	for _, tt := range tests {
+		got := quoteDepth(tt.line)
+		if got != tt.want {
+			t.Errorf("quoteDepth(%q) = %d, want %d",
+				tt.line, got, tt.want)
+		}
+	}
+}
+
+func TestStripQuoteMarkers(t *testing.T) {
+	tests := []struct {
+		line, wantPrefix, wantContent string
+	}{
+		{"lorem ipsum", "", "lorem ipsum"},
+		{"> lorem", "> ", "lorem"},
+		{"> > lorem", "> > ", "lorem"},
+		{"> > > lorem", "> > > ", "lorem"},
+		{">lorem", ">", "lorem"},
+		{"> >     lorem ns=$1", "> > ", "    lorem ns=$1"},
+		{"> > +lorem", "> > ", "+lorem"},
+		{">> >>> lorem", ">> >>> ", "lorem"},
+		{"", "", ""},
+		{"> > ", "> > ", ""},
+		{">", ">", ""},
+	}
+	for _, tt := range tests {
+		prefix, content := stripQuoteMarkers(tt.line)
+		if prefix != tt.wantPrefix || content != tt.wantContent {
+			t.Errorf("stripQuoteMarkers(%q) = (%q, %q), want (%q, %q)",
+				tt.line, prefix, content, tt.wantPrefix, tt.wantContent)
+		}
+	}
+}
+
+func TestBuildSourceLines(t *testing.T) {
+	source := buildSourceLines(
+		"Lorem ipsum\nDolor sit amet\n",
+		"+consectetur\n-adipiscing\n",
+		[]CommentInfo{
+			{Content: "> Lorem ipsum\nViverra sagittis\n> > lacus vel"},
+		},
+	)
+	// Patch content lines
+	if !source["Lorem ipsum"] {
+		t.Error("missing patch content line")
+	}
+	if !source["Dolor sit amet"] {
+		t.Error("missing patch content line 2")
+	}
+	// Diff lines
+	if !source["+consectetur"] {
+		t.Error("missing diff line")
+	}
+	if !source["-adipiscing"] {
+		t.Error("missing diff line 2")
+	}
+	// Comment lines stripped to depth 0
+	if !source["Lorem ipsum"] {
+		t.Error("missing stripped comment line")
+	}
+	if !source["Viverra sagittis"] {
+		t.Error("missing unquoted comment line")
+	}
+	if !source["lacus vel"] {
+		t.Error("missing stripped nested comment line")
+	}
+	// Empty lines excluded
+	if source[""] {
+		t.Error("empty line should not be in source")
+	}
+}
+
+func TestRejoinQuoteContinuations(t *testing.T) {
+	tests := []struct {
+		name   string
+		source map[string]bool
+		lines  []string
+		want   []string
+	}{
+		{
+			"basic single break",
+			map[string]bool{
+				"lorem ipsum dolor sit amet consectetur": true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet",
+				"consectetur",
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet consectetur",
+			},
+		},
+		{
+			"multi-line continuation",
+			map[string]bool{
+				"lorem ipsum dolor sit amet consectetur adipiscing": true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit",
+				"amet consectetur",
+				"adipiscing",
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet consectetur adipiscing",
+			},
+		},
+		{
+			"nested quote depth 2 to 0",
+			map[string]bool{
+				"+lorem ipsum dolor sit amet consectetur": true,
+			},
+			[]string{
+				"> > +lorem ipsum dolor sit amet",
+				"consectetur",
+			},
+			[]string{
+				"> > +lorem ipsum dolor sit amet consectetur",
+			},
+		},
+		{
+			"depth 2 continuation at depth 1",
+			map[string]bool{
+				"+lorem ipsum dolor sit amet consectetur": true,
+			},
+			[]string{
+				"> > +lorem ipsum dolor sit amet",
+				"> consectetur",
+			},
+			[]string{
+				"> > +lorem ipsum dolor sit amet consectetur",
+			},
+		},
+		{
+			"preserves content indentation",
+			map[string]bool{
+				"    lorem ns=$1 ipsum=$2 dolor=$3 amet=$4 sit=$5 consectetur=$6": true,
+			},
+			[]string{
+				"> >     lorem ns=$1 ipsum=$2 dolor=$3 amet=$4",
+				"sit=$5 consectetur=$6",
+			},
+			[]string{
+				"> >     lorem ns=$1 ipsum=$2 dolor=$3 amet=$4 sit=$5 consectetur=$6",
+			},
+		},
+		{
+			"empty source leaves lines unchanged",
+			nil,
+			[]string{
+				"> lorem ipsum",
+				"dolor",
+			},
+			[]string{
+				"> lorem ipsum",
+				"dolor",
+			},
+		},
+		{
+			"mixed content: some rejoin some not",
+			map[string]bool{
+				"lorem ipsum dolor sit amet consectetur": true,
+				"adipiscing elit sed do":                 true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet",
+				"consectetur",
+				"> adipiscing elit sed do",
+				"Viverra sagittis lacus.",
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet consectetur",
+				"> adipiscing elit sed do",
+				"Viverra sagittis lacus.",
+			},
+		},
+		{
+			"non-breaking space in quoted content",
+			map[string]bool{
+				" lorem ipsum dolor sit amet consectetur": true,
+			},
+			[]string{
+				">> >>>>\u00a0lorem ipsum dolor sit amet",
+				">> >> consectetur",
+			},
+			[]string{
+				">> >>>> lorem ipsum dolor sit amet consectetur",
+			},
+		},
+		{
+			"same depth rejoin",
+			map[string]bool{
+				"lorem ipsum dolor sit amet consectetur adipiscing": true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet consectetur",
+				"> adipiscing",
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet consectetur adipiscing",
+			},
+		},
+		{
+			"preserves original quote marker style",
+			map[string]bool{
+				"lorem ipsum dolor sit amet consectetur": true,
+			},
+			[]string{
+				">> >>> lorem ipsum dolor sit amet",
+				"consectetur",
+			},
+			[]string{
+				">> >>> lorem ipsum dolor sit amet consectetur",
+			},
+		},
+		{
+			"mid-path break (no space join)",
+			map[string]bool{
+				"lorem/ipsum/dolor/sit/amet/consectetur": true,
+			},
+			[]string{
+				"> lorem/ipsum/dolor/sit/amet/",
+				"consectetur",
+			},
+			[]string{
+				"> lorem/ipsum/dolor/sit/amet/consectetur",
+			},
+		},
+		{
+			"partial multi-line: second continuation no match",
+			map[string]bool{
+				"lorem ipsum dolor": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"dolor",
+				"sit amet",
+			},
+			[]string{
+				"> lorem ipsum dolor",
+				"sit amet",
+			},
+		},
+	}
+	for _, tt := range tests {
+		got := rejoinQuoteContinuations(tt.lines, tt.source)
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s:\n  got  %v\n  want %v",
+				tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestRejoinQuoteContinuations_NegativeCases(t *testing.T) {
+	tests := []struct {
+		name   string
+		source map[string]bool
+		lines  []string
+	}{
+		{
+			"reply after complete quoted line",
+			map[string]bool{
+				"lorem ipsum dolor sit amet.": true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet.",
+				"Viverra sagittis lacus vel.",
+			},
+		},
+		{
+			"reply after empty quoted line (paragraph break)",
+			map[string]bool{
+				"lorem ipsum": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				">",
+				"Dolor sit amet.",
+			},
+		},
+		{
+			"equal quote depth is normal quoting",
+			map[string]bool{
+				"lorem ipsum":    true,
+				"dolor sit amet": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"> dolor sit amet",
+			},
+		},
+		{
+			"higher quote depth on next line",
+			map[string]bool{
+				"lorem ipsum dolor": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"> > dolor",
+			},
+		},
+		{
+			"empty continuation line",
+			map[string]bool{
+				"lorem ipsum": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"",
+			},
+		},
+		{
+			"same depth not a broken wrap",
+			map[string]bool{
+				"lorem ipsum": true,
+				"dolor":       true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"> dolor",
+			},
+		},
+		{
+			"both lines unquoted",
+			map[string]bool{
+				"lorem ipsum dolor": true,
+			},
+			[]string{
+				"lorem ipsum",
+				"dolor",
+			},
+		},
+		{
+			"single word false match risk",
+			map[string]bool{
+				"dolor":       true,
+				"lorem ipsum": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"dolor sit amet.",
+			},
+		},
+		{
+			"attribution line after quote",
+			map[string]bool{
+				"lorem ipsum dolor sit amet": true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet",
+				"On Thu, Jan 1, 2026 at 10:00 Dolor wrote:",
+			},
+		},
+		{
+			"signature after quote",
+			map[string]bool{
+				"lorem ipsum dolor sit amet": true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet",
+				"-- ",
+			},
+		},
+		{
+			"empty quoted line followed by unquoted",
+			map[string]bool{},
+			[]string{
+				">",
+				"lorem",
+			},
+		},
+		{
+			"whitespace-only continuation",
+			map[string]bool{
+				"lorem ipsum": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"   ",
+			},
+		},
+		{
+			"partial source match not enough",
+			map[string]bool{
+				"lorem ipsum dolor": true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"dolor sit amet",
+			},
+		},
+		{
+			"empty quoted line before reply (reply text in source)",
+			map[string]bool{
+				"Viverra sagittis lacus vel consectetur": true,
+			},
+			[]string{
+				">",
+				"Viverra sagittis lacus vel consectetur",
+			},
+		},
+		{
+			"empty nested quoted line before reply",
+			map[string]bool{
+				"Viverra sagittis": true,
+			},
+			[]string{
+				"> >",
+				"Viverra sagittis",
+			},
+		},
+		{
+			"alphanumeric boundary prevents no-space join",
+			map[string]bool{
+				"loremipsum": true,
+			},
+			[]string{
+				"> lorem",
+				"ipsum",
+			},
+		},
+		{
+			"same depth separate lines not merged",
+			map[string]bool{
+				"lorem ipsum dolor sit amet":  true,
+				"consectetur adipiscing elit": true,
+			},
+			[]string{
+				"> lorem ipsum dolor sit amet",
+				"> consectetur adipiscing elit",
+			},
+		},
+		{
+			"accented last character prevents no-space join",
+			map[string]bool{
+				"caféipsum": true,
+			},
+			[]string{
+				"> café",
+				"ipsum",
+			},
+		},
+		{
+			"continuation between two unrelated quotes",
+			map[string]bool{
+				"lorem ipsum": true,
+				"dolor amet":  true,
+			},
+			[]string{
+				"> lorem ipsum",
+				"viverra",
+				"> dolor amet",
+			},
+		},
+	}
+	for _, tt := range tests {
+		got := rejoinQuoteContinuations(tt.lines, tt.source)
+		if !reflect.DeepEqual(got, tt.lines) {
+			t.Errorf("%s: lines should not be modified\n  got  %v\n  want %v",
+				tt.name, got, tt.lines)
+		}
 	}
 }
 

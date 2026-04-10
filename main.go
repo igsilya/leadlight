@@ -129,6 +129,7 @@ func main() {
 	if cfg.Signoff != nil && !*cfg.Signoff {
 		m.Signoff = false
 	}
+	m.FixGmailWrapping = cfg.FixGmailWrapping == nil || *cfg.FixGmailWrapping
 
 	go syncer.Run(ctx)
 
