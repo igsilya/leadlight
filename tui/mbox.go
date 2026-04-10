@@ -267,9 +267,9 @@ func FormatMboxParts(
 		bb.WriteByte('\n')
 		cleaned := replaceControlChars(p.Body)
 		for _, line := range strings.Split(cleaned, "\n") {
-			quoted := isQuotedLine(line)
+			depth := quoteDepth(line)
 			for _, wl := range wrapLine(line, width) {
-				writeStyledLine(&bb, wl, quoted)
+				writeStyledLine(&bb, wl, depth)
 				bb.WriteByte('\n')
 			}
 		}
@@ -417,10 +417,14 @@ func expandTabs(s string, tabWidth int) string {
 	return buf.String()
 }
 
-func writeStyledLine(b *strings.Builder, line string, quoted bool) {
+func writeStyledLine(b *strings.Builder, line string, depth int) {
 	line = expandTabs(line, 8) // position-aware tabs before lipgloss
-	if quoted {
-		b.WriteString(quotedLineStyle.Render(line))
+	if depth > 0 {
+		if depth%2 == 1 {
+			b.WriteString(quotedLineStyle.Render(line))
+		} else {
+			b.WriteString(quotedLineEvenStyle.Render(line))
+		}
 	} else if strings.HasPrefix(line, "  ···") {
 		b.WriteString(collapseMarkerStyle.Render(line))
 	} else if strings.HasPrefix(line, "↳ ") {
@@ -939,9 +943,9 @@ func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[stri
 			contentLines = collapseQuotedBlocks(contentLines)
 		}
 		for _, line := range contentLines {
-			quoted := isQuotedLine(line)
+			depth := quoteDepth(line)
 			for _, wl := range wrapLine(line, width) {
-				writeStyledLine(&b, wl, quoted)
+				writeStyledLine(&b, wl, depth)
 				b.WriteByte('\n')
 			}
 		}

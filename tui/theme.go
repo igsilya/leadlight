@@ -29,7 +29,8 @@ type theme struct {
 
 	MboxHeaderLabelFg, MboxHeaderValueFg string
 	DiffAddFg, DiffDelFg, DiffHunkFg     string
-	QuotedLineFg, WrapIndicatorFg        string
+	QuotedLineFg, QuotedLineEvenFg       string
+	WrapIndicatorFg                      string
 	CollapseMarkerFg                     string // mid-brightness for collapsed section markers
 
 	LogLineFg    string
@@ -98,7 +99,8 @@ var darkTheme = theme{
 	DiffAddFg:         "34",      // forest green
 	DiffDelFg:         "196",     // bright red
 	DiffHunkFg:        "6",       // dark cyan
-	QuotedLineFg:      "168",     // dusty rose
+	QuotedLineFg:      "168",     // dusty rose (odd depths)
+	QuotedLineEvenFg:  "139",     // muted mauve (even depths)
 	WrapIndicatorFg:   "242",     // dim grey
 	CollapseMarkerFg:  "#7f849c", // catppuccin Overlay1 — between quoted and text
 
@@ -166,7 +168,8 @@ var lightTheme = theme{
 	DiffAddFg:         "28",      // dark green
 	DiffDelFg:         "124",     // dark red
 	DiffHunkFg:        "30",      // dark teal
-	QuotedLineFg:      "125",     // muted plum
+	QuotedLineFg:      "125",     // muted plum (odd depths)
+	QuotedLineEvenFg:  "61",      // slate blue (even depths)
 	WrapIndicatorFg:   "245",     // mid-grey
 	CollapseMarkerFg:  "#8c8fa1", // catppuccin Overlay0 — between quoted and text
 
