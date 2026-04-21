@@ -527,7 +527,7 @@ func (c *Client) GetPatchesPage(
 
 func (c *Client) BuildSeriesURL(params SeriesListParams) string {
 	v := url.Values{}
-	v.Set("per_page", "100")
+	v.Set("per_page", "1024")
 	if params.Project != "" {
 		v.Set("project", params.Project)
 	}
@@ -551,7 +551,7 @@ func (c *Client) BuildPatchesURL(
 	params PatchListParams,
 ) string {
 	v := url.Values{}
-	v.Set("per_page", "100")
+	v.Set("per_page", "1024")
 	if params.Project != "" {
 		v.Set("project", params.Project)
 	}
@@ -583,7 +583,7 @@ func (c *Client) BuildEventsURL(
 	params EventListParams,
 ) string {
 	v := url.Values{}
-	v.Set("per_page", "250")
+	v.Set("per_page", "1024")
 	if params.Project != "" {
 		v.Set("project", params.Project)
 	}
@@ -601,7 +601,7 @@ func (c *Client) GetPatches(
 	params PatchListParams,
 ) ([]Patch, error) {
 	v := url.Values{}
-	v.Set("per_page", "100")
+	v.Set("per_page", "1024")
 	if params.Project != "" {
 		v.Set("project", params.Project)
 	}
@@ -632,7 +632,7 @@ func (c *Client) GetPatchComments(
 ) ([]Comment, error) {
 	path := fmt.Sprintf("/patches/%d/comments/", id)
 	v := url.Values{}
-	v.Set("per_page", "100")
+	v.Set("per_page", "1024")
 	return getAll[Comment](c, ctx, path, v)
 }
 
@@ -642,7 +642,7 @@ func (c *Client) GetCoverComments(
 ) ([]Comment, error) {
 	path := fmt.Sprintf("/covers/%d/comments/", id)
 	v := url.Values{}
-	v.Set("per_page", "100")
+	v.Set("per_page", "1024")
 	return getAll[Comment](c, ctx, path, v)
 }
 
@@ -652,7 +652,7 @@ func (c *Client) GetPatchChecks(
 ) ([]Check, error) {
 	path := fmt.Sprintf("/patches/%d/checks/", id)
 	v := url.Values{}
-	v.Set("per_page", "100")
+	v.Set("per_page", "1024")
 	return getAll[Check](c, ctx, path, v)
 }
 
@@ -685,7 +685,7 @@ func (c *Client) GetEvents(
 	params EventListParams,
 ) ([]Event, error) {
 	v := url.Values{}
-	v.Set("per_page", "100")
+	v.Set("per_page", "1024")
 	if params.Project != "" {
 		v.Set("project", params.Project)
 	}

@@ -690,7 +690,7 @@ func TestWrapLogLine_Empty(t *testing.T) {
 
 func TestWrapLogLine_URLPreserved(t *testing.T) {
 	url := "https://pw.example.com/api/1.2/events/" +
-		"?order=date&per_page=100&project=lorem" +
+		"?order=date&per_page=1024&project=lorem" +
 		"&since=2026-03-18T15%3A58%3A24"
 	line := "2026/03/18 21:59:10 HTTP GET (go) -> 200 " + url
 	lines := wrapLogLine(line, 133)
