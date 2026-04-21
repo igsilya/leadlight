@@ -2709,3 +2709,25 @@ func TestGetCover_BySeriesID(t *testing.T) {
 		t.Error("expected error for non-existent series")
 	}
 }
+
+func TestNeedsSeriesDetail(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(70, "Lorem series",
+		"2026-04-01T12:00:00", 1)
+	// SaveSeriesSummary doesn't set detail_fetched
+	if !d.NeedsSeriesDetail(70) {
+		t.Error("should need detail after SaveSeriesSummary")
+	}
+	// SaveSeries sets detail_fetched = 1
+	d.SaveSeries(SeriesRow{
+		ID: 70, Name: "Lorem series",
+		Date: "2026-04-01T12:00:00",
+	})
+	if d.NeedsSeriesDetail(70) {
+		t.Error("should not need detail after SaveSeries")
+	}
+	// Non-existent series
+	if !d.NeedsSeriesDetail(999) {
+		t.Error("non-existent series should need detail")
+	}
+}

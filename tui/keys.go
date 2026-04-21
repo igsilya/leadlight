@@ -736,10 +736,19 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 	}
 
 	cover, _ := m.db.GetCover(seriesID)
-	if cover == nil && m.FetchSeriesCover != nil {
+	if cover == nil && m.FetchSeriesDetail != nil {
 		if m.db.GetSeriesTotalPatches(seriesID) == 0 {
-			m.FetchSeriesCover(seriesID)
-			cover, _ = m.db.GetCover(seriesID)
+			m.viewMode = viewPatch
+			m.viewingPatchID = 0
+			m.viewingCoverID = seriesID
+			m.viewComments = nil
+			m.viewCommentIdx = -1
+			m.viewportOffset = 0
+			m.viewSourceLines = nil
+			m.viewportLoading = true
+			m.viewportLines = []string{"Fetching series details..."}
+			m.FetchSeriesDetail(seriesID)
+			return nil
 		}
 	}
 	if cover != nil {
@@ -764,6 +773,7 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 			parsed := BuildParsedMboxFromCover(*cover)
 			m.buildViewportContent(parsed, nil)
 		} else {
+			m.viewportLoading = true
 			m.viewportLines = []string{"Fetching..."}
 			if m.FetchCoverDetail != nil {
 				m.FetchCoverDetail(cover.ID)
@@ -838,6 +848,7 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 	} else {
 		log.Printf("TUI: detail not fetched for patch %d %q",
 			patchID, row.Name)
+		m.viewportLoading = true
 		m.viewportLines = []string{"Fetching..."}
 		if m.FetchPatchDetail != nil {
 			m.FetchPatchDetail(patchID)

@@ -609,6 +609,13 @@ func (d *DB) GetSeriesVersion(seriesID int) int {
 	return v
 }
 
+func (d *DB) NeedsSeriesDetail(seriesID int) bool {
+	var fetched int
+	d.conn.QueryRow("SELECT detail_fetched FROM series WHERE id = ?",
+		seriesID).Scan(&fetched)
+	return fetched == 0
+}
+
 func (d *DB) GetSeriesTotalPatches(seriesID int) int {
 	var total int
 	d.conn.QueryRow(

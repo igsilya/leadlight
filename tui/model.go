@@ -215,6 +215,7 @@ type Model struct {
 	viewCommentIdx  int // -1 = patch/cover, 0+ = comment
 	viewSourceLines map[string]bool
 	viewportLines   []string
+	viewportLoading bool
 	viewportOffset  int
 	viewExpanded    bool
 	listPrefix      string
@@ -231,7 +232,7 @@ type Model struct {
 	logAnchor    int // absolute log entry the viewport bottom is pinned to
 	logLastCount int
 
-	FetchSeriesCover   func(seriesID int)
+	FetchSeriesDetail  func(seriesID int)
 	RequestSync        func()
 	FetchPatchComments func(patchID int)
 	FetchCoverComments func(coverID int)
@@ -625,9 +626,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.runApply()
 		}
 		if m.viewMode == viewPatch {
-			if len(m.viewportLines) == 1 &&
-				(m.viewportLines[0] == "Fetching..." ||
-					m.viewportLines[0] == "Fetching cover letter...") {
+			if m.viewportLoading {
 				m.refreshViewport()
 			}
 			m.refreshViewportComments()
@@ -689,6 +688,7 @@ func (m *Model) refreshViewport() {
 	if m.db == nil {
 		return
 	}
+	m.viewportLoading = false
 	// If viewing a comment, re-render at the new width
 	if m.viewCommentIdx >= 0 && m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]

@@ -2814,6 +2814,87 @@ func TestResizePreservesCompareScroll(t *testing.T) {
 	}
 }
 
+func TestOpenSeriesView_PlaceholderWhenNoDetail(t *testing.T) {
+	m, d := testModelWithDB(t)
+	// Series 50 exists but has no detail fetched (SaveSeriesSummary
+	// doesn't set detail_fetched). TotalPatches is 0 from summary.
+	d.SaveSeriesSummary(52, "Lorem no-detail series",
+		"2026-03-10T00:00:00", 1)
+
+	fetchCalled := false
+	m.FetchSeriesDetail = func(seriesID int) {
+		fetchCalled = true
+	}
+
+	// Navigate to series 52
+	items := m.getVisibleItems()
+	for i, item := range items {
+		if !item.isSubRow && len(item.data) > 0 && item.data[ColID] == "52" {
+			m.selectedRow = i
+			m.updateSelectedID()
+			break
+		}
+	}
+
+	m = pressSpecialKey(m, tea.KeyEnter)
+
+	if m.viewMode != viewPatch {
+		t.Errorf("viewMode = %d, want viewPatch", m.viewMode)
+	}
+	if !m.viewportLoading {
+		t.Error("viewportLoading should be true")
+	}
+	if len(m.viewportLines) != 1 ||
+		m.viewportLines[0] != "Fetching series details..." {
+		t.Errorf("viewport = %v, want placeholder",
+			m.viewportLines)
+	}
+	if !fetchCalled {
+		t.Error("FetchSeriesDetail should have been called")
+	}
+}
+
+func TestSyncUpdateMsg_RefreshesLoadingViewport(t *testing.T) {
+	m, d := testModelWithDB(t)
+	// Set up a loading viewport
+	m.viewMode = viewPatch
+	m.viewingCoverID = 50
+	m.viewportLoading = true
+	m.viewportLines = []string{"Fetching series details..."}
+
+	// Save a cover so refreshViewport can load it
+	d.SaveCover(db.CoverRow{
+		ID: 99, SeriesID: 50, Name: "Lorem cover",
+		Date: "2026-03-10",
+	})
+	d.UpdateCoverDetail(99, "Lorem cover content", "")
+
+	// Send SyncUpdateMsg
+	m.Update(SyncUpdateMsg{SeriesIDs: []int{50}})
+
+	if m.viewportLoading {
+		t.Error("viewportLoading should be cleared")
+	}
+	content := strings.Join(m.viewportLines, "\n")
+	if !strings.Contains(content, "Lorem cover content") {
+		t.Error("viewport should show cover content after refresh")
+	}
+}
+
+func TestSyncUpdateMsg_NoRefreshWhenNotLoading(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	m.viewMode = viewPatch
+	m.viewingPatchID = 100
+	m.viewportLoading = false
+	m.viewportLines = []string{"Existing content"}
+
+	m.Update(SyncUpdateMsg{SeriesIDs: []int{50}})
+
+	if m.viewportLines[0] != "Existing content" {
+		t.Error("viewport should not be refreshed when not loading")
+	}
+}
+
 func TestScrollDown_DoesNotOverscroll(t *testing.T) {
 	m := testModel()
 	m.height = 10 // small height to force scrolling

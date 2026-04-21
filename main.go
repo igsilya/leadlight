@@ -90,12 +90,16 @@ func main() {
 			p.Send(tui.SyncUpdateMsg{SeriesIDs: seriesIDs})
 		}, statusReg)
 
-	m.FetchSeriesCover = func(seriesID int) {
-		syncer.RequestSeriesCover(seriesID)
+	m.FetchPatchDetail = func(patchID int) {
+		go syncer.RequestDetail(appSync.DetailRequest{ID: patchID})
 	}
-
-	m.RequestSync = func() {
-		go syncer.RequestSync()
+	m.FetchCoverDetail = func(coverID int) {
+		go syncer.RequestDetail(appSync.DetailRequest{
+			ID: coverID, IsCover: true})
+	}
+	m.FetchSeriesDetail = func(seriesID int) {
+		go syncer.RequestDetail(appSync.DetailRequest{
+			ID: seriesID, IsSeries: true})
 	}
 
 	m.FetchPatchComments = func(patchID int) {
@@ -104,17 +108,15 @@ func main() {
 	m.FetchCoverComments = func(coverID int) {
 		go syncer.RequestComments(coverID, true)
 	}
+
 	m.FetchPatchChecks = func(patchID int) {
 		go syncer.RequestChecks(patchID)
 	}
-	m.FetchPatchDetail = func(patchID int) {
-		go syncer.RequestDetail(patchID, false)
-	}
-	m.FetchCoverDetail = func(coverID int) {
-		go syncer.RequestDetail(coverID, true)
-	}
 	m.RequestFetchAll = func(seriesID, patchID int) {
 		syncer.RequestFetchAll(seriesID, patchID)
+	}
+	m.RequestSync = func() {
+		go syncer.RequestSync()
 	}
 
 	m.RequestPatchUpdate = func(
