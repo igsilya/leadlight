@@ -2710,6 +2710,46 @@ func TestGetCover_BySeriesID(t *testing.T) {
 	}
 }
 
+func TestPurgeOldChecks(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "Lorem", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "Lorem patch",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+
+	// Three checks for the same context — only latest survives
+	d.SaveCheck(CheckRow{ID: 1, PatchID: 100,
+		Context: "ci/build", State: "pending", Date: "2026-03-10T10:00:00"})
+	d.SaveCheck(CheckRow{ID: 2, PatchID: 100,
+		Context: "ci/build", State: "pending", Date: "2026-03-10T11:00:00"})
+	d.SaveCheck(CheckRow{ID: 3, PatchID: 100,
+		Context: "ci/build", State: "success", Date: "2026-03-10T12:00:00"})
+	// Different context — only check, should survive
+	d.SaveCheck(CheckRow{ID: 4, PatchID: 100,
+		Context: "ci/test", State: "pending", Date: "2026-03-10T12:00:00"})
+
+	d.PurgeOldChecks(100)
+
+	var count int
+	d.conn.QueryRow("SELECT count(*) FROM checks WHERE patch_id = 100").Scan(&count)
+	if count != 2 {
+		t.Errorf("got %d checks, want 2 (one per context)", count)
+	}
+	d.conn.QueryRow("SELECT count(*) FROM checks WHERE id = 3").Scan(&count)
+	if count != 1 {
+		t.Error("latest ci/build check (id=3) should remain")
+	}
+	d.conn.QueryRow("SELECT count(*) FROM checks WHERE id = 4").Scan(&count)
+	if count != 1 {
+		t.Error("only ci/test check (id=4) should remain")
+	}
+	d.conn.QueryRow("SELECT count(*) FROM checks WHERE id IN (1, 2)").Scan(&count)
+	if count != 0 {
+		t.Error("old ci/build checks should be purged")
+	}
+}
+
 func TestNeedsSeriesDetail(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(70, "Lorem series",

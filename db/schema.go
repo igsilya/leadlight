@@ -250,6 +250,8 @@ func migrate(db *sql.DB) error {
 	for _, stmt := range alterStatements {
 		db.Exec(stmt) // ignore "duplicate column" errors
 	}
+	db.Exec(`DELETE FROM checks WHERE id NOT IN (
+		SELECT MAX(id) FROM checks GROUP BY patch_id, context)`)
 	_, err := db.Exec(recountChecks)
 	if err != nil {
 		return err

@@ -1327,6 +1327,7 @@ func (s *Syncer) fetchChecksForPatch(
 			Date:        c.Date,
 		})
 	}
+	s.db.PurgeOldChecks(patchID)
 	s.db.RecountPatchChecks(patchID)
 	s.db.MarkChecksFetched(patchID)
 	log.Printf("SYNC [%s]: fetched %d checks for patch %d",

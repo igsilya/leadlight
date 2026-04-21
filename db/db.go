@@ -360,6 +360,18 @@ func (d *DB) SaveCheck(c CheckRow) error {
 	return err
 }
 
+// PurgeOldChecks removes all but the latest check (highest id)
+// per context for a given patch.
+func (d *DB) PurgeOldChecks(patchID int) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(`DELETE FROM checks WHERE patch_id = ?
+		AND id NOT IN (
+			SELECT MAX(id) FROM checks WHERE patch_id = ?
+			GROUP BY context)`,
+		patchID, patchID)
+}
+
 func (d *DB) GetPatchesNeedingChecks(limit int) []FetchRef {
 	ph, args := activeStateFilter()
 	q1 := fmt.Sprintf(`
