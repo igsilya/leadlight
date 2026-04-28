@@ -319,6 +319,8 @@ func (m *Model) renderRows(
 			ind := indicator
 			if fetching {
 				ind = "▸" + spinnerFrames[m.spinnerFrame]
+			} else if !items[i].fetched {
+				ind = "▸·"
 			}
 			if m.selectorMode != selectorNone {
 				row = ind + m.buildRow(
@@ -338,6 +340,8 @@ func (m *Model) renderRows(
 		} else if fetching {
 			prefix := " " + spinnerFrames[m.spinnerFrame]
 			row = m.buildStyledRow(items[i], widths, prefix, false)
+		} else if !items[i].fetched {
+			row = m.buildStyledRow(items[i], widths, " ·", true)
 		} else if m.isCompareMarked(items[i]) {
 			marked := items[i]
 			marked.style.Background = "compare"

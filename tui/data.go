@@ -325,13 +325,18 @@ func LoadFromDB(
 	allPatchComments := d.GetPatchCommentCountsBatch(false, states)
 	allCommentNames := d.GetCommentSubmittersBatch(false, states)
 	allPatchCommentNames := d.GetPatchCommentSubmittersBatch(false, states)
+	coverFetchStatus := d.GetCoverFetchStatus(false, states)
 
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
+		var cf *bool
+		if v, ok := coverFetchStatus[s.ID]; ok {
+			cf = &v
+		}
 		rows = append(rows, seriesToRow(
 			s, allPatches[s.ID], listPrefix, delegateNames,
 			allTags[s.ID], allComments[s.ID], allPatchComments,
-			allCommentNames[s.ID], allPatchCommentNames))
+			allCommentNames[s.ID], allPatchCommentNames, cf))
 	}
 	return rows, nil
 }
@@ -342,6 +347,7 @@ func seriesToRow(
 	tags []db.TagRow, commentCount int,
 	patchComments map[int]int,
 	commentNames []string, patchCommentNames map[int][]string,
+	coverFetched *bool,
 ) RowData {
 	name := s.Name
 	if name == "" && len(patches) > 0 {
@@ -420,6 +426,8 @@ func seriesToRow(
 
 	row.SubRows = make([][]string, len(patches))
 	row.SubRowStyles = make([]RowStyle, len(patches))
+	row.SubRowFetched = make([]bool, len(patches))
+	allPatchesFetched := true
 	for i, p := range patches {
 		row.SubRows[i] = patchToSubRow(
 			p, listPrefix, elevatedSet, delegateNames, tags,
@@ -427,6 +435,15 @@ func seriesToRow(
 		row.SubRowStyles[i] = RowStyle{
 			Background: "sub:" + colorForPatch(p, tags, patchComments[p.ID]),
 		}
+		pf := p.DetailFetched && p.CommentsFetched && p.ChecksFetched
+		row.SubRowFetched[i] = pf
+		if !pf {
+			allPatchesFetched = false
+		}
+	}
+	row.Fetched = s.DetailFetched && allPatchesFetched
+	if coverFetched != nil && !*coverFetched {
+		row.Fetched = false
 	}
 	return row
 }

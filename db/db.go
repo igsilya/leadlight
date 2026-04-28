@@ -80,34 +80,37 @@ type SeriesRow struct {
 	Complete        bool
 	TotalPatches    int
 	ReceivedPatches int
+	DetailFetched   bool
 	UpdatedAt       string
 }
 
 type PatchRow struct {
-	ID             int
-	SeriesID       int
-	Name           string
-	Date           string
-	State          string
-	Submitter      string
-	SubmitterEmail string
-	DelegateID     int
-	Delegate       string
-	DelegateEmail  string
-	WebURL         string
-	MsgID          string
-	MboxURL        string
-	CommitRef      string
-	Archived       bool
-	ChecksPass     int
-	ChecksFail     int
-	ChecksWarn     int
-	Content        string
-	Diff           string
-	Headers        string
-	Prefixes       string
-	DetailFetched  bool
-	UpdatedAt      string
+	ID              int
+	SeriesID        int
+	Name            string
+	Date            string
+	State           string
+	Submitter       string
+	SubmitterEmail  string
+	DelegateID      int
+	Delegate        string
+	DelegateEmail   string
+	WebURL          string
+	MsgID           string
+	MboxURL         string
+	CommitRef       string
+	Archived        bool
+	ChecksPass      int
+	ChecksFail      int
+	ChecksWarn      int
+	Content         string
+	Diff            string
+	Headers         string
+	Prefixes        string
+	DetailFetched   bool
+	CommentsFetched bool
+	ChecksFetched   bool
+	UpdatedAt       string
 }
 
 type CheckRow struct {
@@ -588,7 +591,7 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 			s.submitter, s.submitter_email,
 			s.web_url, s.mbox_url, s.complete,
 			s.total_patches, s.received_patches,
-			COALESCE(s.updated_at, '')
+			s.detail_fetched, COALESCE(s.updated_at, '')
 		FROM series s
 		JOIN patches p ON p.series_id = s.id
 		WHERE p.state IN (%s) AND p.archived = 0
@@ -609,7 +612,7 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 			&r.Submitter, &r.SubmitterEmail,
 			&r.WebURL, &r.MboxURL, &r.Complete,
 			&r.TotalPatches, &r.ReceivedPatches,
-			&r.UpdatedAt)
+			&r.DetailFetched, &r.UpdatedAt)
 		result = append(result, r)
 	}
 	return result
@@ -619,6 +622,32 @@ func (d *DB) GetSeriesVersion(seriesID int) int {
 	var v int
 	d.conn.QueryRow("SELECT COALESCE(version, 1) FROM series WHERE id = ?", seriesID).Scan(&v)
 	return v
+}
+
+// GetCoverFetchStatus returns a map of series ID → whether the cover
+// is fully fetched (detail + comments). Series without covers are not
+// included in the map.
+func (d *DB) GetCoverFetchStatus(
+	showAll bool, states []string,
+) map[int]bool {
+	sub, args := d.seriesIDSubquery(showAll, states)
+	query := `SELECT series_id,
+		MIN(detail_fetched) = 1 AND MIN(comments_fetched) = 1
+		FROM covers WHERE series_id IN (` + sub + `)
+		GROUP BY series_id`
+	rows, err := d.conn.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := map[int]bool{}
+	for rows.Next() {
+		var sid int
+		var fetched bool
+		rows.Scan(&sid, &fetched)
+		result[sid] = fetched
+	}
+	return result
 }
 
 func (d *DB) NeedsSeriesDetail(seriesID int) bool {
@@ -642,7 +671,7 @@ func (d *DB) GetAllSeries() []SeriesRow {
 			s.submitter, s.submitter_email,
 			s.web_url, s.mbox_url, s.complete,
 			s.total_patches, s.received_patches,
-			COALESCE(s.updated_at, '')
+			s.detail_fetched, COALESCE(s.updated_at, '')
 		FROM series s
 		JOIN patches p ON p.series_id = s.id
 		ORDER BY s.date DESC`)
@@ -659,7 +688,7 @@ func (d *DB) GetAllSeries() []SeriesRow {
 			&r.Submitter, &r.SubmitterEmail,
 			&r.WebURL, &r.MboxURL, &r.Complete,
 			&r.TotalPatches, &r.ReceivedPatches,
-			&r.UpdatedAt)
+			&r.DetailFetched, &r.UpdatedAt)
 		result = append(result, r)
 	}
 	return result
@@ -707,6 +736,8 @@ const patchSelectSQL = `
 		COALESCE(headers, ''),
 		COALESCE(prefixes, ''),
 		detail_fetched,
+		comments_fetched,
+		checks_fetched,
 		COALESCE(updated_at, '')
 	FROM patches`
 
@@ -722,7 +753,8 @@ func scanPatchRow(
 		&r.Archived, &r.ChecksPass, &r.ChecksFail,
 		&r.ChecksWarn,
 		&r.Content, &r.Diff, &r.Headers, &r.Prefixes,
-		&r.DetailFetched, &r.UpdatedAt)
+		&r.DetailFetched, &r.CommentsFetched, &r.ChecksFetched,
+		&r.UpdatedAt)
 }
 
 func scanPatches(rows *sql.Rows) []PatchRow {

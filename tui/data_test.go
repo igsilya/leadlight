@@ -447,7 +447,7 @@ func TestSeriesToRow_ElevatesTags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		row := seriesToRow(tt.series, tt.patches, tt.prefix,
-			nil, nil, 0, nil, nil, nil)
+			nil, nil, 0, nil, nil, nil, nil)
 		if row.Data[ColName] != tt.wantName {
 			t.Errorf("%s: Name = %q, want %q",
 				tt.name, row.Data[ColName], tt.wantName)
@@ -491,7 +491,7 @@ func TestSeriesToRow_SubRowStripsElevated(t *testing.T) {
 		{Name: "[dolor,v2,2/3] Lorem second", Date: d, State: "new"},
 		{Name: "[dolor,v2,3/3] Lorem third", Date: d, State: "new"},
 	}
-	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil)
+	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil, nil)
 
 	// Sub-rows should have "dolor" stripped (elevated to series)
 	for i, sub := range row.SubRows {
@@ -521,7 +521,7 @@ func TestSeriesToRow_FilterMatchesTags(t *testing.T) {
 		{Name: "[dolor,v2,2/3] Lorem second", Date: d, State: "new"},
 		{Name: "[dolor,v2,3/3] Lorem third", Date: d, State: "new"},
 	}
-	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil)
+	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil, nil)
 
 	// Filter should match against ColTags content
 	filter := strings.ToLower("dolor")
@@ -928,7 +928,7 @@ func TestSubRowStyles_PerPatch(t *testing.T) {
 	}
 	patchComments := map[int]int{100: 1}
 	row := seriesToRow(s, patches, "", nil, tags, 1,
-		patchComments, nil, nil)
+		patchComments, nil, nil, nil)
 	if len(row.SubRowStyles) != 2 {
 		t.Fatalf("SubRowStyles len = %d, want 2", len(row.SubRowStyles))
 	}
@@ -1010,7 +1010,7 @@ func TestSeriesToRow(t *testing.T) {
 			Identity: "Lorem <lorem@ex>"},
 	}
 
-	row := seriesToRow(s, patches, "", nil, tags, 1, nil, nil, nil)
+	row := seriesToRow(s, patches, "", nil, tags, 1, nil, nil, nil, nil)
 
 	if row.Data[ColID] != "50" {
 		t.Errorf("ID = %q", row.Data[ColID])
@@ -1052,7 +1052,7 @@ func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
 		{ID: 100, Name: "[PATCH] Lorem ipsum", Date: d,
 			State: "new", Submitter: "Lorem"},
 	}
-	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil)
+	row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil, nil)
 	if row.Data[ColName] != "Lorem ipsum" {
 		t.Errorf("Name = %q, want %q", row.Data[ColName], "Lorem ipsum")
 	}
@@ -1126,3 +1126,85 @@ func TestLoadFromDB(t *testing.T) {
 		t.Errorf("sub-rows = %d", len(rows[0].SubRows))
 	}
 }
+
+func TestSeriesToRow_FetchedStatus(t *testing.T) {
+	d := time.Now().Format("2006-01-02T15:04:05")
+	tests := []struct {
+		name         string
+		series       db.SeriesRow
+		patches      []db.PatchRow
+		coverFetched *bool
+		wantFetched  bool
+		wantSubRow   []bool
+	}{
+		{
+			"all fetched",
+			db.SeriesRow{ID: 1, Name: "Lorem", Date: d, DetailFetched: true},
+			[]db.PatchRow{
+				{Name: "p1", Date: d, State: "new",
+					DetailFetched: true, CommentsFetched: true,
+					ChecksFetched: true},
+			},
+			nil, true, []bool{true},
+		},
+		{
+			"patch detail missing",
+			db.SeriesRow{ID: 2, Name: "Lorem", Date: d, DetailFetched: true},
+			[]db.PatchRow{
+				{Name: "p1", Date: d, State: "new",
+					DetailFetched: false, CommentsFetched: true,
+					ChecksFetched: true},
+			},
+			nil, false, []bool{false},
+		},
+		{
+			"series detail missing",
+			db.SeriesRow{ID: 3, Name: "Lorem", Date: d, DetailFetched: false},
+			[]db.PatchRow{
+				{Name: "p1", Date: d, State: "new",
+					DetailFetched: true, CommentsFetched: true,
+					ChecksFetched: true},
+			},
+			nil, false, []bool{true},
+		},
+		{
+			"cover not fetched",
+			db.SeriesRow{ID: 4, Name: "Lorem", Date: d, DetailFetched: true},
+			[]db.PatchRow{
+				{Name: "p1", Date: d, State: "new",
+					DetailFetched: true, CommentsFetched: true,
+					ChecksFetched: true},
+			},
+			boolPtr(false), false, []bool{true},
+		},
+		{
+			"patch comments missing",
+			db.SeriesRow{ID: 5, Name: "Lorem", Date: d, DetailFetched: true},
+			[]db.PatchRow{
+				{Name: "p1", Date: d, State: "new",
+					DetailFetched: true, CommentsFetched: false,
+					ChecksFetched: true},
+				{Name: "p2", Date: d, State: "new",
+					DetailFetched: true, CommentsFetched: true,
+					ChecksFetched: true},
+			},
+			nil, false, []bool{false, true},
+		},
+	}
+	for _, tt := range tests {
+		row := seriesToRow(tt.series, tt.patches, "",
+			nil, nil, 0, nil, nil, nil, tt.coverFetched)
+		if row.Fetched != tt.wantFetched {
+			t.Errorf("%s: Fetched = %v, want %v",
+				tt.name, row.Fetched, tt.wantFetched)
+		}
+		for i, want := range tt.wantSubRow {
+			if i < len(row.SubRowFetched) && row.SubRowFetched[i] != want {
+				t.Errorf("%s: SubRowFetched[%d] = %v, want %v",
+					tt.name, i, row.SubRowFetched[i], want)
+			}
+		}
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

@@ -2750,6 +2750,38 @@ func TestPurgeOldChecks(t *testing.T) {
 	}
 }
 
+func TestGetCoverFetchStatus(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "Lorem patch",
+		Date: "2026-03-10", State: "new", Submitter: "Lorem",
+	})
+	// No cover → series not in the map
+	status := d.GetCoverFetchStatus(false, []string{"new"})
+	if _, ok := status[50]; ok {
+		t.Error("series without cover should not be in map")
+	}
+
+	// Add cover with detail not fetched
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "Lorem cover",
+		Date: "2026-03-10",
+	})
+	status = d.GetCoverFetchStatus(false, []string{"new"})
+	if v, ok := status[50]; !ok || v {
+		t.Errorf("cover not fetched: got ok=%v v=%v", ok, v)
+	}
+
+	// Fetch the cover detail
+	d.UpdateCoverDetail(99, "Lorem content", "")
+	status = d.GetCoverFetchStatus(false, []string{"new"})
+	if v, ok := status[50]; !ok || v {
+		// comments_fetched is still 0
+		t.Errorf("cover detail fetched but comments not: got ok=%v v=%v", ok, v)
+	}
+}
+
 func TestNeedsSeriesDetail(t *testing.T) {
 	d := openTestDB(t)
 	d.SaveSeriesSummary(70, "Lorem series",

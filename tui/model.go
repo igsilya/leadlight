@@ -49,11 +49,13 @@ func (rs RowStyle) lipgloss() lipgloss.Style {
 }
 
 type RowData struct {
-	Data         []string
-	Style        RowStyle
-	SubRows      [][]string
-	SubRowStyles []RowStyle
-	Expanded     bool
+	Data          []string
+	Style         RowStyle
+	SubRows       [][]string
+	SubRowStyles  []RowStyle
+	SubRowFetched []bool
+	Expanded      bool
+	Fetched       bool
 }
 
 type visibleItem struct {
@@ -63,6 +65,7 @@ type visibleItem struct {
 	parentIdx int
 	subRowIdx int
 	canExpand bool
+	fetched   bool
 }
 
 func (m *Model) isRowFetching(item visibleItem) bool {
@@ -320,13 +323,18 @@ func (m *Model) reloadData() {
 	allPatchComments := m.db.GetPatchCommentCountsBatch(m.showAll, m.states)
 	allCommentNames := m.db.GetCommentSubmittersBatch(m.showAll, m.states)
 	allPatchCommentNames := m.db.GetPatchCommentSubmittersBatch(m.showAll, m.states)
+	coverFetchStatus := m.db.GetCoverFetchStatus(m.showAll, m.states)
 
 	rows := make([]RowData, 0, len(seriesList))
 	for _, s := range seriesList {
+		var cf *bool
+		if v, ok := coverFetchStatus[s.ID]; ok {
+			cf = &v
+		}
 		row := seriesToRow(
 			s, allPatches[s.ID], m.listPrefix, m.delegateNames,
 			allTags[s.ID], allComments[s.ID], allPatchComments,
-			allCommentNames[s.ID], allPatchCommentNames)
+			allCommentNames[s.ID], allPatchCommentNames, cf)
 		sid := strconv.Itoa(s.ID)
 		if expanded[sid] {
 			row.Expanded = true
@@ -779,6 +787,7 @@ func (m *Model) getVisibleItems() []visibleItem {
 			parentIdx: i,
 			subRowIdx: -1,
 			canExpand: len(rd.SubRows) > 0,
+			fetched:   rd.Fetched,
 		})
 
 		// Auto-expand series with matching sub-rows during filtering
@@ -803,12 +812,14 @@ func (m *Model) getVisibleItems() []visibleItem {
 				if si < len(rd.SubRowStyles) {
 					subStyle = rd.SubRowStyles[si]
 				}
+				subFetched := si < len(rd.SubRowFetched) && rd.SubRowFetched[si]
 				items = append(items, visibleItem{
 					data:      sub,
 					style:     subStyle,
 					isSubRow:  true,
 					parentIdx: i,
 					subRowIdx: si,
+					fetched:   subFetched,
 				})
 			}
 		}
