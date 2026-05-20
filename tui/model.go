@@ -639,6 +639,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.refreshViewportComments()
 		}
+		if m.viewMode == viewCompare {
+			for i := range m.compare {
+				mark := m.compare[i].mark
+				m.compare[i].patches = buildComparePatches(
+					m.db.GetPatchesForSeries(mark.seriesID))
+				cover, _ := m.db.GetCover(mark.seriesID)
+				m.compare[i].cover = buildCompareCover(cover)
+			}
+			m.buildCompareContent()
+		}
 		return m, nil
 
 	case patchUpdateResultMsg:

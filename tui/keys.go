@@ -911,6 +911,27 @@ func (m *Model) enterCompareView() {
 	m.viewExpanded = false
 	m.viewMode = viewCompare
 	m.buildCompareContent()
+	m.fetchCompareDetails()
+}
+
+// fetchCompareDetails triggers async fetches for any unfetched
+// patches or covers currently visible in the compare view.
+func (m *Model) fetchCompareDetails() {
+	for i := range m.compare {
+		idx := m.compare[i].idx
+		if idx == -1 {
+			cover, _ := m.db.GetCover(m.compare[i].mark.seriesID)
+			if cover != nil && !cover.DetailFetched && m.FetchCoverDetail != nil {
+				m.FetchCoverDetail(cover.ID)
+			}
+		} else if idx >= 0 && idx < len(m.compare[i].patches) {
+			patchID := m.compare[i].patches[idx].id
+			row, _ := m.db.GetPatch(patchID)
+			if row != nil && !row.DetailFetched && m.FetchPatchDetail != nil {
+				m.FetchPatchDetail(patchID)
+			}
+		}
+	}
 }
 
 func resolveCompareIdx(
@@ -1045,6 +1066,7 @@ func (m *Model) compareCycle(delta int) {
 	m.comparePrefix = 0
 	m.viewportOffset = 0
 	m.buildCompareContent()
+	m.fetchCompareDetails()
 }
 
 func (m *Model) clampCompareIdx(idx int, patches []comparePatch, cover *ParsedMbox) int {

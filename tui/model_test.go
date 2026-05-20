@@ -2895,6 +2895,47 @@ func TestSyncUpdateMsg_NoRefreshWhenNotLoading(t *testing.T) {
 	}
 }
 
+func TestCompareView_FetchesUnfetchedPatches(t *testing.T) {
+	m, _ := testModelWithDB(t)
+	fetchedIDs := []int{}
+	m.FetchPatchDetail = func(patchID int) {
+		fetchedIDs = append(fetchedIDs, patchID)
+	}
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	// testModelWithDB patches don't have detail_fetched set,
+	// so fetchCompareDetails should trigger fetches
+	if len(fetchedIDs) == 0 {
+		t.Error("should have triggered detail fetches for unfetched patches")
+	}
+}
+
+func TestCompareView_RefreshesOnSync(t *testing.T) {
+	m, d := testModelWithDB(t)
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	linesBefore := len(m.compare[0].lines)
+
+	// Simulate fetching detail for a patch
+	d.UpdatePatchDetail(100, "Lorem ipsum dolor sit amet.",
+		"diff --git a/lorem b/lorem", "", "")
+	m.Update(SyncUpdateMsg{SeriesIDs: []int{50}})
+
+	linesAfter := len(m.compare[0].lines)
+	if linesAfter <= linesBefore {
+		t.Errorf("compare content should have more lines after detail fetch: %d -> %d",
+			linesBefore, linesAfter)
+	}
+}
+
 func TestScrollDown_DoesNotOverscroll(t *testing.T) {
 	m := testModel()
 	m.height = 10 // small height to force scrolling
