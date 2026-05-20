@@ -596,8 +596,17 @@ func (s *Syncer) fetchEventsSince(
 		pageNum++
 		page, err := s.client.GetEventsPage(ctx, pageURL)
 		if err != nil {
-			log.Printf("fetch events: %v", err)
-			return
+			log.Printf("fetch events (0): %v", err)
+			for attempt := 1; attempt < 10; attempt = attempt + 1 {
+				page, err = s.client.GetEventsPage(ctx, pageURL)
+				if err == nil {
+					break
+				}
+				log.Printf("fetch events (%d): %v", attempt, err)
+			}
+			if err != nil {
+				return
+			}
 		}
 		if pageNum > 1 {
 			s.status.Set(statusKey,
