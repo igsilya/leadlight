@@ -25,6 +25,10 @@ const (
 	perPage         = "1024"
 )
 
+// ErrInvalidPage is returned when the API returns 404 for a page
+// number that doesn't exist (e.g., past the last page).
+var ErrInvalidPage = fmt.Errorf("invalid page")
+
 type transportMode int32
 
 const (
@@ -502,6 +506,10 @@ func getPage[T any](
 	resp, err := c.doRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == 404 {
+		resp.Body.Close()
+		return nil, ErrInvalidPage
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)

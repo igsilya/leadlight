@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -553,73 +554,137 @@ func (s *Syncer) fetchAllActivePatches(ctx context.Context) {
 }
 
 func (s *Syncer) fetchInitialEvents(ctx context.Context) {
-	oldest := s.db.GetOldestPatchDate()
-	if oldest == "" {
+	if s.db.GetOldestPatchDate() == "" {
 		return
 	}
-	// Cap to 1 day back — older events are redundant since
-	// patches and series were already fetched with full data.
-	cap := time.Now().AddDate(0, 0, -1).Format("2006-01-02T15:04:05")
-	since := oldest
-	if since < cap {
-		since = cap
-	}
-	s.fetchEventsSince(ctx, since, status.Sync)
+	s.fetchEvents(ctx, status.Sync)
 }
 
 func (s *Syncer) incrementalSync(ctx context.Context) {
-	since := s.db.GetSyncState("last_event_date")
-	if since == "" {
-		// No event watermark — either initial fetch failed or
-		// this is a fresh DB. Use 1-day fallback so we don't
-		// permanently miss events.
-		since = time.Now().AddDate(0, 0, -1).Format("2006-01-02T15:04:05")
-		log.Printf("SYNC: no event watermark, using 1-day fallback")
-	}
 	s.status.Set(status.BgSync, "Checking events...", true)
-	s.fetchEventsSince(ctx, since, status.BgSync)
+	s.fetchEvents(ctx, status.BgSync)
 	s.status.Clear(status.BgSync)
 }
 
-func (s *Syncer) fetchEventsSince(
-	ctx context.Context, since string, statusKey status.Key,
-) {
+func parseEventDate(s string) time.Time {
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999",
+		"2006-01-02T15:04:05",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// fetchEvents fetches events in descending order (newest first),
+// scanning backward until the last processed event is found, then
+// processes all new events in ascending order. This avoids the
+// 'since' date filter which causes server errors on some instances.
+func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
 	lastID, _ := strconv.Atoi(s.db.GetSyncState("last_event_id"))
-	pageURL := s.client.BuildEventsURL(api.EventListParams{
-		Since:   since,
+	lastDate := s.db.GetSyncState("last_event_date")
+
+	// Compute generous date cutoff for initial transition
+	// (no last_event_id yet, use last_event_date - 24h).
+	var dateCutoff time.Time
+	if lastID == 0 && lastDate != "" {
+		dateCutoff = parseEventDate(lastDate).Add(-24 * time.Hour)
+	}
+
+	baseURL := s.client.BuildEventsURL(api.EventListParams{
 		Project: s.cfg.Project,
-		Order:   "date",
+		Order:   "-id",
 	})
 
-	pageNum := 0
-	for pageURL != "" {
-		pageNum++
+	// Fetch pages backward (newest first) until we find the
+	// last processed event or reach the date cutoff.
+	var pages [][]api.Event
+	var newestID int
+	for p := 1; ; p++ {
+		if p > 1 {
+			msg := fmt.Sprintf("Catching up on events (page %d", p)
+			if newestID > 0 && lastID > 0 && len(pages) > 0 {
+				lastPage := pages[len(pages)-1]
+				oldestSeen := lastPage[len(lastPage)-1].ID
+				totalSpan := newestID - oldestSeen
+				if totalSpan > 0 {
+					avgSpan := totalSpan / len(pages)
+					remaining := (oldestSeen - lastID) / avgSpan
+					if remaining < 0 {
+						remaining = 0
+					}
+					msg += fmt.Sprintf(", ~%d remaining", remaining)
+				}
+			}
+			msg += ")..."
+			s.status.Set(sk, msg, true)
+		}
+		pageURL := fmt.Sprintf("%s&page=%d", baseURL, p)
 		page, err := s.client.GetEventsPage(ctx, pageURL)
+		if errors.Is(err, api.ErrInvalidPage) {
+			break
+		}
 		if err != nil {
-			log.Printf("fetch events (0): %v", err)
-			for attempt := 1; attempt < 10; attempt = attempt + 1 {
-				page, err = s.client.GetEventsPage(ctx, pageURL)
-				if err == nil {
+			log.Printf("SYNC: fetch events page %d: %v", p, err)
+			return
+		}
+		if len(page.Items) == 0 {
+			log.Printf("SYNC: events page %d returned empty", p)
+			return
+		}
+		if newestID == 0 && len(page.Items) > 0 {
+			newestID = page.Items[0].ID
+		}
+
+		pages = append(pages, page.Items)
+
+		found := false
+		for _, ev := range page.Items {
+			if lastID > 0 && ev.ID <= lastID {
+				found = true
+				break
+			}
+			if lastID == 0 && !dateCutoff.IsZero() {
+				evTime := parseEventDate(ev.Date)
+				if !evTime.IsZero() && evTime.Before(dateCutoff) {
+					found = true
 					break
 				}
-				log.Printf("fetch events (%d): %v", attempt, err)
-			}
-			if err != nil {
-				return
 			}
 		}
-		if pageNum > 1 {
-			s.status.Set(statusKey,
-				fmt.Sprintf("Fetching events (%s)...",
-					pageProgress(pageNum, page.TotalPages)), true)
+		if found || (lastID == 0 && lastDate == "") {
+			break
 		}
-		skipped := 0
-		affected := map[int]bool{}
-		for _, ev := range page.Items {
+	}
+
+	// Reverse pages to ascending order.
+	for i, j := 0, len(pages)-1; i < j; i, j = i+1, j-1 {
+		pages[i], pages[j] = pages[j], pages[i]
+	}
+
+	// Process events in ascending order (oldest first).
+	affected := map[int]bool{}
+	total := 0
+	processed := 0
+	for _, pageEvents := range pages {
+		// Reverse events within each page (they arrived descending).
+		for i, j := 0, len(pageEvents)-1; i < j; i, j = i+1, j-1 {
+			pageEvents[i], pageEvents[j] = pageEvents[j], pageEvents[i]
+		}
+		for _, ev := range pageEvents {
+			total++
 			if ev.ID <= lastID {
-				skipped++
 				continue
 			}
+			if lastID == 0 && !dateCutoff.IsZero() {
+				evTime := parseEventDate(ev.Date)
+				if !evTime.IsZero() && evTime.Before(dateCutoff) {
+					continue
+				}
+			}
+			processed++
 			log.Printf("SYNC: event %s: %s", ev.Category, eventSummary(ev))
 			seriesID := seriesIDFromEvent(ev)
 			if seriesID == 0 {
@@ -635,18 +700,19 @@ func (s *Syncer) fetchEventsSince(
 			s.db.SetSyncState("last_event_date", ev.Date)
 			s.db.SetSyncState("last_event_id", strconv.Itoa(ev.ID))
 		}
-		log.Printf("SYNC: received %d events, %d new (page %d)",
-			len(page.Items), len(page.Items)-skipped, pageNum)
-		if len(affected) > 0 {
-			ids := make([]int, 0, len(affected))
-			for id := range affected {
-				ids = append(ids, id)
-			}
-			s.notify(ids...)
-		} else if len(page.Items)-skipped > 0 {
-			s.notify()
+	}
+	if total > 0 {
+		log.Printf("SYNC: fetched %d events, %d new (%d pages)",
+			total, processed, len(pages))
+	}
+	if len(affected) > 0 {
+		ids := make([]int, 0, len(affected))
+		for id := range affected {
+			ids = append(ids, id)
 		}
-		pageURL = page.NextURL
+		s.notify(ids...)
+	} else if processed > 0 {
+		s.notify()
 	}
 }
 

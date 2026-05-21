@@ -268,6 +268,12 @@ func TestIncrementalSync(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/events/" {
+				page := r.URL.Query().Get("page")
+				if page == "2" {
+					w.WriteHeader(404)
+					w.Write([]byte(`{"detail":"Invalid page."}`))
+					return
+				}
 				w.Write([]byte(`[{
 					"id": 10,
 					"category": "patch-state-changed",
@@ -437,54 +443,34 @@ func TestProcessEvent_CoverCreated(t *testing.T) {
 	}
 }
 
-func TestFetchEvents_NotifiesPerPage(t *testing.T) {
-	pageNum := 0
-	var srvURL string
+func TestFetchEvents_ProcessesDescending(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/events/" {
 				w.WriteHeader(404)
 				return
 			}
-			pageNum++
-			switch pageNum {
-			case 1:
-				w.Header().Set("Link",
-					fmt.Sprintf(
-						`<%s/events/?page=2>; rel="next"`,
-						srvURL))
-				w.Write([]byte(`[{
-					"id":1,
-					"category":"patch-state-changed",
-					"project":` + testProjectJSON + `,
-					"date":"2026-03-11T01:00:00",
-					"actor":null,
-					"payload":{
-						"patch":{"id":100,"url":"",
-							"web_url":"","msgid":"",
-							"list_archive_url":null,
-							"date":"","name":"","mbox":""},
-						"previous_state":"new",
-						"current_state":"under-review"
-					}
-				}]`))
-			case 2:
-				w.Write([]byte(`[{
-					"id":2,
-					"category":"patch-state-changed",
-					"project":` + testProjectJSON + `,
-					"date":"2026-03-11T02:00:00",
-					"actor":null,
-					"payload":{
-						"patch":{"id":101,"url":"",
-							"web_url":"","msgid":"",
-							"list_archive_url":null,
-							"date":"","name":"","mbox":""},
-						"previous_state":"new",
-						"current_state":"accepted"
-					}
-				}]`))
+			page := r.URL.Query().Get("page")
+			if page == "2" {
+				w.WriteHeader(404)
+				w.Write([]byte(`{"detail":"Invalid page."}`))
+				return
 			}
+			// Page 1: events in descending order (newest first).
+			w.Write([]byte(`[
+				{"id":2, "category":"patch-state-changed",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-03-11T02:00:00", "actor":null,
+				 "payload":{"patch":{"id":101,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"","name":"","mbox":""},
+				   "previous_state":"new","current_state":"accepted"}},
+				{"id":1, "category":"patch-state-changed",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-03-11T01:00:00", "actor":null,
+				 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"","name":"","mbox":""},
+				   "previous_state":"new","current_state":"under-review"}}
+			]`))
 		}))
 	defer srv.Close()
 
@@ -494,7 +480,6 @@ func TestFetchEvents_NotifiesPerPage(t *testing.T) {
 	savePatch(d, 100, "p1", "2026-03-10", "new")
 	savePatch(d, 101, "p2", "2026-03-10", "new")
 	d.SetSyncState("last_event_date", "2026-03-10")
-	srvURL = srv.URL
 
 	cfg := &config.Config{
 		Server:  srv.URL,
@@ -505,19 +490,18 @@ func TestFetchEvents_NotifiesPerPage(t *testing.T) {
 		srv.URL, "test-project", srv.Client(),
 		10*time.Millisecond)
 
-	notifyCount := 0
+	notified := false
 	s := NewSyncer(client, d, cfg, func(...int) {
-		notifyCount++
+		notified = true
 	}, status.NewRegistry(nil))
 
-	s.fetchEventsSince(context.Background(), "2026-03-10", status.BgSync)
+	s.fetchEvents(context.Background(), status.BgSync)
 
-	if notifyCount != 2 {
-		t.Errorf("notify count = %d, want 2 (one per page)",
-			notifyCount)
+	if !notified {
+		t.Error("should have notified")
 	}
 
-	// Verify both events were processed
+	// Verify both events were processed in correct order
 	r1, _ := d.GetPatch(100)
 	if r1.State != "under-review" {
 		t.Errorf("patch 100 state = %q", r1.State)
@@ -535,26 +519,32 @@ func TestFetchEvents_SkipsAlreadyProcessed(t *testing.T) {
 				w.WriteHeader(404)
 				return
 			}
-			// Return 3 events with IDs 10, 11, 12
+			// Return 3 events in descending order (newest first).
+			page := r.URL.Query().Get("page")
+			if page == "2" {
+				w.WriteHeader(404)
+				w.Write([]byte(`{"detail":"Invalid page."}`))
+				return
+			}
 			w.Write([]byte(`[
-				{"id":10, "category":"patch-state-changed",
+				{"id":12, "category":"patch-state-changed",
 				 "project":` + testProjectJSON + `,
-				 "date":"2026-03-11T01:00:00", "actor":null,
-				 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
+				 "date":"2026-03-11T03:00:00", "actor":null,
+				 "payload":{"patch":{"id":102,"url":"","web_url":"","msgid":"",
 				   "list_archive_url":null,"date":"","name":"","mbox":""},
-				   "previous_state":"new","current_state":"under-review"}},
+				   "previous_state":"new","current_state":"rejected"}},
 				{"id":11, "category":"patch-state-changed",
 				 "project":` + testProjectJSON + `,
 				 "date":"2026-03-11T02:00:00", "actor":null,
 				 "payload":{"patch":{"id":101,"url":"","web_url":"","msgid":"",
 				   "list_archive_url":null,"date":"","name":"","mbox":""},
 				   "previous_state":"new","current_state":"accepted"}},
-				{"id":12, "category":"patch-state-changed",
+				{"id":10, "category":"patch-state-changed",
 				 "project":` + testProjectJSON + `,
-				 "date":"2026-03-11T03:00:00", "actor":null,
-				 "payload":{"patch":{"id":102,"url":"","web_url":"","msgid":"",
+				 "date":"2026-03-11T01:00:00", "actor":null,
+				 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
 				   "list_archive_url":null,"date":"","name":"","mbox":""},
-				   "previous_state":"new","current_state":"rejected"}}
+				   "previous_state":"new","current_state":"under-review"}}
 			]`))
 		}))
 	defer srv.Close()
@@ -577,7 +567,7 @@ func TestFetchEvents_SkipsAlreadyProcessed(t *testing.T) {
 	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
 	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
 
-	s.fetchEventsSince(context.Background(), "2026-03-10", status.BgSync)
+	s.fetchEvents(context.Background(), status.BgSync)
 
 	// Event 10 (patch 100) should NOT have been processed — state stays "new"
 	r1, _ := d.GetPatch(100)
@@ -597,87 +587,6 @@ func TestFetchEvents_SkipsAlreadyProcessed(t *testing.T) {
 	// last_event_id should be updated to 12
 	if got := d.GetSyncState("last_event_id"); got != "12" {
 		t.Errorf("last_event_id = %q, want %q", got, "12")
-	}
-}
-
-func TestFetchInitialEvents_CapsOldDate(t *testing.T) {
-	var gotSince string
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/events/" {
-				gotSince = r.URL.Query().Get("since")
-				w.Write([]byte(`[]`))
-				return
-			}
-			w.WriteHeader(404)
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	// Patch from 1 year ago
-	oldDate := time.Now().AddDate(-1, 0, 0).Format("2006-01-02T15:04:05")
-	savePatch(d, 100, "old patch", oldDate, "new")
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test-project",
-		States:  []string{"new"},
-	}
-	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
-
-	s.fetchInitialEvents(context.Background())
-
-	if gotSince == "" {
-		t.Fatal("expected events request, got none")
-	}
-	// since should be ~1 day ago, not 1 year ago
-	oneDayAgo := time.Now().AddDate(0, 0, -1)
-	sinceTime, err := time.Parse("2006-01-02T15:04:05", gotSince)
-	if err != nil {
-		t.Fatalf("bad since format: %q", gotSince)
-	}
-	diff := sinceTime.Sub(oneDayAgo)
-	if diff < -time.Minute || diff > time.Minute {
-		t.Errorf("since = %q, want ~%s (1 day ago, not 1 year)",
-			gotSince, oneDayAgo.Format("2006-01-02T15:04:05"))
-	}
-}
-
-func TestFetchInitialEvents_RecentNotCapped(t *testing.T) {
-	var gotSince string
-	srv := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/events/" {
-				gotSince = r.URL.Query().Get("since")
-				w.Write([]byte(`[]`))
-				return
-			}
-			w.WriteHeader(404)
-		}))
-	defer srv.Close()
-
-	d, _ := db.Open(":memory:")
-	defer d.Close()
-
-	// Patch from 12 hours ago — should not be capped
-	recentDate := time.Now().Add(-12 * time.Hour).Format("2006-01-02T15:04:05")
-	savePatch(d, 100, "recent patch", recentDate, "new")
-
-	cfg := &config.Config{
-		Server:  srv.URL,
-		Project: "test-project",
-		States:  []string{"new"},
-	}
-	client := api.NewClientForTest(srv.URL, "test-project", srv.Client(), 10*time.Millisecond)
-	s := NewSyncer(client, d, cfg, func(...int) {}, status.NewRegistry(nil))
-
-	s.fetchInitialEvents(context.Background())
-
-	if gotSince != recentDate {
-		t.Errorf("since = %q, want %q (should not be capped)", gotSince, recentDate)
 	}
 }
 
