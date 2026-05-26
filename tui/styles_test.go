@@ -1,6 +1,10 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 func TestRgbHex(t *testing.T) {
 	tests := []struct {
@@ -69,5 +73,53 @@ func TestSetTheme(t *testing.T) {
 	SetTheme("light")
 	if activeTheme != &lightTheme {
 		t.Error("expected light theme")
+	}
+}
+
+func TestTruncate_ASCII(t *testing.T) {
+	s := "lorem ipsum dolor sit amet"
+	got := truncate(s, 10)
+	if got != "lorem ip… " {
+		t.Errorf("truncate(%q, 10) = %q", s, got)
+	}
+}
+
+func TestTruncate_FullWidth(t *testing.T) {
+	// 3 Hangul chars = 6 display columns
+	s := "가나다lorem"
+	got := truncate(s, 6)
+	// 6 columns: 2 Hangul (4 cols) + "… " (2 cols) = 6
+	if got != "가나… " {
+		t.Errorf("truncate(%q, 6) = %q", s, got)
+	}
+}
+
+func TestTruncate_FullWidth_NoTruncation(t *testing.T) {
+	// 3 Hangul chars = 6 display columns, width = 8 → no truncation
+	s := "가나다"
+	got := truncate(s, 8)
+	if got != s {
+		t.Errorf("truncate(%q, 8) = %q, want unchanged", s, got)
+	}
+}
+
+func TestRenderCell_CJK_ExactWidth(t *testing.T) {
+	// 5 Hangul = 10 display cols, render into 9-col cell.
+	// Lipgloss MaxWidth may leave a 1-col gap; renderCell must pad.
+	s := "가나다라마"
+	cell := renderCell(s, 9)
+	if w := lipgloss.Width(cell); w != 9 {
+		t.Errorf("renderCell width = %d, want 9", w)
+	}
+}
+
+func TestTruncate_MixedWidth(t *testing.T) {
+	// "ab" + Hangul + "cd" = 2+2+2 = 6 display columns
+	s := "ab가cd"
+	got := truncate(s, 5)
+	// width-2=3: "ab" is 2 cols, Hangul would push to 4 > 3
+	// Truncate at "ab" + "… " = 4 cols
+	if got != "ab… " {
+		t.Errorf("truncate(%q, 5) = %q", s, got)
 	}
 }

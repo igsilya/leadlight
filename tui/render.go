@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 )
 
 func (m *Model) View() string {
@@ -543,7 +544,7 @@ func (m *Model) renderSelectedRow(
 	sfxStart, sfxEnd := 0, 0
 	sfx := m.suffixFor(item, int(ColName))
 	if sfx != "" && nameWidth > 0 {
-		sfxLen := len([]rune(sfx))
+		sfxLen := lipgloss.Width(sfx)
 		sfxStart = nameStart + nameWidth - sfxLen
 		sfxEnd = nameStart + nameWidth
 	}
@@ -562,8 +563,10 @@ func (m *Model) renderGradientRow(
 	suffixStart, suffixEnd int,
 ) string {
 	runes := []rune(rawRow)
-	total := len(runes)
-	// fill = how many characters the gradient has reached in the animation.
+	// Use display width (not rune count) for column calculations
+	// so CJK full-width characters are handled correctly.
+	total := lipgloss.Width(rawRow)
+	// fill = how many display columns the gradient has reached.
 	fill := min(
 		int(m.highlightProgress*float64(total)), total)
 
@@ -599,19 +602,21 @@ func (m *Model) renderGradientRow(
 	}
 
 	m.gradientBuf.Reset()
-	m.gradientBuf.Grow(total * 30)
+	m.gradientBuf.Grow(len(runes) * 30)
 
-	for pos := 0; pos < total; pos++ {
+	col := 0 // display column position
+	for _, r := range runes {
+		rw := runewidth.RuneWidth(r)
 		var bg, fg string
 		bold := false
 
-		if pos < leftWidth {
-			idx := pos * 255 / max(leftWidth-1, 1) // max prevents div-by-zero for single-char regions
+		if col < leftWidth {
+			idx := col * 255 / max(leftWidth-1, 1)
 			bg = palette[idx].bg
 			fg = palette[idx].fg
 			bold = true
-		} else if pos >= rightStart && rightStart > leftWidth {
-			idx := (total - 1 - pos) * 255 / max(rightWidth-1, 1)
+		} else if col >= rightStart && rightStart > leftWidth {
+			idx := (total - 1 - col) * 255 / max(rightWidth-1, 1)
 			bg = palette[idx].bg
 			fg = palette[idx].fg
 			bold = true
@@ -620,16 +625,16 @@ func (m *Model) renderGradientRow(
 			fg = flatFg
 		}
 
-		if pos >= checksStart && pos < checksEnd {
-			ci := pos - checksStart
+		if col >= checksStart && col < checksEnd {
+			ci := col - checksStart
 			if ci < len(checkColors) && checkColors[ci] != "" {
 				fg = checkColors[ci]
 				bold = true
 			}
 		}
 
-		if pos >= afrtStart && pos < afrtEnd {
-			ai := pos - afrtStart
+		if col >= afrtStart && col < afrtEnd {
+			ai := col - afrtStart
 			if ai < len(afrtColors) {
 				fg = afrtColors[ai]
 				bold = afrtColors[ai] != checkZeroColor
@@ -637,7 +642,7 @@ func (m *Model) renderGradientRow(
 		}
 
 		// Dim the suffix portion of the column (flat region only)
-		if suffixStart > 0 && pos >= suffixStart && pos < suffixEnd && !bold && cached != nil {
+		if suffixStart > 0 && col >= suffixStart && col < suffixEnd && !bold && cached != nil {
 			fg = cached.suffixFg
 		}
 
@@ -645,8 +650,8 @@ func (m *Model) renderGradientRow(
 		// narrow (ColC) and wide (ColComments) modes. In wide mode
 		// only the count prefix gets the overlay — the names keep
 		// the gradient/flat styling.
-		if pos >= commentStart && pos < commentEnd {
-			ci := pos - commentStart
+		if col >= commentStart && col < commentEnd {
+			ci := col - commentStart
 			if ci < commentCountLen && ci < len(commentColors) {
 				fg = commentColors[ci]
 				bold = commentColors[ci] != checkZeroColor
@@ -659,7 +664,8 @@ func (m *Model) renderGradientRow(
 		if bold {
 			style = style.Bold(true)
 		}
-		m.gradientBuf.WriteString(style.Render(string(runes[pos : pos+1])))
+		m.gradientBuf.WriteString(style.Render(string(r)))
+		col += rw
 	}
 	return m.gradientBuf.String()
 }
@@ -745,11 +751,12 @@ func buildCheckColors(text string) []string {
 // suffix sharing the same column width. The main text is truncated
 // to leave room for the suffix.
 func renderCellWithSuffix(text, sfx string, width int, bgName string) string {
+	text = sanitizeDisplay(text)
 	cached := bgStyles[bgName]
 	if cached == nil {
 		return renderCell(text, width)
 	}
-	sfxLen := len([]rune(sfx))
+	sfxLen := lipgloss.Width(sfx)
 	subjectMax := width - sfxLen
 	if subjectMax < 10 {
 		return cached.row.Render(renderCell(text, width))
@@ -768,19 +775,24 @@ func renderCellWithSuffix(text, sfx string, width int, bgName string) string {
 // renderRawCellWithSuffix builds a plain-text cell with a right-aligned
 // suffix for the gradient row's raw string.
 func renderRawCellWithSuffix(text, sfx string, width int) string {
-	sfxLen := len([]rune(sfx))
+	text = sanitizeDisplay(text)
+	sfxLen := lipgloss.Width(sfx)
 	subjectMax := width - sfxLen
 	if subjectMax < 10 {
 		return renderCell(text, width)
 	}
 	subj := truncate(text, subjectMax)
-	padLen := width - len([]rune(subj)) - sfxLen
+	padLen := width - lipgloss.Width(subj) - sfxLen
 	if padLen < 0 {
 		padLen = 0
 	}
 	raw := subj + strings.Repeat(" ", padLen) + sfx
-	return lipgloss.NewStyle().Width(width).MaxWidth(width).
+	rendered := lipgloss.NewStyle().Width(width).MaxWidth(width).
 		Inline(true).Render(raw)
+	if w := lipgloss.Width(rendered); w < width {
+		rendered += strings.Repeat(" ", width-w)
+	}
+	return rendered
 }
 
 // padStyledCell pads a pre-rendered cell to the target width using
@@ -1309,11 +1321,19 @@ func (m *Model) renderLogConsole(height int) string {
 }
 
 func renderCell(text string, width int) string {
-	return lipgloss.NewStyle().
+	truncated := truncate(sanitizeDisplay(text), width)
+	rendered := lipgloss.NewStyle().
 		Width(width).
 		MaxWidth(width).
 		Inline(true).
-		Render(truncate(text, width))
+		Render(truncated)
+	// Compensate for lipgloss MaxWidth gap: when truncating a
+	// wide character that doesn't fit, the cell can be 1 column
+	// short. Pad to ensure exact column width.
+	if w := lipgloss.Width(rendered); w < width {
+		rendered += strings.Repeat(" ", width-w)
+	}
+	return rendered
 }
 
 func renderApplyOption(out *strings.Builder, num int, label string, selected bool) {
@@ -1357,13 +1377,55 @@ func (m *Model) renderApplyStatusBar(out *strings.Builder) {
 	}
 }
 
+// sanitizeDisplay strips zero-width and control characters that
+// terminals handle inconsistently (e.g., soft hyphen U+00AD may
+// render as 0 or 1 column depending on the terminal).
+func sanitizeDisplay(s string) string {
+	clean := strings.Map(func(r rune) rune {
+		switch {
+		case r == '\u00AD': // soft hyphen
+			return -1
+		case r < 0x20 && r != '\t' && r != '\n': // C0 controls except tab/newline
+			return -1
+		case r >= 0x7F && r <= 0x9F: // C1 controls
+			return -1
+		case r == 0xFEFF: // BOM / zero-width no-break space
+			return -1
+		case r >= 0x200B && r <= 0x200F: // zero-width spaces, LRM, RLM
+			return -1
+		case r >= 0x202A && r <= 0x202E: // bidi controls
+			return -1
+		case r >= 0x2060 && r <= 0x2069: // word joiner, invisible separators
+			return -1
+		}
+		return r
+	}, s)
+	return clean
+}
+
 func truncate(s string, width int) string {
-	runes := []rune(s)
-	if len(runes) <= width {
+	if lipgloss.Width(s) <= width {
 		return s
 	}
 	if width < 3 {
-		return string(runes[:width])
+		w := 0
+		for i, r := range s {
+			rw := runewidth.RuneWidth(r)
+			if w+rw > width {
+				return s[:i]
+			}
+			w += rw
+		}
+		return s
 	}
-	return string(runes[:width-2]) + "… "
+	// Truncate to width-2 display columns, then add "… "
+	w := 0
+	for i, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if w+rw > width-2 {
+			return s[:i] + "… "
+		}
+		w += rw
+	}
+	return s
 }
