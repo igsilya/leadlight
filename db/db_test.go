@@ -1,3 +1,6 @@
+// Copyright 2026 Leadlight Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package db
 
 import (
