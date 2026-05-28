@@ -101,10 +101,10 @@ func Load(dir string) (*Config, error) {
 		Token:       getWithFallback(dir, "leadlight.token", "pw.token"),
 		Username:    getWithFallback(dir, "leadlight.username", "pw.username"),
 		Password:    getWithFallback(dir, "leadlight.password", "pw.password"),
-		DBPath:      gitops.ConfigGet(dir, "leadlight.db"),
-		LoreURL:     gitops.ConfigGet(dir, "leadlight.lore"),
-		MailArchive: gitops.ConfigGet(dir, "leadlight.mailarchive"),
-		Theme:       gitops.ConfigGet(dir, "leadlight.theme"),
+		DBPath:      gitops.ConfigGet(dir, "leadlight.db", false),
+		LoreURL:     gitops.ConfigGet(dir, "leadlight.lore", false),
+		MailArchive: gitops.ConfigGet(dir, "leadlight.mailarchive", false),
+		Theme:       gitops.ConfigGet(dir, "leadlight.theme", false),
 	}
 
 	if cfg.DBPath == "" {
@@ -124,7 +124,7 @@ func Load(dir string) (*Config, error) {
 	cfg.BaseURL = deriveBaseURL(cfg.Server)
 	cfg.APIVersion = parseAPIVersion(cfg.Server)
 
-	historyStr := gitops.ConfigGet(dir, "leadlight.history")
+	historyStr := gitops.ConfigGet(dir, "leadlight.history", false)
 	if historyStr != "" {
 		limit, err := ParseHistoryLimit(historyStr)
 		if err != nil {
@@ -133,13 +133,13 @@ func Load(dir string) (*Config, error) {
 		cfg.HistoryLimit = limit
 	}
 
-	signoffStr := gitops.ConfigGet(dir, "leadlight.signoff")
+	signoffStr := gitops.ConfigGet(dir, "leadlight.signoff", false)
 	if signoffStr == "false" {
 		f := false
 		cfg.Signoff = &f
 	}
 
-	fixWrapStr := gitops.ConfigGet(dir, "leadlight.fix-gmail-wrapping")
+	fixWrapStr := gitops.ConfigGet(dir, "leadlight.fix-gmail-wrapping", false)
 	if fixWrapStr == "false" {
 		f := false
 		cfg.FixGmailWrapping = &f
@@ -153,10 +153,10 @@ func Load(dir string) (*Config, error) {
 }
 
 func getWithFallback(dir, primary, fallback string) string {
-	if v := gitops.ConfigGet(dir, primary); v != "" {
+	if v := gitops.ConfigGet(dir, primary, false); v != "" {
 		return v
 	}
-	return gitops.ConfigGet(dir, fallback)
+	return gitops.ConfigGet(dir, fallback, false)
 }
 
 func parseStates(raw string) []string {
