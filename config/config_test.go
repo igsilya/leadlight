@@ -87,7 +87,7 @@ func TestPriority_PwOnly(t *testing.T) {
 		"pw.server":  "https://pw.example.com/api/1.3",
 		"pw.project": "test",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestPriority_LeadlightOnly(t *testing.T) {
 		"leadlight.server": "https://ll.example.com/api/1.3",
 		"pw.project":       "myproject",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestPriority_LeadlightOverridesPw(t *testing.T) {
 		"leadlight.server": "https://ll.example.com/api/1.3",
 		"pw.project":       "myproject",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestPriority_MixedKeys(t *testing.T) {
 		"pw.project":      "pw-project",
 		"leadlight.token": "ll-token",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestDefaults_DBPath(t *testing.T) {
 		"pw.server":  "https://example.com/api/1.3",
 		"pw.project": "test",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestDefaults_DBPathCustom(t *testing.T) {
 		"pw.project":   "test",
 		"leadlight.db": "/tmp/custom.db",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestDefaults_States(t *testing.T) {
 		"pw.server":  "https://example.com/api/1.3",
 		"pw.project": "test",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestDefaults_StatesCustom(t *testing.T) {
 		"pw.project":       "test",
 		"leadlight.states": "accepted,rejected,rfc",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestDefaults_StatesWhitespace(t *testing.T) {
 		"pw.project":       "test",
 		"leadlight.states": " new , under-review , rfc ",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestValidation_BothPresent(t *testing.T) {
 		"pw.server":  "https://example.com/api/1.3",
 		"pw.project": "test",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -313,7 +313,7 @@ func TestValidation_ServerMissing(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
 		"pw.project": "test",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err == nil {
 		t.Error("expected error for missing server")
 	}
@@ -323,7 +323,7 @@ func TestValidation_ProjectMissing(t *testing.T) {
 	dir := setupGitRepo(t, map[string]string{
 		"pw.server": "https://example.com/api/1.3",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err == nil {
 		t.Error("expected error for missing project")
 	}
@@ -331,7 +331,7 @@ func TestValidation_ProjectMissing(t *testing.T) {
 
 func TestValidation_BothMissing(t *testing.T) {
 	dir := setupGitRepo(t, nil)
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err == nil {
 		t.Error("expected error for missing server and project")
 	}
@@ -342,7 +342,7 @@ func TestValidation_APIVersionEmpty(t *testing.T) {
 		"pw.server":  "https://example.com/patchwork",
 		"pw.project": "test",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err == nil {
 		t.Error("expected error for missing API version in URL")
 	}
@@ -356,7 +356,7 @@ func TestValidation_APIVersionTooOld(t *testing.T) {
 		"pw.server":  "https://example.com/api/1.1",
 		"pw.project": "test",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err == nil {
 		t.Error("expected error for API version < 1.2")
 	}
@@ -370,7 +370,7 @@ func TestValidation_API12_NoMailArchive(t *testing.T) {
 		"pw.server":  "https://example.com/api/1.2",
 		"pw.project": "test",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err == nil {
 		t.Error("expected error for API 1.2 without mailarchive")
 	}
@@ -385,7 +385,7 @@ func TestValidation_API12_WithMailArchive(t *testing.T) {
 		"pw.project":            "test",
 		"leadlight.mailarchive": "https://mail.example.com/lorem-dev/",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -396,7 +396,7 @@ func TestValidation_API13_NoMailArchive(t *testing.T) {
 		"pw.server":  "https://example.com/api/1.3",
 		"pw.project": "test",
 	})
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err != nil {
 		t.Errorf("expected no error for API 1.3 without mailarchive, got %v", err)
 	}
@@ -414,7 +414,7 @@ func TestLoad_FullConfig(t *testing.T) {
 		"leadlight.lore":        "https://lore.example.com/lorem-dev/",
 		"leadlight.mailarchive": "https://mail.example.com/lorem-dev/",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestLoad_Theme(t *testing.T) {
 		"pw.project":      "lorem",
 		"leadlight.theme": "light",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +470,7 @@ func TestLoad_ThemeDefault(t *testing.T) {
 		"pw.server":  "https://pw.example.com/api/1.3",
 		"pw.project": "lorem",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestLoad_MinimalConfig(t *testing.T) {
 		"pw.server":  "https://pw2.example.com/api/1.3/",
 		"pw.project": "dolor-project",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func TestLoad_MinimalConfig(t *testing.T) {
 
 func TestLoad_EmptyRepo(t *testing.T) {
 	dir := setupGitRepo(t, nil)
-	_, err := Load(dir)
+	_, err := Load(dir, true)
 	if err == nil {
 		t.Error("expected error for empty repo config")
 	}
@@ -593,7 +593,7 @@ func TestFixGmailWrapping_Default(t *testing.T) {
 		"leadlight.server":  "https://lorem.example/api/1.3/",
 		"leadlight.project": "lorem",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +609,7 @@ func TestFixGmailWrapping_Disabled(t *testing.T) {
 		"leadlight.project":            "lorem",
 		"leadlight.fix-gmail-wrapping": "false",
 	})
-	cfg, err := Load(dir)
+	cfg, err := Load(dir, true)
 	if err != nil {
 		t.Fatal(err)
 	}

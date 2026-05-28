@@ -45,7 +45,7 @@ func main() {
 
 	log.Println("starting leadlight")
 
-	cfg, err := config.Load(".")
+	cfg, err := config.Load(".", false)
 	if err != nil {
 		log.Printf("config error: %v", err)
 		fmt.Fprintln(os.Stderr, "Config error:", err)

@@ -94,17 +94,17 @@ type Config struct {
 	FixGmailWrapping *bool // nil = default (true), false = disable quote rejoin
 }
 
-func Load(dir string) (*Config, error) {
+func Load(dir string, local bool) (*Config, error) {
 	cfg := &Config{
-		Server:      getWithFallback(dir, "leadlight.server", "pw.server"),
-		Project:     getWithFallback(dir, "leadlight.project", "pw.project"),
-		Token:       getWithFallback(dir, "leadlight.token", "pw.token"),
-		Username:    getWithFallback(dir, "leadlight.username", "pw.username"),
-		Password:    getWithFallback(dir, "leadlight.password", "pw.password"),
-		DBPath:      gitops.ConfigGet(dir, "leadlight.db", false),
-		LoreURL:     gitops.ConfigGet(dir, "leadlight.lore", false),
-		MailArchive: gitops.ConfigGet(dir, "leadlight.mailarchive", false),
-		Theme:       gitops.ConfigGet(dir, "leadlight.theme", false),
+		Server:      getWithFallback(dir, "leadlight.server", "pw.server", local),
+		Project:     getWithFallback(dir, "leadlight.project", "pw.project", local),
+		Token:       getWithFallback(dir, "leadlight.token", "pw.token", local),
+		Username:    getWithFallback(dir, "leadlight.username", "pw.username", local),
+		Password:    getWithFallback(dir, "leadlight.password", "pw.password", local),
+		DBPath:      gitops.ConfigGet(dir, "leadlight.db", local),
+		LoreURL:     gitops.ConfigGet(dir, "leadlight.lore", local),
+		MailArchive: gitops.ConfigGet(dir, "leadlight.mailarchive", local),
+		Theme:       gitops.ConfigGet(dir, "leadlight.theme", local),
 	}
 
 	if cfg.DBPath == "" {
@@ -118,13 +118,13 @@ func Load(dir string) (*Config, error) {
 		}
 	}
 
-	rawStates := getWithFallback(dir, "leadlight.states", "pw.states")
+	rawStates := getWithFallback(dir, "leadlight.states", "pw.states", local)
 	cfg.States = parseStates(rawStates)
 
 	cfg.BaseURL = deriveBaseURL(cfg.Server)
 	cfg.APIVersion = parseAPIVersion(cfg.Server)
 
-	historyStr := gitops.ConfigGet(dir, "leadlight.history", false)
+	historyStr := gitops.ConfigGet(dir, "leadlight.history", local)
 	if historyStr != "" {
 		limit, err := ParseHistoryLimit(historyStr)
 		if err != nil {
@@ -133,13 +133,13 @@ func Load(dir string) (*Config, error) {
 		cfg.HistoryLimit = limit
 	}
 
-	signoffStr := gitops.ConfigGet(dir, "leadlight.signoff", false)
+	signoffStr := gitops.ConfigGet(dir, "leadlight.signoff", local)
 	if signoffStr == "false" {
 		f := false
 		cfg.Signoff = &f
 	}
 
-	fixWrapStr := gitops.ConfigGet(dir, "leadlight.fix-gmail-wrapping", false)
+	fixWrapStr := gitops.ConfigGet(dir, "leadlight.fix-gmail-wrapping", local)
 	if fixWrapStr == "false" {
 		f := false
 		cfg.FixGmailWrapping = &f
@@ -152,11 +152,11 @@ func Load(dir string) (*Config, error) {
 	return cfg, nil
 }
 
-func getWithFallback(dir, primary, fallback string) string {
-	if v := gitops.ConfigGet(dir, primary, false); v != "" {
+func getWithFallback(dir, primary, fallback string, local bool) string {
+	if v := gitops.ConfigGet(dir, primary, local); v != "" {
 		return v
 	}
-	return gitops.ConfigGet(dir, fallback, false)
+	return gitops.ConfigGet(dir, fallback, local)
 }
 
 func parseStates(raw string) []string {

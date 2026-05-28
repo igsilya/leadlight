@@ -26,14 +26,15 @@ func CommonDir(dir string) string {
 }
 
 // ConfigGet reads a git config value for the given working directory.
+// When local is true, only the repository config is read (--local),
+// skipping global and system configs.
 func ConfigGet(dir, key string, local bool) string {
-	options := []string{"config"}
-	if local == true {
-		options = append(options, "--local")
+	args := []string{"config"}
+	if local {
+		args = append(args, "--local")
 	}
-	options = append(options, "--get")
-	options = append(options, key)
-	cmd := exec.Command("git", options...)
+	args = append(args, "--get", key)
+	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
