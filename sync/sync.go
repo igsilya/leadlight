@@ -957,7 +957,7 @@ func (s *Syncer) checkMailArchive(ctx context.Context) {
 	s.status.Set(status.Archive, "Checking mail archive...", true)
 	defer s.status.Clear(status.Archive)
 
-	now := time.Now()
+	now := time.Now().UTC()
 
 	// Check all months since the last archive check. Each month tracks
 	// its own high-water mark (last_archive_msg:YYYY-Month), so re-checking

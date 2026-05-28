@@ -1652,7 +1652,7 @@ func TestCheckMailArchive(t *testing.T) {
 	// Last seen should be updated
 	lastSeen := d.GetSyncState(
 		fmt.Sprintf("last_archive_msg:%d-%s",
-			time.Now().Year(), time.Now().Month()))
+			time.Now().UTC().Year(), time.Now().UTC().Month()))
 	if lastSeen != "102" {
 		t.Errorf("last_archive_msg = %q, want 102",
 			lastSeen)
@@ -1688,7 +1688,7 @@ func TestCheckMailArchive_SkipsOldMessages(t *testing.T) {
 
 	// Set last seen to 150 — so only message 200 is new
 	monthKey := fmt.Sprintf("last_archive_msg:%d-%s",
-		time.Now().Year(), time.Now().Month())
+		time.Now().UTC().Year(), time.Now().UTC().Month())
 	d.SetSyncState(monthKey, "150")
 
 	cfg := &config.Config{
@@ -1781,7 +1781,7 @@ func TestCheckMailArchive_MultiMonthCatchup(t *testing.T) {
 	defer d.Close()
 
 	// Simulate last check was 3 months ago
-	threeMonthsAgo := time.Now().AddDate(0, -3, 0)
+	threeMonthsAgo := time.Now().UTC().AddDate(0, -3, 0)
 	d.SetSyncState("last_archive_check",
 		threeMonthsAgo.Format("2006-01"))
 
@@ -1808,7 +1808,7 @@ func TestCheckMailArchive_MultiMonthCatchup(t *testing.T) {
 
 	// last_archive_check should be updated to current month
 	check := d.GetSyncState("last_archive_check")
-	want := time.Now().Format("2006-01")
+	want := time.Now().UTC().Format("2006-01")
 	if check != want {
 		t.Errorf("last_archive_check = %q, want %q", check, want)
 	}
@@ -1869,7 +1869,7 @@ func TestCheckMailArchive_SameMonth(t *testing.T) {
 
 	// Last check was this month — no gap
 	d.SetSyncState("last_archive_check",
-		time.Now().Format("2006-01"))
+		time.Now().UTC().Format("2006-01"))
 
 	cfg := &config.Config{
 		Server:      srv.URL,
@@ -1906,7 +1906,7 @@ func TestCheckMailArchive_YearBoundary(t *testing.T) {
 	defer d.Close()
 
 	// Set last check to November of previous year (crosses year boundary)
-	lastNov := time.Date(time.Now().Year()-1, 11, 1, 0, 0, 0, 0, time.UTC)
+	lastNov := time.Date(time.Now().UTC().Year()-1, 11, 1, 0, 0, 0, 0, time.UTC)
 	d.SetSyncState("last_archive_check",
 		lastNov.Format("2006-01"))
 
@@ -1926,7 +1926,7 @@ func TestCheckMailArchive_YearBoundary(t *testing.T) {
 	s.checkMailArchive(context.Background())
 
 	// Nov, Dec of last year + Jan through current month of this year
-	now := time.Now()
+	now := time.Now().UTC()
 	expectedMonths := int(now.Month()) + 2 // Nov + Dec + Jan..now
 	if len(requestedPaths) != expectedMonths {
 		t.Errorf("expected %d archive requests (year boundary), got %d",
@@ -2831,7 +2831,7 @@ func TestBackfillHistory_FetchesPages(t *testing.T) {
 			path := r.URL.Path
 			if strings.Contains(path, "/patches/") {
 				// Return one patch per page, getting older
-				date := time.Now().AddDate(0, 0,
+				date := time.Now().UTC().AddDate(0, 0,
 					-callCount*30).Format("2006-01-02T15:04:05")
 				fmt.Fprintf(w,
 					`[{"id":%d,"name":"patch %d","date":"%s",`+
@@ -2851,7 +2851,7 @@ func TestBackfillHistory_FetchesPages(t *testing.T) {
 	d.SavePatch(db.PatchRow{
 		ID: 1, Name: "recent", State: "new",
 		Submitter: "Lorem",
-		Date:      time.Now().Format("2006-01-02T15:04:05"),
+		Date:      time.Now().UTC().Format("2006-01-02T15:04:05"),
 	})
 
 	cfg := &config.Config{
@@ -2884,7 +2884,7 @@ func TestBackfillHistory_AlreadyComplete(t *testing.T) {
 
 	d, _ := db.Open(":memory:")
 	defer d.Close()
-	oldDate := time.Now().AddDate(-2, 0, 0).
+	oldDate := time.Now().UTC().AddDate(-2, 0, 0).
 		Format("2006-01-02T15:04:05")
 	// Simulate a previous backfill run that already covered this range
 	d.SetSyncState("backfill_patches_since", oldDate)

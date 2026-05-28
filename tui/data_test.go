@@ -26,7 +26,7 @@ func TestDisplaySubmitter(t *testing.T) {
 }
 
 func TestFormatAge_Minutes(t *testing.T) {
-	d := time.Now().Add(-5 * time.Minute)
+	d := time.Now().UTC().Add(-5 * time.Minute)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
 	if got != "5m" {
 		t.Errorf("got %q, want 5m", got)
@@ -34,7 +34,7 @@ func TestFormatAge_Minutes(t *testing.T) {
 }
 
 func TestFormatAge_Hours(t *testing.T) {
-	d := time.Now().Add(-3 * time.Hour)
+	d := time.Now().UTC().Add(-3 * time.Hour)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
 	if got != "3h" {
 		t.Errorf("got %q, want 3h", got)
@@ -42,7 +42,7 @@ func TestFormatAge_Hours(t *testing.T) {
 }
 
 func TestFormatAge_Days(t *testing.T) {
-	d := time.Now().Add(-2 * 24 * time.Hour)
+	d := time.Now().UTC().Add(-2 * 24 * time.Hour)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
 	if got != "2d" {
 		t.Errorf("got %q, want 2d", got)
@@ -50,7 +50,7 @@ func TestFormatAge_Days(t *testing.T) {
 }
 
 func TestFormatAge_Weeks(t *testing.T) {
-	d := time.Now().AddDate(0, 0, -21)
+	d := time.Now().UTC().AddDate(0, 0, -21)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
 	if got != "3w" {
 		t.Errorf("got %q, want 3w", got)
@@ -58,7 +58,7 @@ func TestFormatAge_Weeks(t *testing.T) {
 }
 
 func TestFormatAge_Months(t *testing.T) {
-	d := time.Now().AddDate(0, -5, 0)
+	d := time.Now().UTC().AddDate(0, -5, 0)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
 	if got != "5mo" {
 		t.Errorf("got %q, want 5mo", got)
@@ -66,7 +66,7 @@ func TestFormatAge_Months(t *testing.T) {
 }
 
 func TestFormatAge_Years(t *testing.T) {
-	d := time.Now().AddDate(-3, 0, 0)
+	d := time.Now().UTC().AddDate(-3, 0, 0)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
 	if got != "3y" {
 		t.Errorf("got %q, want 3y", got)
@@ -391,7 +391,7 @@ func TestCommonBracketTags(t *testing.T) {
 }
 
 func TestSeriesToRow_ElevatesTags(t *testing.T) {
-	d := time.Now().Format("2006-01-02T15:04:05")
+	d := time.Now().UTC().Format("2006-01-02T15:04:05")
 	tests := []struct {
 		name     string
 		series   db.SeriesRow
@@ -485,7 +485,7 @@ func TestStripTags(t *testing.T) {
 }
 
 func TestSeriesToRow_SubRowStripsElevated(t *testing.T) {
-	d := time.Now().Format("2006-01-02T15:04:05")
+	d := time.Now().UTC().Format("2006-01-02T15:04:05")
 	s := db.SeriesRow{
 		ID: 1, Name: "Lorem tailroom", Date: d, TotalPatches: 3,
 	}
@@ -515,7 +515,7 @@ func TestSeriesToRow_SubRowStripsElevated(t *testing.T) {
 }
 
 func TestSeriesToRow_FilterMatchesTags(t *testing.T) {
-	d := time.Now().Format("2006-01-02T15:04:05")
+	d := time.Now().UTC().Format("2006-01-02T15:04:05")
 	s := db.SeriesRow{
 		ID: 1, Name: "Lorem tailroom", Date: d, TotalPatches: 3,
 	}
@@ -660,7 +660,7 @@ func TestAggregateState_Empty(t *testing.T) {
 }
 
 func testSeriesWithAge(days int) (db.SeriesRow, []db.PatchRow) {
-	d := time.Now().Add(
+	d := time.Now().UTC().Add(
 		-time.Duration(days) * 24 * time.Hour)
 	date := d.Format("2006-01-02T15:04:05")
 	s := db.SeriesRow{ID: 50, Name: "test", Date: date}
@@ -830,7 +830,7 @@ func TestColorForSeries_DarkRed_OldNoComments(t *testing.T) {
 }
 
 func testPatchWithAge(days int) db.PatchRow {
-	d := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	d := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
 	return db.PatchRow{
 		ID: 100, SeriesID: 50, State: "new",
 		Submitter: "Lorem Ipsum",
@@ -913,7 +913,7 @@ func TestIsAllReviewed_AckedIsGreen(t *testing.T) {
 }
 
 func TestSubRowStyles_PerPatch(t *testing.T) {
-	date := time.Now().Add(
+	date := time.Now().UTC().Add(
 		-3 * 24 * time.Hour).Format("2006-01-02T15:04:05")
 	s := db.SeriesRow{
 		ID: 50, Name: "Lorem series", Submitter: "Lorem Ipsum",
@@ -988,7 +988,7 @@ func TestComputePatchAFRT_Dedup(t *testing.T) {
 }
 
 func TestSeriesToRow(t *testing.T) {
-	d := time.Now().Add(-2 * 24 * time.Hour)
+	d := time.Now().UTC().Add(-2 * 24 * time.Hour)
 	date := d.Format("2006-01-02T15:04:05")
 
 	s := db.SeriesRow{
@@ -1049,7 +1049,7 @@ func TestSeriesToRow(t *testing.T) {
 }
 
 func TestSeriesToRow_EmptyNameFallback(t *testing.T) {
-	d := time.Now().Format("2006-01-02T15:04:05")
+	d := time.Now().UTC().Format("2006-01-02T15:04:05")
 	s := db.SeriesRow{ID: 50, Name: "", Date: d}
 	patches := []db.PatchRow{
 		{ID: 100, Name: "[PATCH] Lorem ipsum", Date: d,
@@ -1107,7 +1107,7 @@ func TestLoadFromDB(t *testing.T) {
 	}
 	defer d.Close()
 
-	now := time.Now().Format("2006-01-02T15:04:05")
+	now := time.Now().UTC().Format("2006-01-02T15:04:05")
 	d.SaveSeriesSummary(50, "Lorem series", now, 1)
 	d.SavePatch(db.PatchRow{
 		ID: 100, SeriesID: 50,
@@ -1131,7 +1131,7 @@ func TestLoadFromDB(t *testing.T) {
 }
 
 func TestSeriesToRow_FetchedStatus(t *testing.T) {
-	d := time.Now().Format("2006-01-02T15:04:05")
+	d := time.Now().UTC().Format("2006-01-02T15:04:05")
 	tests := []struct {
 		name         string
 		series       db.SeriesRow

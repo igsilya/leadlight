@@ -581,7 +581,7 @@ func TestHistoryLimit_Before(t *testing.T) {
 	h := HistoryLimit{Years: 1}
 	before := h.Before()
 	// Should be approximately 1 year ago (within a few seconds)
-	expected := time.Now().AddDate(-1, 0, 0)
+	expected := time.Now().UTC().AddDate(-1, 0, 0)
 	diff := before.Sub(expected)
 	if diff < -time.Second || diff > time.Second {
 		t.Errorf("Before() = %v, want ~%v", before, expected)

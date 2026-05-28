@@ -30,7 +30,7 @@ func (h HistoryLimit) IsZero() bool {
 
 // Before returns the cutoff time for history backfill.
 func (h HistoryLimit) Before() time.Time {
-	return time.Now().AddDate(-h.Years, -h.Months, -h.Days)
+	return time.Now().UTC().AddDate(-h.Years, -h.Months, -h.Days)
 }
 
 // ParseHistoryLimit parses a duration string like "30d", "4w", "6mo",

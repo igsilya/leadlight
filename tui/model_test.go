@@ -521,7 +521,7 @@ func testModelWithDB(t *testing.T) (*Model, *db.DB) {
 	}
 	t.Cleanup(func() { d.Close() })
 
-	now := time.Now()
+	now := time.Now().UTC()
 	d.SaveSeriesSummary(
 		50, "Lorem ipsum series",
 		now.Add(-2*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
@@ -599,7 +599,7 @@ func TestReloadData_SelectionStableOnNewSeries(t *testing.T) {
 
 	// Insert a newer series — it will appear at index 0
 	// because GetActiveSeries orders by date DESC
-	now := time.Now()
+	now := time.Now().UTC()
 	d.SaveSeriesSummary(
 		52, "Sit amet new series",
 		now.Format("2006-01-02T15:04:05"), 1)
@@ -1365,7 +1365,7 @@ func TestFilterClear_RespectsCollapsedState(t *testing.T) {
 
 func TestFilterClear_NoStaleIndex(t *testing.T) {
 	m, d := testModelWithDB(t)
-	now := time.Now()
+	now := time.Now().UTC()
 	// Add an "accepted" series — only visible when showAll is true.
 	d.SaveSeriesSummary(52, "Sit amet series",
 		now.Add(-1*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
@@ -1435,7 +1435,7 @@ func TestToggleShowAll(t *testing.T) {
 	m, d := testModelWithDB(t)
 
 	// Add an accepted patch in a different series
-	now := time.Now()
+	now := time.Now().UTC()
 	d.SaveSeriesSummary(
 		52, "Accepted series",
 		now.Add(-10*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
@@ -1502,7 +1502,7 @@ func TestOpenSeriesView_NoCover_SinglePatch(t *testing.T) {
 	}
 	defer d.Close()
 
-	now := time.Now()
+	now := time.Now().UTC()
 	date := now.Format("2006-01-02T15:04:05")
 
 	d.SaveSeriesSummary(60, "Single patch series", date, 1)
@@ -2442,7 +2442,7 @@ func TestCompareEscExits(t *testing.T) {
 func TestCompareCycleBoth(t *testing.T) {
 	m, d := testModelWithDB(t)
 	// Add a second patch to series 51 so both sides have >1 patch
-	now := time.Now()
+	now := time.Now().UTC()
 	d.SavePatch(db.PatchRow{
 		ID: 201, SeriesID: 51,
 		Name: "Dolor patch two", State: "new",
@@ -2565,7 +2565,7 @@ func TestCompareStartsAtSelectedPatch(t *testing.T) {
 	}
 	t.Cleanup(func() { d.Close() })
 
-	now := time.Now()
+	now := time.Now().UTC()
 	d.SaveSeriesSummary(60, "[0/3] Lorem refactor",
 		now.Format("2006-01-02T15:04:05"), 1)
 	d.SaveSeriesSummary(61, "[0/3] Lorem refactor",

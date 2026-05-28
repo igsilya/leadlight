@@ -495,7 +495,7 @@ func formatAge(dateStr string) string {
 	if err != nil {
 		return "?"
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	d := now.Sub(t)
 	switch {
 	case d < time.Hour:
