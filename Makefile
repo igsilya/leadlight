@@ -1,4 +1,6 @@
-.PHONY: all tidy audit test build install
+.PHONY: all tidy audit test build install vendor
+
+GOFLAGS := -mod=vendor
 
 all: tidy audit test build
 
@@ -7,13 +9,16 @@ tidy:
 	go mod tidy
 
 audit:
-	go vet -all ./...
+	go vet -all $(GOFLAGS) ./...
 
 test:
-	go test ./...
+	go test $(GOFLAGS) ./...
 
 build:
-	go build -o leadlight .
+	go build $(GOFLAGS) -o leadlight .
 
 install:
-	go install .
+	go install $(GOFLAGS) .
+
+vendor:
+	go mod vendor
