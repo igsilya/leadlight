@@ -1781,7 +1781,8 @@ func TestCheckMailArchive_MultiMonthCatchup(t *testing.T) {
 	defer d.Close()
 
 	// Simulate last check was 3 months ago
-	threeMonthsAgo := time.Now().UTC().AddDate(0, -3, 0)
+	now := time.Now().UTC()
+	threeMonthsAgo := time.Date(now.Year(), now.Month()-3, 15, 0, 0, 0, 0, time.UTC)
 	d.SetSyncState("last_archive_check",
 		threeMonthsAgo.Format("2006-01"))
 
@@ -2884,7 +2885,8 @@ func TestBackfillHistory_AlreadyComplete(t *testing.T) {
 
 	d, _ := db.Open(":memory:")
 	defer d.Close()
-	oldDate := time.Now().UTC().AddDate(-2, 0, 0).
+	now := time.Now().UTC()
+	oldDate := time.Date(now.Year()-2, now.Month(), 15, 0, 0, 0, 0, time.UTC).
 		Format("2006-01-02T15:04:05")
 	// Simulate a previous backfill run that already covered this range
 	d.SetSyncState("backfill_patches_since", oldDate)
