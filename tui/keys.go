@@ -91,7 +91,14 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			"pgdown", "ctrl+d", "home", "end":
 			// Fall through to normal navigation
 		default:
-			if len(key) == 1 && key[0] >= ' ' && key[0] <= '~' {
+			if msg.Paste {
+				for _, r := range msg.Runes {
+					if r >= ' ' {
+						m.filterText += string(r)
+					}
+				}
+				m.applyFilter()
+			} else if len(key) == 1 && key[0] >= ' ' && key[0] <= '~' {
 				m.filterText += key
 				m.applyFilter()
 			}
