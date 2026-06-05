@@ -143,6 +143,7 @@ type compareMark struct {
 type compareSide struct {
 	mark    compareMark
 	lines   []string
+	kinds   []diffLineKind
 	patches []comparePatch
 	cover   *ParsedMbox
 	idx     int    // -1 = cover, 0+ = patch index
@@ -227,9 +228,10 @@ type Model struct {
 	listPrefix      string
 	delegateNames   map[string]string
 
-	compare       [2]compareSide
-	compareCount  int // 0, 1, or 2
-	comparePrefix int // 0=none, 1=left, 2=right (for 1/2+arrow)
+	compare          [2]compareSide
+	compareCount     int // 0, 1, or 2
+	comparePrefix    int // 0=none, 1=left, 2=right (for 1/2+arrow)
+	compareDiffCache map[[2]int]*compareCacheEntry
 
 	logConsole   bool
 	logFocused   bool
@@ -650,6 +652,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cover, _ := m.db.GetCover(mark.seriesID)
 				m.compare[i].cover = buildCompareCover(cover)
 			}
+			m.compareDiffCache = nil
 			m.buildCompareContent()
 		}
 		return m, nil
@@ -687,6 +690,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.viewMode == viewPatch {
 			m.refreshViewport()
 		} else if m.viewMode == viewCompare {
+			m.compareDiffCache = nil
 			m.buildCompareContent()
 			maxOffset := m.compareMaxLines() - m.viewportVisibleLines()
 			if maxOffset < 0 {

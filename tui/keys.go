@@ -912,6 +912,7 @@ func (m *Model) enterCompareView() {
 	m.comparePrefix = 0
 	m.viewportOffset = 0
 	m.viewExpanded = false
+	m.compareDiffCache = nil
 	m.viewMode = viewCompare
 	m.buildCompareContent()
 	m.fetchCompareDetails()
@@ -961,54 +962,6 @@ func (m *Model) compareMinIdx() int {
 	return 0
 }
 
-func (m *Model) buildCompareContent() {
-	colWidth := (m.width - 1) / 2 // 1 char for │ separator
-	if colWidth < 20 {
-		colWidth = 20
-	}
-	collapse := !m.viewExpanded
-
-	var parts [2][3][]string // [side][headers/body/diff]
-	for i := range m.compare {
-		s := &m.compare[i]
-		parts[i][0], parts[i][1], parts[i][2] = m.compareColumnParts(
-			s.idx, s.patches, s.cover, colWidth, collapse)
-	}
-
-	// Pad headers and body so both columns align at section boundaries.
-	padToEqual(&parts[0][0], &parts[1][0])
-	padToEqual(&parts[0][1], &parts[1][1])
-
-	for i := range m.compare {
-		m.compare[i].lines = concat(parts[i][0], parts[i][1], parts[i][2])
-	}
-}
-
-func (m *Model) compareColumnParts(
-	idx int, patches []comparePatch, cover *ParsedMbox,
-	width int, collapse bool,
-) (headers, body, diff []string) {
-	var parsed ParsedMbox
-	switch {
-	case idx == -1 && cover != nil:
-		parsed = *cover
-	case idx >= 0 && idx < len(patches):
-		parsed = patches[idx].parsed
-	default:
-		return []string{"(no content)"}, nil, nil
-	}
-	h, b, d := FormatMboxParts(parsed, width, collapse)
-	return splitLines(h), splitLines(b), splitLines(d)
-}
-
-func padToEqual(a, b *[]string) {
-	if len(*a) < len(*b) {
-		*a = append(*a, make([]string, len(*b)-len(*a))...)
-	} else if len(*b) < len(*a) {
-		*b = append(*b, make([]string, len(*a)-len(*b))...)
-	}
-}
-
 func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
@@ -1034,6 +987,7 @@ func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		m.viewExpanded = !m.viewExpanded
 		m.viewportOffset = 0
+		m.compareDiffCache = nil
 		m.buildCompareContent()
 
 	case "1":

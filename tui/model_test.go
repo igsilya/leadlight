@@ -2961,3 +2961,184 @@ func TestScrollDown_DoesNotOverscroll(t *testing.T) {
 			m.scrollOffset, maxScroll)
 	}
 }
+
+func TestCompareView_DiffKindsPopulated(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	now := time.Now().UTC()
+	d.SaveSeriesSummary(60, "Lorem refactor v1",
+		now.Add(-2*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
+	d.SaveSeriesSummary(61, "Lorem refactor v2",
+		now.Add(-1*24*time.Hour).Format("2006-01-02T15:04:05"), 2)
+
+	d.SavePatch(db.PatchRow{
+		ID: 400, SeriesID: 60,
+		Name: "[PATCH v1] Lorem refactor", State: "new",
+		Date:      now.Add(-2 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem", Content: "Shared context line.\nOld body text.\n",
+		Diff: "diff --git a/f b/f\n-old\n+new\n", DetailFetched: true,
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 401, SeriesID: 61,
+		Name: "[PATCH v2] Lorem refactor", State: "new",
+		Date:      now.Add(-1 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem", Content: "Shared context line.\nNew body text.\n",
+		Diff: "diff --git a/f b/f\n-old\n+newer\n", DetailFetched: true,
+	})
+
+	m := NewModel(d, []string{"new"}, "test-token")
+	m.Status = status.NewRegistry(nil)
+	m.width = 120
+	m.height = 40
+
+	// Mark two series for comparison.
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	// Both sides should have kinds populated.
+	if len(m.compare[0].kinds) == 0 {
+		t.Fatal("left side kinds should be populated")
+	}
+	if len(m.compare[1].kinds) == 0 {
+		t.Fatal("right side kinds should be populated")
+	}
+	if len(m.compare[0].kinds) != len(m.compare[0].lines) {
+		t.Errorf("left kinds/lines mismatch: %d vs %d",
+			len(m.compare[0].kinds), len(m.compare[0].lines))
+	}
+	// There should be at least some non-unchanged lines since
+	// the body and diff sections differ.
+	hasChanged := false
+	for _, k := range m.compare[0].kinds {
+		if k != diffUnchanged {
+			hasChanged = true
+			break
+		}
+	}
+	if !hasChanged {
+		t.Error("expected some changed lines in diff output")
+	}
+}
+
+func TestCompareView_DiffCacheHit(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	now := time.Now().UTC()
+	d.SaveSeriesSummary(60, "Lorem v1",
+		now.Add(-2*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
+	d.SaveSeriesSummary(61, "Lorem v2",
+		now.Add(-1*24*time.Hour).Format("2006-01-02T15:04:05"), 2)
+	d.SavePatch(db.PatchRow{
+		ID: 400, SeriesID: 60,
+		Name: "[PATCH v1] Lorem", State: "new",
+		Date:      now.Add(-2 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem", Content: "Body.\n",
+		Diff: "+line\n", DetailFetched: true,
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 401, SeriesID: 61,
+		Name: "[PATCH v2] Lorem", State: "new",
+		Date:      now.Add(-1 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem", Content: "Body changed.\n",
+		Diff: "+line\n", DetailFetched: true,
+	})
+
+	m := NewModel(d, []string{"new"}, "test-token")
+	m.Status = status.NewRegistry(nil)
+	m.width = 120
+	m.height = 40
+
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.viewMode != viewCompare {
+		t.Fatal("should be in compare view")
+	}
+	if m.compareDiffCache == nil || len(m.compareDiffCache) == 0 {
+		t.Fatal("cache should be populated after buildCompareContent")
+	}
+	// Rebuild should use cache (same idx pair).
+	linesBefore := m.compare[0].lines
+	m.buildCompareContent()
+	if len(m.compare[0].lines) != len(linesBefore) {
+		t.Error("cache rebuild should produce same result")
+	}
+}
+
+func TestCompareView_CacheInvalidatedOnResize(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	now := time.Now().UTC()
+	d.SaveSeriesSummary(60, "Lorem v1",
+		now.Add(-2*24*time.Hour).Format("2006-01-02T15:04:05"), 1)
+	d.SaveSeriesSummary(61, "Lorem v2",
+		now.Add(-1*24*time.Hour).Format("2006-01-02T15:04:05"), 2)
+	// Long body text that wraps differently at 120 vs 40 columns.
+	body := "Lorem ipsum dolor sit amet, consectetur adipiscing " +
+		"elit, sed do eiusmod tempor incididunt ut labore.\n"
+	d.SavePatch(db.PatchRow{
+		ID: 400, SeriesID: 60,
+		Name: "[PATCH v1] Lorem ipsum dolor sit amet refactor", State: "new",
+		Date:      now.Add(-2 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem", Content: body,
+		Diff: "diff --git a/f b/f\n-old line\n+new line\n", DetailFetched: true,
+	})
+	d.SavePatch(db.PatchRow{
+		ID: 401, SeriesID: 61,
+		Name: "[PATCH v2] Lorem ipsum dolor sit amet refactor", State: "new",
+		Date:      now.Add(-1 * 24 * time.Hour).Format("2006-01-02T15:04:05"),
+		Submitter: "Lorem", Content: body + "Extra line added.\n",
+		Diff: "diff --git a/f b/f\n-old line\n+newer line\n", DetailFetched: true,
+	})
+
+	m := NewModel(d, []string{"new"}, "test-token")
+	m.Status = status.NewRegistry(nil)
+	m.width = 120
+	m.height = 40
+
+	m = pressKey(m, "c")
+	m = pressKey(m, "j")
+	m = pressKey(m, "c")
+	if m.compareDiffCache == nil || len(m.compareDiffCache) == 0 {
+		t.Fatal("cache should be populated")
+	}
+
+	linesBefore := make([]string, len(m.compare[0].lines))
+	copy(linesBefore, m.compare[0].lines)
+
+	// Resize to a much narrower width — wrapping changes the output.
+	result, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 20})
+	m = result.(*Model)
+
+	if len(m.compare[0].lines) == 0 {
+		t.Fatal("lines should be populated after resize")
+	}
+	// Content should differ: narrower width produces more wrapped lines.
+	same := len(linesBefore) == len(m.compare[0].lines)
+	if same {
+		for i := range linesBefore {
+			if linesBefore[i] != m.compare[0].lines[i] {
+				same = false
+				break
+			}
+		}
+	}
+	if same {
+		t.Error("content should change after resize (different wrapping)")
+	}
+}

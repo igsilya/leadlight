@@ -168,14 +168,10 @@ func (m *Model) renderCompareView() string {
 		if idx < len(m.compare[1].lines) {
 			right = m.compare[1].lines[idx]
 		}
-		lw := lipgloss.Width(left)
-		if lw < leftWidth {
-			left += strings.Repeat(" ", leftWidth-lw)
-		}
-		rw := lipgloss.Width(right)
-		if rw < rightWidth {
-			right += strings.Repeat(" ", rightWidth-rw)
-		}
+		left = comparePadLine(left, leftWidth,
+			compareDiffKind(m.compare[0].kinds, idx))
+		right = comparePadLine(right, rightWidth,
+			compareDiffKind(m.compare[1].kinds, idx))
 		lines[i] = left + sep + right
 	}
 	body := strings.Join(lines, "\n")
@@ -230,6 +226,35 @@ func comparePositionLabel(idx, total int, ver string) string {
 		return fmt.Sprintf("%s [0/%d]", ver, total)
 	}
 	return fmt.Sprintf("%s [%d/%d]", ver, idx+1, total)
+}
+
+func compareDiffKind(kinds []diffLineKind, idx int) diffLineKind {
+	if idx < len(kinds) {
+		return kinds[idx]
+	}
+	return diffUnchanged
+}
+
+// comparePadLine pads a rendered line to the given width. When the
+// line has a diff background tint, the padding spaces also get the
+// background color so the tint extends to the column edge.
+func comparePadLine(line string, width int, kind diffLineKind) string {
+	lw := lipgloss.Width(line)
+	if lw >= width {
+		return line
+	}
+	pad := strings.Repeat(" ", width-lw)
+	switch kind {
+	case diffAdded:
+		return line + lipgloss.NewStyle().Background(compareAddBg).Render(pad)
+	case diffRemoved:
+		return line + lipgloss.NewStyle().Background(compareDelBg).Render(pad)
+	case diffPadding:
+		// Padding lines get a subtle tint to show something was
+		// added/removed on the other side.
+		return line + lipgloss.NewStyle().Background(compareDelBg).Render(pad)
+	}
+	return line + pad
 }
 
 func (m *Model) renderHeader(out *strings.Builder, widths []int) {

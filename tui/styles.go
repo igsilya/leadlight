@@ -85,6 +85,8 @@ var (
 	logHTTP4xxStyle        lipgloss.Style
 	logHTTPErrStyle        lipgloss.Style
 	compareSepStyle        lipgloss.Style
+	compareAddBg           lipgloss.Color
+	compareDelBg           lipgloss.Color
 )
 
 type gradientEntry struct{ bg, fg string }
@@ -168,6 +170,8 @@ func buildStyles(t *theme) {
 	logHTTP4xxStyle = fg(t.LogHTTP4xxFg)
 	logHTTPErrStyle = fg(t.LogHTTPErrFg)
 	compareSepStyle = fg(t.CompareSepFg)
+	compareAddBg = lipgloss.Color(t.CompareAddBg)
+	compareDelBg = lipgloss.Color(t.CompareDelBg)
 
 	bgStyles = map[string]*cachedBgStyle{}
 	gradientPalettes = map[string][256]gradientEntry{}

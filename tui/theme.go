@@ -43,6 +43,8 @@ type theme struct {
 	LogHTTPErrFg string // dim red for server errors and failures
 
 	CompareSepFg string // separator line between compare columns
+	CompareAddBg string // background tint for lines added on this side
+	CompareDelBg string // background tint for lines removed (only on other side)
 }
 
 // Dark theme FG colors inspired by the Catppuccin Mocha palette.
@@ -114,6 +116,8 @@ var darkTheme = theme{
 	LogHTTPErrFg: "#c77474", // muted red
 
 	CompareSepFg: "#585b70", // catppuccin Surface2
+	CompareAddBg: "#1a2e1a", // subtle dark green
+	CompareDelBg: "#2e1a1a", // subtle dark red
 }
 
 var lightTheme = theme{
@@ -183,4 +187,6 @@ var lightTheme = theme{
 	LogHTTPErrFg: "#7d2e2e", // dim red
 
 	CompareSepFg: "#9ca0b0", // catppuccin Overlay0
+	CompareAddBg: "#d0f0d0", // light green
+	CompareDelBg: "#f0d0d0", // light rose
 }

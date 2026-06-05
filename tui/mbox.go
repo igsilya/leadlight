@@ -207,24 +207,35 @@ func extractHeader(headers, name string) string {
 
 // writeHeader renders a labeled header value, optionally collapsing
 // long recipient lists to collapseHeaderMax lines with a count marker.
-func writeHeader(b *strings.Builder, label, value string, collapse bool, labelWidth, valWidth int) {
+func writeHeader(
+	b *strings.Builder, label, value string, collapse bool,
+	labelWidth, valWidth int, kind ...diffLineKind,
+) {
 	if value == "" {
 		return
 	}
-	b.WriteString(mboxHeaderLabel.Render(label))
+	k := diffUnchanged
+	if len(kind) > 0 {
+		k = kind[0]
+	}
+	labelStyle := withDiffBg(mboxHeaderLabel, k)
+	valueStyle := withDiffBg(mboxHeaderValue, k)
+	markerStyle := withDiffBg(collapseMarkerStyle, k)
+
+	b.WriteString(labelStyle.Render(label))
 	lines := wrapHeaderValue(value, valWidth)
 	if collapse && len(lines) > collapseHeaderMax {
 		for i := 0; i < collapseHeaderMax; i++ {
 			if i > 0 {
 				b.WriteString(strings.Repeat(" ", labelWidth))
 			}
-			b.WriteString(mboxHeaderValue.Render(lines[i]))
+			b.WriteString(valueStyle.Render(lines[i]))
 			b.WriteByte('\n')
 		}
 		total := strings.Count(value, ", ") + 1
 		marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
 		b.WriteString(strings.Repeat(" ", labelWidth))
-		b.WriteString(collapseMarkerStyle.Render(marker))
+		b.WriteString(markerStyle.Render(marker))
 		b.WriteByte('\n')
 		return
 	}
@@ -232,7 +243,7 @@ func writeHeader(b *strings.Builder, label, value string, collapse bool, labelWi
 		if i > 0 {
 			b.WriteString(strings.Repeat(" ", labelWidth))
 		}
-		b.WriteString(mboxHeaderValue.Render(line))
+		b.WriteString(valueStyle.Render(line))
 		b.WriteByte('\n')
 	}
 }
@@ -315,6 +326,78 @@ func formatDiff(diff string, width int) string {
 		}
 	}
 	return b.String()
+}
+
+// withDiffBg returns a copy of the style with the appropriate
+// background color for the given diff classification.
+func withDiffBg(style lipgloss.Style, kind diffLineKind) lipgloss.Style {
+	switch kind {
+	case diffAdded:
+		return style.Background(compareAddBg)
+	case diffRemoved, diffPadding:
+		return style.Background(compareDelBg)
+	}
+	return style
+}
+
+// comparePaddingMarker returns a styled "~" marker for diff padding
+// lines where content exists only on the other side.
+func comparePaddingMarker() string {
+	return withDiffBg(collapseMarkerStyle, diffPadding).Render("~")
+}
+
+// styleBodyLine wraps and styles a single raw body line, applying
+// the diff background tint to all wrapped segments.
+func styleBodyLine(line string, width int, kind diffLineKind) []string {
+	var result []string
+	depth := quoteDepth(line)
+	for _, wl := range wrapLine(line, width) {
+		wl = expandTabs(wl, 8)
+		var styled string
+		if depth > 0 {
+			if depth%2 == 1 {
+				styled = withDiffBg(quotedLineStyle, kind).Render(wl)
+			} else {
+				styled = withDiffBg(quotedLineEvenStyle, kind).Render(wl)
+			}
+		} else if strings.HasPrefix(wl, "  ···") {
+			styled = withDiffBg(collapseMarkerStyle, kind).Render(wl)
+		} else if strings.HasPrefix(wl, "↳ ") {
+			styled = withDiffBg(wrapIndicatorStyle, kind).Render("↳ ") +
+				withDiffBg(plainTextStyle, kind).Render(wl[len("↳ "):])
+		} else {
+			styled = withDiffBg(plainTextStyle, kind).Render(wl)
+		}
+		result = append(result, styled)
+	}
+	return result
+}
+
+// styleDiffLine wraps and styles a single raw diff-section line,
+// applying the diff background tint to all wrapped segments.
+func styleDiffLine(line string, width int, kind diffLineKind) []string {
+	line = expandTabs(line, 8)
+	var style lipgloss.Style
+	switch {
+	case strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "--- "):
+		style = diffHeaderStyle
+	case strings.HasPrefix(line, "+"):
+		style = diffAddStyle
+	case strings.HasPrefix(line, "-"):
+		style = diffDelStyle
+	case strings.HasPrefix(line, "@@"):
+		style = diffHunkStyle
+	case strings.HasPrefix(line, "diff --git"):
+		style = diffHeaderStyle
+	default:
+		style = plainTextStyle
+	}
+	style = withDiffBg(style, kind)
+	var result []string
+	for _, wl := range wrapLine(line, width) {
+		result = append(result, style.Render(wl))
+	}
+	return result
 }
 
 // wrapHeaderValue wraps a header value to fit within the given width.
