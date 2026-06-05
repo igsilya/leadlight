@@ -266,6 +266,31 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	db.Exec(resetChecksWithoutDescriptions)
+
+	// Create synthetic series for orphan patches (series_id = 0).
+	// Old Patchwork instances predate the series concept, so these
+	// patches will never get a real series from the API. Uses negative
+	// patch ID as series ID to avoid collision with real series.
+	var orphanDone string
+	db.QueryRow(
+		"SELECT value FROM sync_state WHERE key = 'orphan_patch_migration'",
+	).Scan(&orphanDone)
+	if orphanDone != "1" {
+		db.Exec(`INSERT OR IGNORE INTO series
+			(id, name, date, version, detail_fetched,
+			 complete, total_patches, received_patches,
+			 submitter, submitter_email, web_url, mbox_url)
+			SELECT -p.id, p.name, p.date, 0, 1, 1, 1, 1,
+				COALESCE(p.submitter, ''),
+				COALESCE(p.submitter_email, ''),
+				COALESCE(p.web_url, ''),
+				COALESCE(p.mbox_url, '')
+			FROM patches p WHERE p.series_id = 0`)
+		db.Exec(`UPDATE patches SET series_id = -id WHERE series_id = 0`)
+		db.Exec(`INSERT OR REPLACE INTO sync_state (key, value)
+			VALUES ('orphan_patch_migration', '1')`)
+	}
+
 	recomputeAllActiveFlags(db)
 	// Bump this version when comment schema changes require re-fetch
 	const commentSchemaVersion = "2"

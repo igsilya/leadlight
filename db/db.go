@@ -6,6 +6,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -597,6 +598,16 @@ func (d *DB) GetListArchiveURLFormat() string {
 	return v
 }
 
+// UpdatePatchSeriesID sets series_id on a patch, but only if the
+// current series_id is 0 (orphan patch). This prevents overwriting
+// a real series association.
+func (d *DB) UpdatePatchSeriesID(patchID, seriesID int) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec("UPDATE patches SET series_id = ? WHERE id = ? AND series_id = 0",
+		seriesID, patchID)
+}
+
 func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	if len(states) == 0 {
 		return nil
@@ -628,12 +639,14 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	var result []SeriesRow
 	for rows.Next() {
 		var r SeriesRow
-		rows.Scan(
+		if err := rows.Scan(
 			&r.ID, &r.Name, &r.Date, &r.Version,
 			&r.Submitter, &r.SubmitterEmail,
 			&r.WebURL, &r.MboxURL, &r.Complete,
 			&r.TotalPatches, &r.ReceivedPatches,
-			&r.DetailFetched, &r.UpdatedAt)
+			&r.DetailFetched, &r.UpdatedAt); err != nil {
+			log.Printf("DB: GetActiveSeries scan: %v", err)
+		}
 		result = append(result, r)
 	}
 	return result
@@ -704,12 +717,14 @@ func (d *DB) GetAllSeries() []SeriesRow {
 	var result []SeriesRow
 	for rows.Next() {
 		var r SeriesRow
-		rows.Scan(
+		if err := rows.Scan(
 			&r.ID, &r.Name, &r.Date, &r.Version,
 			&r.Submitter, &r.SubmitterEmail,
 			&r.WebURL, &r.MboxURL, &r.Complete,
 			&r.TotalPatches, &r.ReceivedPatches,
-			&r.DetailFetched, &r.UpdatedAt)
+			&r.DetailFetched, &r.UpdatedAt); err != nil {
+			log.Printf("DB: GetAllSeries scan: %v", err)
+		}
 		result = append(result, r)
 	}
 	return result

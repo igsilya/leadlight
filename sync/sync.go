@@ -1061,7 +1061,15 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 		if !ref.IsActive {
 			s.lastTerminalPatchDetail = time.Now()
 		}
-		return ref.SeriesID
+		// Re-read series ID: fetchDetailForPatch may have created
+		// a synthetic series for a previously seriesless patch.
+		sid := ref.SeriesID
+		if sid == 0 {
+			if row, _ := s.db.GetPatch(ref.ID); row != nil {
+				sid = row.SeriesID
+			}
+		}
+		return sid
 	}
 	return 0
 }
@@ -1341,6 +1349,23 @@ func (s *Syncer) fetchDetailForPatch(
 	s.db.SavePatch(patchToRow(detail.Patch))
 	for _, ss := range detail.Series {
 		s.db.SaveSeriesSummary(ss.ID, ss.Name, ss.Date, ss.Version)
+	}
+	// Permanently seriesless patch — create a synthetic series so
+	// the patch is visible in the TUI. Uses -patchID as series ID
+	// to avoid collision with real series.
+	if len(detail.Series) == 0 {
+		row, _ := s.db.GetPatch(patchID)
+		if row != nil && row.SeriesID == 0 {
+			sid := -patchID
+			s.db.SaveSeries(db.SeriesRow{
+				ID: sid, Name: row.Name, Date: row.Date,
+				Submitter: row.Submitter, SubmitterEmail: row.SubmitterEmail,
+				WebURL: row.WebURL, Complete: true,
+				TotalPatches: 1, ReceivedPatches: 1,
+			})
+			s.db.UpdatePatchSeriesID(patchID, sid)
+			s.db.RecomputeActiveFlag(sid)
+		}
 	}
 	if seriesID != 0 {
 		s.db.RecomputeActiveFlag(seriesID)

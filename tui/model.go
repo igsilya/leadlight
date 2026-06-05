@@ -762,7 +762,7 @@ func (m *Model) patchURL(msgid, webURL string) string {
 }
 
 func (m *Model) seriesURL(seriesID int) string {
-	if m.BaseURL == "" || m.ProjectName == "" {
+	if m.BaseURL == "" || m.ProjectName == "" || seriesID < 0 {
 		return ""
 	}
 	return upgradeHTTP(fmt.Sprintf("%s/project/%s/list/?series=%d&state=*&archive=both",

@@ -5,6 +5,7 @@ package db
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -2804,5 +2805,113 @@ func TestNeedsSeriesDetail(t *testing.T) {
 	// Non-existent series
 	if !d.NeedsSeriesDetail(999) {
 		t.Error("non-existent series should need detail")
+	}
+}
+
+func TestUpdatePatchSeriesID(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 0,
+		Name: "Lorem orphan", State: "new", Date: "2026-01-01",
+	})
+	d.UpdatePatchSeriesID(100, -100)
+	row, _ := d.GetPatch(100)
+	if row.SeriesID != -100 {
+		t.Errorf("SeriesID = %d, want -100", row.SeriesID)
+	}
+}
+
+func TestUpdatePatchSeriesID_NoOverwrite(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "Lorem with series", State: "new", Date: "2026-01-01",
+	})
+	d.UpdatePatchSeriesID(100, -100)
+	row, _ := d.GetPatch(100)
+	if row.SeriesID != 50 {
+		t.Errorf("SeriesID = %d, want 50 (should not overwrite)",
+			row.SeriesID)
+	}
+}
+
+func TestOrphanPatchMigration(t *testing.T) {
+	// Use a temp file DB so we can close and reopen to trigger
+	// the real migrate() path with orphan patches present.
+	tmpFile, err := os.CreateTemp("", "leadlight-test-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".lock")
+
+	// First open: creates schema, migration runs but no orphans exist.
+	d, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 0,
+		Name: "Lorem old patch", State: "new",
+		Date: "2018-06-01T10:00:00", Submitter: "Ipsum",
+	})
+	d.SavePatch(PatchRow{
+		ID: 201, SeriesID: 0,
+		Name: "Dolor old patch", State: "new",
+		Date: "2018-06-02T10:00:00", Submitter: "Amet",
+	})
+	// Reset migration flag so it runs again on next open.
+	d.SetSyncState("orphan_patch_migration", "")
+	d.Close()
+
+	// Second open: migrate() finds orphan patches and creates
+	// synthetic series.
+	d, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	// Verify patches now have synthetic series IDs.
+	row, _ := d.GetPatch(200)
+	if row.SeriesID != -200 {
+		t.Errorf("patch 200: SeriesID = %d, want -200", row.SeriesID)
+	}
+	row, _ = d.GetPatch(201)
+	if row.SeriesID != -201 {
+		t.Errorf("patch 201: SeriesID = %d, want -201", row.SeriesID)
+	}
+
+	// Verify synthetic series were created and are visible.
+	series := d.GetAllSeries()
+	found := map[int]bool{}
+	for _, s := range series {
+		found[s.ID] = true
+	}
+	if !found[-200] {
+		t.Error("synthetic series -200 not found")
+	}
+	if !found[-201] {
+		t.Error("synthetic series -201 not found")
+	}
+
+	// Verify detail_fetched is set (no unfetched dot).
+	for _, s := range series {
+		if s.ID == -200 || s.ID == -201 {
+			if !s.DetailFetched {
+				t.Errorf("series %d: DetailFetched should be true", s.ID)
+			}
+		}
+	}
+
+	// Verify migration flag prevents re-run.
+	if v := d.GetSyncState("orphan_patch_migration"); v != "1" {
+		t.Errorf("migration flag = %q, want '1'", v)
 	}
 }
