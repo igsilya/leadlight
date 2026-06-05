@@ -10,6 +10,12 @@ import (
 )
 
 const schema = `
+CREATE TABLE IF NOT EXISTS projects (
+    id                       INTEGER PRIMARY KEY,
+    name                     TEXT NOT NULL,
+    list_archive_url_format  TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS maintainers (
     id          INTEGER PRIMARY KEY,
     username    TEXT NOT NULL,

@@ -135,6 +135,9 @@ func main() {
 		m.Signoff = false
 	}
 	m.FixGmailWrapping = cfg.FixGmailWrapping == nil || *cfg.FixGmailWrapping
+	m.LoreURL = cfg.LoreURL
+	m.BaseURL = cfg.BaseURL
+	m.ProjectName = cfg.Project
 
 	go syncer.Run(ctx)
 

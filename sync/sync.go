@@ -266,6 +266,7 @@ func (s *Syncer) Run(ctx context.Context) {
 		s.notify()
 	}
 	s.backfillHistory(ctx)
+	s.fetchProjectInfo(ctx)
 	s.incrementalSync(ctx)
 
 	var wg gosync.WaitGroup
@@ -363,7 +364,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		s.incrementalSync(syncCtx)
 		s.status.Clear(status.Sync)
 		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
-			s.fetchMaintainers(syncCtx)
+			s.fetchProjectInfo(syncCtx)
 			lastMaintainerRefresh = time.Now()
 		}
 	}
@@ -436,8 +437,8 @@ func (s *Syncer) initialSync(ctx context.Context) {
 	s.status.Set(status.Sync, "Fetching patch list...", true)
 	s.fetchListPages(ctx)
 	s.notify()
-	s.status.Set(status.Sync, "Fetching maintainers...", true)
-	s.fetchMaintainers(ctx)
+	s.status.Set(status.Sync, "Fetching project info...", true)
+	s.fetchProjectInfo(ctx)
 	s.status.Set(status.Sync, "Fetching patches...", true)
 	s.fetchAllActivePatches(ctx)
 
@@ -505,10 +506,10 @@ func (s *Syncer) fetchListPages(ctx context.Context) {
 	}
 }
 
-func (s *Syncer) fetchMaintainers(ctx context.Context) {
+func (s *Syncer) fetchProjectInfo(ctx context.Context) {
 	project, err := s.client.GetProject(ctx, s.cfg.Project)
 	if err != nil {
-		log.Printf("fetch maintainers: %v", err)
+		log.Printf("fetch project info: %v", err)
 		return
 	}
 	rows := make([]db.MaintainerRow, len(project.Maintainers))
@@ -522,6 +523,11 @@ func (s *Syncer) fetchMaintainers(ctx context.Context) {
 		}
 	}
 	s.db.SaveMaintainers(rows)
+	archiveFmt := ""
+	if project.ListArchiveURLFormat != nil {
+		archiveFmt = *project.ListArchiveURLFormat
+	}
+	s.db.SaveProject(project.ID, project.Name, archiveFmt)
 }
 
 func (s *Syncer) fetchAllActivePatches(ctx context.Context) {

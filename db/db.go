@@ -579,6 +579,24 @@ func (d *DB) GetSyncState(key string) string {
 	return value
 }
 
+func (d *DB) SaveProject(id int, name, listArchiveURLFormat string) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(`INSERT INTO projects (id, name, list_archive_url_format)
+		VALUES (?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			list_archive_url_format = excluded.list_archive_url_format`,
+		id, name, listArchiveURLFormat)
+}
+
+func (d *DB) GetListArchiveURLFormat() string {
+	var v string
+	d.conn.QueryRow(
+		"SELECT list_archive_url_format FROM projects LIMIT 1").Scan(&v)
+	return v
+}
+
 func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	if len(states) == 0 {
 		return nil

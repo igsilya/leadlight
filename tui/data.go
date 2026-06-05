@@ -841,13 +841,17 @@ type comparePatch struct {
 	parsed   ParsedMbox
 }
 
-func buildComparePatches(patches []db.PatchRow) []comparePatch {
+func buildComparePatches(
+	patches []db.PatchRow, loreURL, archiveFormat string,
+) []comparePatch {
 	result := make([]comparePatch, len(patches))
 	for i, p := range patches {
+		parsed := BuildParsedMboxFromPatch(p)
+		parsed.URL = buildPatchURL(loreURL, archiveFormat, p.MsgID, p.WebURL)
 		result[i] = comparePatch{
 			id:       p.ID,
 			position: patchNumber(p.Name),
-			parsed:   BuildParsedMboxFromPatch(p),
+			parsed:   parsed,
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -856,10 +860,14 @@ func buildComparePatches(patches []db.PatchRow) []comparePatch {
 	return result
 }
 
-func buildCompareCover(cover *db.CoverRow) *ParsedMbox {
+func buildCompareCover(
+	cover *db.CoverRow, loreURL, archiveFormat, seriesURL string,
+) *ParsedMbox {
 	if cover == nil {
 		return nil
 	}
 	parsed := BuildParsedMboxFromCover(*cover)
+	parsed.URL = buildPatchURL(loreURL, archiveFormat, cover.MsgID, cover.WebURL)
+	parsed.SeriesURL = seriesURL
 	return &parsed
 }

@@ -716,12 +716,15 @@ func (m *Model) switchToComment() {
 			cover, _ := m.db.GetCover(m.viewingCoverID)
 			if cover != nil && cover.DetailFetched {
 				parsed := BuildParsedMboxFromCover(*cover)
+				parsed.URL = m.patchURL(cover.MsgID, cover.WebURL)
+				parsed.SeriesURL = m.seriesURL(cover.SeriesID)
 				m.buildViewportContent(parsed, nil)
 			}
 		} else if m.viewingPatchID != 0 {
 			row, _ := m.db.GetPatch(m.viewingPatchID)
 			if row != nil && row.DetailFetched {
 				parsed := BuildParsedMboxFromPatch(*row)
+				parsed.URL = m.patchURL(row.MsgID, row.WebURL)
 				checks := GetChecksForPatch(m.db, m.viewingPatchID)
 				m.buildViewportContent(parsed, checks)
 			}
@@ -781,6 +784,8 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 
 		if cover.DetailFetched {
 			parsed := BuildParsedMboxFromCover(*cover)
+			parsed.URL = m.patchURL(cover.MsgID, cover.WebURL)
+			parsed.SeriesURL = m.seriesURL(seriesID)
 			m.buildViewportContent(parsed, nil)
 		} else {
 			m.viewportLoading = true
@@ -853,6 +858,7 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 		log.Printf("TUI: detail available for patch %d %q",
 			patchID, row.Name)
 		parsed := BuildParsedMboxFromPatch(*row)
+		parsed.URL = m.patchURL(row.MsgID, row.WebURL)
 		checks := GetChecksForPatch(m.db, patchID)
 		m.buildViewportContent(parsed, checks)
 	} else {
@@ -895,11 +901,14 @@ func (m *Model) adjustScrollDown(totalItems int) {
 func (m *Model) enterCompareView() {
 	m.Status.Clear(status.Info)
 
+	archiveFmt := m.db.GetListArchiveURLFormat()
 	for i := range m.compare {
 		mark := m.compare[i].mark
-		m.compare[i].patches = buildComparePatches(m.db.GetPatchesForSeries(mark.seriesID))
+		m.compare[i].patches = buildComparePatches(
+			m.db.GetPatchesForSeries(mark.seriesID), m.LoreURL, archiveFmt)
 		cover, _ := m.db.GetCover(mark.seriesID)
-		m.compare[i].cover = buildCompareCover(cover)
+		m.compare[i].cover = buildCompareCover(
+			cover, m.LoreURL, archiveFmt, m.seriesURL(mark.seriesID))
 		m.compare[i].ver = fmt.Sprintf("v%d", m.db.GetSeriesVersion(mark.seriesID))
 		m.compare[i].idx = resolveCompareIdx(mark, m.compare[i].patches, m.compare[i].cover)
 	}
