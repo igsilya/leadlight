@@ -453,13 +453,17 @@ func (s *Syncer) initialSync(ctx context.Context) {
 			since = target
 		}
 	}
+	var fetched bool
 	if since != "" {
-		s.fetchPatchesSince(ctx, since, status.Sync)
+		fetched = s.fetchPatchesSince(ctx, since, status.Sync)
 		s.fetchSeriesSince(ctx, since, status.Sync)
 	}
 
 	s.status.Set(status.Sync, "Fetching events...", true)
 	s.fetchInitialEvents(ctx)
+	if fetched {
+		s.db.CreateSyntheticSeries()
+	}
 	s.db.RecomputeAllActiveFlags()
 	s.status.Clear(status.Sync)
 	s.db.SetSyncState("initial_sync_complete", "true")
@@ -1110,19 +1114,23 @@ func (s *Syncer) backfillHistory(ctx context.Context) {
 		return
 	}
 	target := s.cfg.HistoryLimit.Before().Format("2006-01-02T15:04:05")
-	s.fetchPatchesSince(ctx, target, status.History)
+	fetched := s.fetchPatchesSince(ctx, target, status.History)
 	s.fetchSeriesSince(ctx, target, status.History)
+	if fetched {
+		s.db.CreateSyntheticSeries()
+	}
 	s.db.RecomputeAllActiveFlags()
 	s.status.Clear(status.History)
 }
 
 // fetchPatchesSince fetches all patches (any state, including archived)
 // since the given date. Skips if the backfill_patches_since flag
-// indicates this range was already searched.
-func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey status.Key) {
+// indicates this range was already searched. Returns true if any
+// patches were fetched.
+func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey status.Key) bool {
 	searched := s.db.GetSyncState("backfill_patches_since")
 	if searched != "" && searched <= since {
-		return
+		return false
 	}
 
 	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
@@ -1131,20 +1139,22 @@ func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey 
 		Order:   "-date",
 	})
 	pageNum := 0
+	fetched := false
 
 	for pageURL != "" {
 		pageNum++
 		page, err := s.client.GetPatchesPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("SYNC: fetchPatchesSince: %v", err)
-			return
+			return fetched
 		}
 		s.status.Set(statusKey,
 			fmt.Sprintf("Fetching all patches (%s)...",
 				pageProgress(pageNum, page.TotalPages)), true)
 		if len(page.Items) == 0 {
-			return
+			return fetched
 		}
+		fetched = true
 		for _, p := range page.Items {
 			s.db.SavePatch(patchToRow(p))
 			for _, ss := range p.Series {
@@ -1155,6 +1165,7 @@ func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey 
 		pageURL = page.NextURL
 	}
 	s.db.SetSyncState("backfill_patches_since", since)
+	return fetched
 }
 
 // fetchSeriesSince fetches all series since the given date. Saves

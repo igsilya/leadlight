@@ -54,7 +54,9 @@ func Open(path string) (*DB, error) {
 		releaseLock(lockFile)
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	return &DB{conn: conn, lockFile: lockFile}, nil
+	d := &DB{conn: conn, lockFile: lockFile}
+	d.migrateOrphanPatches()
+	return d, nil
 }
 
 func releaseLock(f *os.File) {
@@ -606,6 +608,38 @@ func (d *DB) UpdatePatchSeriesID(patchID, seriesID int) {
 	defer d.writeMu.Unlock()
 	d.conn.Exec("UPDATE patches SET series_id = ? WHERE id = ? AND series_id = 0",
 		seriesID, patchID)
+}
+
+// CreateSyntheticSeries creates synthetic series for orphan patches
+// (series_id = 0). Old Patchwork instances predate the series concept,
+// so these patches will never get a real series from the API. Uses
+// negative patch ID as series ID to avoid collision with real series.
+// Idempotent — safe to call multiple times.
+func (d *DB) CreateSyntheticSeries() {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(`INSERT OR IGNORE INTO series
+		(id, name, date, version, detail_fetched,
+		 complete, total_patches, received_patches,
+		 submitter, submitter_email, web_url, mbox_url)
+		SELECT -p.id, p.name, p.date, 0, 1, 1, 1, 1,
+			COALESCE(p.submitter, ''),
+			COALESCE(p.submitter_email, ''),
+			COALESCE(p.web_url, ''),
+			COALESCE(p.mbox_url, '')
+		FROM patches p WHERE p.series_id = 0`)
+	d.conn.Exec(`UPDATE patches SET series_id = -id WHERE series_id = 0`)
+}
+
+// migrateOrphanPatches is a one-time migration that creates synthetic
+// series for existing orphan patches on database open.
+func (d *DB) migrateOrphanPatches() {
+	if d.GetSyncState("orphan_patch_migration") == "1" {
+		return
+	}
+	d.CreateSyntheticSeries()
+	d.RecomputeAllActiveFlags()
+	d.SetSyncState("orphan_patch_migration", "1")
 }
 
 func (d *DB) GetActiveSeries(states []string) []SeriesRow {

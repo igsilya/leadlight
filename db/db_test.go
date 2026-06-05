@@ -2915,3 +2915,87 @@ func TestOrphanPatchMigration(t *testing.T) {
 		t.Errorf("migration flag = %q, want '1'", v)
 	}
 }
+
+func TestCreateSyntheticSeries(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	// Insert orphan patches.
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 0,
+		Name: "Lorem orphan", State: "new",
+		Date: "2018-01-01T10:00:00", Submitter: "Ipsum",
+	})
+	d.SavePatch(PatchRow{
+		ID: 301, SeriesID: 0,
+		Name: "Dolor orphan", State: "accepted",
+		Date: "2018-01-02T10:00:00", Submitter: "Amet",
+	})
+	// Insert a normal patch — should not be affected.
+	d.SaveSeriesSummary(50, "Real series", "2026-01-01", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "Normal patch", State: "new",
+		Date: "2026-01-01T10:00:00", Submitter: "Sit",
+	})
+
+	d.CreateSyntheticSeries()
+
+	// Orphan patches should now have synthetic series IDs.
+	row, _ := d.GetPatch(300)
+	if row.SeriesID != -300 {
+		t.Errorf("patch 300: SeriesID = %d, want -300", row.SeriesID)
+	}
+	row, _ = d.GetPatch(301)
+	if row.SeriesID != -301 {
+		t.Errorf("patch 301: SeriesID = %d, want -301", row.SeriesID)
+	}
+	// Normal patch should be unaffected.
+	row, _ = d.GetPatch(100)
+	if row.SeriesID != 50 {
+		t.Errorf("patch 100: SeriesID = %d, want 50", row.SeriesID)
+	}
+
+	// Synthetic series should be visible.
+	all := d.GetAllSeries()
+	found := map[int]bool{}
+	for _, s := range all {
+		found[s.ID] = true
+	}
+	if !found[-300] || !found[-301] {
+		t.Error("synthetic series not found in GetAllSeries")
+	}
+	if !found[50] {
+		t.Error("real series 50 should still be present")
+	}
+}
+
+func TestCreateSyntheticSeries_Idempotent(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(PatchRow{
+		ID: 400, SeriesID: 0,
+		Name: "Lorem orphan", State: "new",
+		Date: "2018-01-01T10:00:00", Submitter: "Ipsum",
+	})
+
+	d.CreateSyntheticSeries()
+	d.CreateSyntheticSeries() // second call should be a no-op
+
+	row, _ := d.GetPatch(400)
+	if row.SeriesID != -400 {
+		t.Errorf("SeriesID = %d, want -400", row.SeriesID)
+	}
+
+	all := d.GetAllSeries()
+	count := 0
+	for _, s := range all {
+		if s.ID == -400 {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("synthetic series -400 appears %d times, want 1", count)
+	}
+}
