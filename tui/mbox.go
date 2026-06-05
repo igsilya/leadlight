@@ -105,17 +105,25 @@ func formatFrom(name, email string) string {
 	return email
 }
 
+// upgradeHTTP converts http:// URLs to https://.
+func upgradeHTTP(u string) string {
+	if strings.HasPrefix(u, "http://") {
+		return "https://" + u[len("http://"):]
+	}
+	return u
+}
+
 // buildPatchURL returns the best available URL for a patch or cover.
 // Priority: lore URL > list archive URL format > patchwork web URL.
 func buildPatchURL(loreURL, archiveFormat, msgid, webURL string) string {
 	id := strings.Trim(msgid, "<>")
 	if loreURL != "" && id != "" {
-		return strings.TrimRight(loreURL, "/") + "/" + id + "/"
+		return upgradeHTTP(strings.TrimRight(loreURL, "/") + "/" + id + "/")
 	}
 	if archiveFormat != "" && id != "" {
-		return strings.Replace(archiveFormat, "{}", id, 1)
+		return upgradeHTTP(strings.Replace(archiveFormat, "{}", id, 1))
 	}
-	return webURL
+	return upgradeHTTP(webURL)
 }
 
 // BuildParsedMboxFromPatch constructs a ParsedMbox from patch detail
@@ -1039,7 +1047,7 @@ func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[stri
 	if url == "" {
 		url = c.WebURL
 	}
-	writeHeader(&b, "URL:     ", url, false, labelWidth, valWidth)
+	writeHeader(&b, "URL:     ", upgradeHTTP(url), false, labelWidth, valWidth)
 
 	if c.Content != "" {
 		b.WriteByte('\n')

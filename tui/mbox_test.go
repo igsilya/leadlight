@@ -2182,6 +2182,32 @@ func TestBuildParsedMboxFromPatch_SubjectFromHeaders(t *testing.T) {
 	}
 }
 
+func TestUpgradeHTTP(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"http://pw.example.com/patch/1/", "https://pw.example.com/patch/1/"},
+		{"https://pw.example.com/patch/1/", "https://pw.example.com/patch/1/"},
+		{"", ""},
+		{"ftp://example.com", "ftp://example.com"},
+	}
+	for _, tt := range tests {
+		got := upgradeHTTP(tt.in)
+		if got != tt.want {
+			t.Errorf("upgradeHTTP(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestBuildPatchURL_UpgradesHTTP(t *testing.T) {
+	got := buildPatchURL("", "", "",
+		"http://pw.example.com/patch/1/")
+	want := "https://pw.example.com/patch/1/"
+	if got != want {
+		t.Errorf("buildPatchURL http = %q, want %q", got, want)
+	}
+}
+
 func TestBuildPatchURL_LorePriority(t *testing.T) {
 	got := buildPatchURL(
 		"https://lore.example.com/dev",

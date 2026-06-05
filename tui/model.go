@@ -765,8 +765,8 @@ func (m *Model) seriesURL(seriesID int) string {
 	if m.BaseURL == "" || m.ProjectName == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/project/%s/list/?series=%d&state=*&archive=both",
-		strings.TrimRight(m.BaseURL, "/"), m.ProjectName, seriesID)
+	return upgradeHTTP(fmt.Sprintf("%s/project/%s/list/?series=%d&state=*&archive=both",
+		strings.TrimRight(m.BaseURL, "/"), m.ProjectName, seriesID))
 }
 
 func (m *Model) refreshViewportComments() {
