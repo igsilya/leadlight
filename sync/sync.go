@@ -688,7 +688,11 @@ func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
 				}
 			}
 			processed++
-			log.Printf("SYNC: event %s: %s", ev.Category, eventSummary(ev))
+			actor := ""
+			if ev.Actor != nil {
+				actor = " (by " + ev.Actor.Username + ")"
+			}
+			log.Printf("SYNC: event %s: %s%s", ev.Category, eventSummary(ev), actor)
 			seriesID := seriesIDFromEvent(ev)
 			if seriesID == 0 {
 				seriesID = s.seriesIDForEventPatch(ev)
