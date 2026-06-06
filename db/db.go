@@ -113,6 +113,7 @@ type PatchRow struct {
 	Diff            string
 	Headers         string
 	Prefixes        string
+	PullURL         string
 	DetailFetched   bool
 	CommentsFetched bool
 	ChecksFetched   bool
@@ -223,8 +224,9 @@ func (d *DB) SavePatch(p PatchRow) error {
 		INSERT INTO patches (id, series_id, name, date,
 			state, submitter, submitter_email,
 			delegate_id, delegate, delegate_email,
-			web_url, msgid, mbox_url, commit_ref, archived)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			web_url, msgid, mbox_url, commit_ref, archived,
+			pull_url)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			series_id = CASE WHEN excluded.series_id != 0
 				THEN excluded.series_id
@@ -244,12 +246,15 @@ func (d *DB) SavePatch(p PatchRow) error {
 				THEN excluded.mbox_url
 				ELSE patches.mbox_url END,
 			commit_ref = excluded.commit_ref,
-			archived = excluded.archived`,
+			archived = excluded.archived,
+			pull_url = CASE WHEN excluded.pull_url != ''
+				THEN excluded.pull_url
+				ELSE patches.pull_url END`,
 		p.ID, p.SeriesID, p.Name, p.Date,
 		p.State, p.Submitter, p.SubmitterEmail,
 		p.DelegateID, p.Delegate, p.DelegateEmail,
 		p.WebURL, p.MsgID, p.MboxURL,
-		p.CommitRef, boolToInt(p.Archived))
+		p.CommitRef, boolToInt(p.Archived), p.PullURL)
 	return err
 }
 
@@ -614,6 +619,8 @@ func (d *DB) UpdatePatchSeriesID(patchID, seriesID int) {
 // (series_id = 0). Old Patchwork instances predate the series concept,
 // so these patches will never get a real series from the API. Uses
 // negative patch ID as series ID to avoid collision with real series.
+// Patches with pull_url are excluded — they are pull requests that
+// Patchwork didn't associate with their series.
 // Idempotent — safe to call multiple times.
 func (d *DB) CreateSyntheticSeries() {
 	d.writeMu.Lock()
@@ -627,8 +634,10 @@ func (d *DB) CreateSyntheticSeries() {
 			COALESCE(p.submitter_email, ''),
 			COALESCE(p.web_url, ''),
 			COALESCE(p.mbox_url, '')
-		FROM patches p WHERE p.series_id = 0`)
-	d.conn.Exec(`UPDATE patches SET series_id = -id WHERE series_id = 0`)
+		FROM patches p
+		WHERE p.series_id = 0 AND COALESCE(p.pull_url, '') = ''`)
+	d.conn.Exec(`UPDATE patches SET series_id = -id
+		WHERE series_id = 0 AND COALESCE(pull_url, '') = ''`)
 }
 
 // migrateOrphanPatches is a one-time migration that creates synthetic
@@ -805,6 +814,7 @@ const patchSelectSQL = `
 		COALESCE(diff, ''),
 		COALESCE(headers, ''),
 		COALESCE(prefixes, ''),
+		COALESCE(pull_url, ''),
 		detail_fetched,
 		comments_fetched,
 		checks_fetched,
@@ -823,6 +833,7 @@ func scanPatchRow(
 		&r.Archived, &r.ChecksPass, &r.ChecksFail,
 		&r.ChecksWarn,
 		&r.Content, &r.Diff, &r.Headers, &r.Prefixes,
+		&r.PullURL,
 		&r.DetailFetched, &r.CommentsFetched, &r.ChecksFetched,
 		&r.UpdatedAt)
 }

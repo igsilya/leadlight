@@ -1363,8 +1363,9 @@ func (s *Syncer) fetchDetailForPatch(
 	}
 	// Permanently seriesless patch — create a synthetic series so
 	// the patch is visible in the TUI. Uses -patchID as series ID
-	// to avoid collision with real series.
-	if len(detail.Series) == 0 {
+	// to avoid collision with real series. Pull requests are
+	// excluded — they are not real patches.
+	if len(detail.Series) == 0 && detail.PullURL == nil {
 		row, _ := s.db.GetPatch(patchID)
 		if row != nil && row.SeriesID == 0 {
 			sid := -patchID
@@ -1668,6 +1669,9 @@ func patchToRow(p api.Patch) db.PatchRow {
 	}
 	if p.CommitRef != nil {
 		r.CommitRef = *p.CommitRef
+	}
+	if p.PullURL != nil {
+		r.PullURL = *p.PullURL
 	}
 	if p.Delegate != nil {
 		r.DelegateID = p.Delegate.ID

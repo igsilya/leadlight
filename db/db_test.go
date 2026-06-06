@@ -2970,6 +2970,47 @@ func TestCreateSyntheticSeries(t *testing.T) {
 	}
 }
 
+func TestCreateSyntheticSeries_SkipsPullRequests(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	// Orphan patch — should get a synthetic series.
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 0,
+		Name: "Lorem orphan", State: "new",
+		Date: "2018-01-01T10:00:00", Submitter: "Ipsum",
+	})
+	// Pull request — should NOT get a synthetic series.
+	d.SavePatch(PatchRow{
+		ID: 301, SeriesID: 0,
+		Name: "[net-next,v12,0/6] Lorem pull request", State: "new",
+		Date: "2018-01-02T10:00:00", Submitter: "Amet",
+		PullURL: "https://github.com/lorem/linux.git tags/lorem-v12",
+	})
+
+	d.CreateSyntheticSeries()
+
+	// Orphan should have synthetic series.
+	row, _ := d.GetPatch(300)
+	if row.SeriesID != -300 {
+		t.Errorf("patch 300: SeriesID = %d, want -300", row.SeriesID)
+	}
+	// Pull request should remain with series_id = 0.
+	row, _ = d.GetPatch(301)
+	if row.SeriesID != 0 {
+		t.Errorf("patch 301 (pull request): SeriesID = %d, want 0",
+			row.SeriesID)
+	}
+
+	// Only the orphan should have a synthetic series.
+	all := d.GetAllSeries()
+	for _, s := range all {
+		if s.ID == -301 {
+			t.Error("synthetic series -301 should not exist for pull request")
+		}
+	}
+}
+
 func TestCreateSyntheticSeries_Idempotent(t *testing.T) {
 	d, _ := Open(":memory:")
 	defer d.Close()

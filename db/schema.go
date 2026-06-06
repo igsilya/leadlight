@@ -205,6 +205,9 @@ var alterStatements = []string{
 	`UPDATE patches SET checks_fetched = 0 WHERE checks_fetched IS NULL`,
 	`UPDATE patches SET detail_fetched = 0 WHERE detail_fetched IS NULL`,
 	`UPDATE covers SET detail_fetched = 0 WHERE detail_fetched IS NULL`,
+	// Pull request URL for filtering out pull request patches from
+	// synthetic series creation.
+	`ALTER TABLE patches ADD COLUMN pull_url TEXT DEFAULT ''`,
 	// Denormalized active flag for fast cover/series priority lookups.
 	`ALTER TABLE series ADD COLUMN has_active_patch INTEGER DEFAULT 0`,
 	`ALTER TABLE covers ADD COLUMN has_active_patch INTEGER DEFAULT 0`,
