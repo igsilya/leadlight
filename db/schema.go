@@ -205,6 +205,13 @@ var alterStatements = []string{
 	`UPDATE patches SET checks_fetched = 0 WHERE checks_fetched IS NULL`,
 	`UPDATE patches SET detail_fetched = 0 WHERE detail_fetched IS NULL`,
 	`UPDATE covers SET detail_fetched = 0 WHERE detail_fetched IS NULL`,
+	// Normalize NULLs to '' for string columns that Go scans into string.
+	// SaveSeriesSummary creates rows with only id/name/date/version;
+	// other columns default to NULL until SaveSeries fills them in.
+	`UPDATE series SET submitter = '' WHERE submitter IS NULL`,
+	`UPDATE series SET submitter_email = '' WHERE submitter_email IS NULL`,
+	`UPDATE series SET web_url = '' WHERE web_url IS NULL`,
+	`UPDATE series SET mbox_url = '' WHERE mbox_url IS NULL`,
 	// Pull request URL for filtering out pull request patches from
 	// synthetic series creation.
 	`ALTER TABLE patches ADD COLUMN pull_url TEXT DEFAULT ''`,

@@ -202,8 +202,9 @@ func (d *DB) SaveSeriesSummary(
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
-		INSERT INTO series (id, name, date, version)
-		VALUES (?,?,?,?)
+		INSERT INTO series (id, name, date, version,
+			submitter, submitter_email, web_url, mbox_url)
+		VALUES (?,?,?,?,'','','','')
 		ON CONFLICT(id) DO UPDATE SET
 			name = CASE WHEN excluded.name != ''
 				THEN excluded.name ELSE series.name END,
