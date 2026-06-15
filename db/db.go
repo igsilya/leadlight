@@ -616,6 +616,27 @@ func (d *DB) UpdatePatchSeriesID(patchID, seriesID int) {
 		seriesID, patchID)
 }
 
+// GetOldestActivePatchDate returns the oldest date among patches
+// with the given active states and archived = 0. Returns "" if
+// no active patches exist.
+func (d *DB) GetOldestActivePatchDate(states []string) string {
+	if len(states) == 0 {
+		return ""
+	}
+	ph := make([]string, len(states))
+	args := make([]interface{}, len(states))
+	for i, s := range states {
+		ph[i] = "?"
+		args[i] = s
+	}
+	var date string
+	d.conn.QueryRow(fmt.Sprintf(
+		`SELECT MIN(date) FROM patches
+		 WHERE state IN (%s) AND archived = 0`,
+		strings.Join(ph, ",")), args...).Scan(&date)
+	return date
+}
+
 // CreateSyntheticSeries creates synthetic series for orphan patches
 // (series_id = 0). Old Patchwork instances predate the series concept,
 // so these patches will never get a real series from the API. Uses

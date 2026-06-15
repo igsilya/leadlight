@@ -3068,3 +3068,64 @@ func TestFetchNextChecks_Terminal(t *testing.T) {
 		t.Error("expected 0 (terminal cooldown active)")
 	}
 }
+
+func TestRefreshArchivedPatches(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/patches/" &&
+				r.URL.Query().Get("archived") == "true" {
+				json.NewEncoder(w).Encode([]api.Patch{{
+					ID: 100, Name: "Lorem archived",
+					Date: "2026-03-10", State: "new",
+					Archived:  true,
+					Submitter: api.Person{Name: "Lorem"},
+					Series: []api.SeriesSummary{{
+						ID: 50, Name: "Lorem series",
+					}},
+				}})
+				return
+			}
+			json.NewEncoder(w).Encode([]api.Patch{})
+		})
+
+	s, d := setupSyncer(t, handler)
+
+	d.SaveSeriesSummary(50, "Lorem series", "2026-03-10", 1)
+	d.SavePatch(db.PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "Lorem archived", State: "new",
+		Date: "2026-03-10T10:00:00", Archived: false,
+	})
+
+	// Verify patch is active in DB.
+	row, _ := d.GetPatch(100)
+	if row.Archived {
+		t.Fatal("patch should start as non-archived")
+	}
+
+	s.refreshArchivedPatches(context.Background())
+
+	// Verify patch is now archived.
+	row, _ = d.GetPatch(100)
+	if !row.Archived {
+		t.Error("patch should be archived after refresh")
+	}
+}
+
+func TestRefreshArchivedPatches_NoActivePatches(t *testing.T) {
+	called := false
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			json.NewEncoder(w).Encode([]api.Patch{})
+		})
+
+	s, _ := setupSyncer(t, handler)
+
+	// No patches in DB — should not make any API calls.
+	s.refreshArchivedPatches(context.Background())
+
+	if called {
+		t.Error("should not call API when no active patches exist")
+	}
+}

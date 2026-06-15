@@ -267,6 +267,7 @@ func (s *Syncer) Run(ctx context.Context) {
 	}
 	s.backfillHistory(ctx)
 	s.fetchProjectInfo(ctx)
+	s.refreshArchivedPatches(ctx)
 	s.incrementalSync(ctx)
 
 	var wg gosync.WaitGroup
@@ -365,6 +366,7 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		s.status.Clear(status.Sync)
 		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
 			s.fetchProjectInfo(syncCtx)
+			s.refreshArchivedPatches(syncCtx)
 			lastMaintainerRefresh = time.Now()
 		}
 	}
@@ -532,6 +534,49 @@ func (s *Syncer) fetchProjectInfo(ctx context.Context) {
 		archiveFmt = *project.ListArchiveURLFormat
 	}
 	s.db.SaveProject(project.ID, project.Name, archiveFmt)
+}
+
+// refreshArchivedPatches detects patches that were archived on the
+// server after leadlight fetched them. Fetches archived patches from
+// the API that are newer than our oldest active patch in the DB.
+// Any that we have as active get updated directly from the API data.
+func (s *Syncer) refreshArchivedPatches(ctx context.Context) {
+	oldest := s.db.GetOldestActivePatchDate(db.ActiveStates)
+	if oldest == "" {
+		return
+	}
+	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
+		State:    db.ActiveStates,
+		Project:  s.cfg.Project,
+		Archived: "true",
+		Since:    oldest,
+	})
+	affected := map[int]bool{}
+	for pageURL != "" {
+		page, err := s.client.GetPatchesPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("SYNC: refreshArchivedPatches: %v", err)
+			return
+		}
+		for _, p := range page.Items {
+			s.db.SavePatch(patchToRow(p))
+			if len(p.Series) > 0 {
+				sid := p.Series[0].ID
+				s.db.RecomputeActiveFlag(sid)
+				affected[sid] = true
+			}
+		}
+		pageURL = page.NextURL
+	}
+	if len(affected) > 0 {
+		ids := make([]int, 0, len(affected))
+		for id := range affected {
+			ids = append(ids, id)
+		}
+		s.notify(ids...)
+		log.Printf("SYNC: refreshed %d series with archived patches",
+			len(affected))
+	}
 }
 
 func (s *Syncer) fetchAllActivePatches(ctx context.Context) {

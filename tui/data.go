@@ -628,9 +628,12 @@ func formatSeriesReviews(patches []db.PatchRow, tags []db.TagRow) string {
 	return formatCount(a) + " " + formatCount(f) + " " + formatCount(r) + " " + formatCount(t)
 }
 
-func isTerminalState(state string) bool {
+func isTerminalState(state string, archived bool) bool {
+	if archived {
+		return true
+	}
 	switch state {
-	case "new", "under-review":
+	case "new", "under-review", "needs-ack":
 		return false
 	}
 	return true
@@ -661,7 +664,7 @@ func colorForSeries(
 ) string {
 	allTerminal := len(patches) > 0
 	for _, p := range patches {
-		if !isTerminalState(p.State) {
+		if !isTerminalState(p.State, p.Archived) {
 			allTerminal = false
 			break
 		}
@@ -777,7 +780,7 @@ func isPatchReviewed(patchID int, tags []db.TagRow) bool {
 func colorForPatch(
 	p db.PatchRow, tags []db.TagRow, commentCount int,
 ) string {
-	if isTerminalState(p.State) {
+	if isTerminalState(p.State, p.Archived) {
 		return "closed"
 	}
 	if isPatchReviewed(p.ID, tags) {

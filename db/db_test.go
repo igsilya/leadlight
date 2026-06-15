@@ -3040,3 +3040,39 @@ func TestCreateSyntheticSeries_Idempotent(t *testing.T) {
 		t.Errorf("synthetic series -400 appears %d times, want 1", count)
 	}
 }
+
+func TestGetOldestActivePatchDate(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	// No patches — empty string.
+	if got := d.GetOldestActivePatchDate([]string{"new"}); got != "" {
+		t.Errorf("empty DB: got %q, want empty", got)
+	}
+
+	d.SaveSeriesSummary(50, "Lorem series", "2026-01-01", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "Newer",
+		State: "new", Date: "2026-03-01T10:00:00",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "Older",
+		State: "new", Date: "2026-01-15T10:00:00",
+	})
+	// Archived patch — should be excluded.
+	d.SavePatch(PatchRow{
+		ID: 102, SeriesID: 50, Name: "Archived",
+		State: "new", Date: "2025-06-01T10:00:00", Archived: true,
+	})
+	// Terminal state — should be excluded.
+	d.SavePatch(PatchRow{
+		ID: 103, SeriesID: 50, Name: "Accepted",
+		State: "accepted", Date: "2025-01-01T10:00:00",
+	})
+
+	got := d.GetOldestActivePatchDate([]string{"new", "under-review"})
+	want := "2026-01-15T10:00:00"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
