@@ -725,6 +725,7 @@ func (m *Model) switchToComment() {
 			if row != nil && row.DetailFetched {
 				parsed := BuildParsedMboxFromPatch(*row)
 				parsed.URL = m.patchURL(row.MsgID, row.WebURL)
+				parsed.SeriesURL = m.seriesURL(row.SeriesID)
 				checks := GetChecksForPatch(m.db, m.viewingPatchID)
 				m.buildViewportContent(parsed, checks)
 			}
@@ -859,6 +860,7 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 			patchID, row.Name)
 		parsed := BuildParsedMboxFromPatch(*row)
 		parsed.URL = m.patchURL(row.MsgID, row.WebURL)
+		parsed.SeriesURL = m.seriesURL(row.SeriesID)
 		checks := GetChecksForPatch(m.db, patchID)
 		m.buildViewportContent(parsed, checks)
 	} else {

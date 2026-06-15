@@ -749,6 +749,7 @@ func (m *Model) refreshViewport() {
 	}
 	parsed := BuildParsedMboxFromPatch(*row)
 	parsed.URL = m.patchURL(row.MsgID, row.WebURL)
+	parsed.SeriesURL = m.seriesURL(row.SeriesID)
 	checks := GetChecksForPatch(m.db, m.viewingPatchID)
 	m.buildViewportContent(parsed, checks)
 }
