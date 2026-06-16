@@ -24,7 +24,7 @@ import (
 
 const (
 	defaultMinDelay = 5 * time.Second
-	httpTimeout     = 60 * time.Second
+	httpTimeout     = 180 * time.Second
 	perPage         = "1024"
 )
 
