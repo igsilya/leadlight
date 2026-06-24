@@ -887,13 +887,13 @@ func (d *DB) GetSeriesTotalPatches(seriesID int) int {
 func (d *DB) GetAllSeries() []SeriesRow {
 	var result []SeriesRow
 	d.queryRows(`
-		SELECT DISTINCT s.id, s.name, s.date, s.version,
+		SELECT s.id, s.name, s.date, s.version,
 			s.submitter, s.submitter_email,
 			s.web_url, s.mbox_url, s.complete,
 			s.total_patches, s.received_patches,
 			s.detail_fetched, COALESCE(s.updated_at, '')
 		FROM series s
-		JOIN patches p ON p.series_id = s.id
+		WHERE EXISTS (SELECT 1 FROM patches p WHERE p.series_id = s.id)
 		ORDER BY s.date DESC`, nil, 13, func(dest []driver.Value) {
 		sc := scanCtx{"series", valInt(dest[0])}
 		result = append(result, SeriesRow{
@@ -1373,24 +1373,28 @@ func (d *DB) GetAllPatchesBatch(
 
 // GetTagsBatch fetches all tags for all matching series in a
 // single query.  Tags can be on patches (patch_id > 0) or on
-// covers (cover_id > 0).  The LEFT JOINs with patches and
-// covers resolve the series_id for each tag.  The subquery
-// args are passed twice — once for the patches join filter and
-// once for the covers join filter.
+// covers (cover_id > 0).  Uses UNION ALL with INNER JOINs so
+// SQLite can use idx_tags_patch and idx_tags_cover indexes
+// instead of a full table scan.  The subquery args are passed
+// twice - once for the patches branch and once for the covers
+// branch.
 func (d *DB) GetTagsBatch(
 	showAll bool, states []string,
 ) map[int][]TagRow {
 	sub, subArgs := d.seriesIDSubquery(showAll, states)
 	query := `SELECT t.patch_id, t.cover_id, t.comment_id,
-		t.source, t.type, t.identity,
-		COALESCE(p.series_id, c.series_id) as series_id
+			t.source, t.type, t.identity, p.series_id
 		FROM tags t
-		LEFT JOIN patches p ON t.patch_id = p.id
-			AND t.patch_id > 0
-		LEFT JOIN covers c ON t.cover_id = c.id
-			AND t.cover_id > 0
-		WHERE p.series_id IN (` + sub + `)
-		   OR c.series_id IN (` + sub + `)`
+		JOIN patches p ON t.patch_id = p.id
+		WHERE t.patch_id > 0
+		  AND p.series_id IN (` + sub + `)
+		UNION ALL
+		SELECT t.patch_id, t.cover_id, t.comment_id,
+			t.source, t.type, t.identity, c.series_id
+		FROM tags t
+		JOIN covers c ON t.cover_id = c.id
+		WHERE t.cover_id > 0
+		  AND c.series_id IN (` + sub + `)`
 	args := append(subArgs, subArgs...)
 	result := map[int][]TagRow{}
 	d.queryRows(query, args, 7, func(dest []driver.Value) {
