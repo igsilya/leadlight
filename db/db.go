@@ -860,6 +860,36 @@ func scanPatchRow(
 		&r.UpdatedAt)
 }
 
+// patchBatchSelectSQL selects only the lightweight fields needed
+// for the TUI table view. Heavy fields (content, diff, headers,
+// prefixes) are skipped to avoid loading multi-KB data for every
+// patch when building the row list.
+const patchBatchSelectSQL = `
+	SELECT id, COALESCE(series_id, 0), name, date, state,
+		COALESCE(submitter, ''),
+		COALESCE(submitter_email, ''),
+		COALESCE(delegate, ''),
+		COALESCE(archived, 0),
+		COALESCE(checks_pass, 0),
+		COALESCE(checks_fail, 0),
+		COALESCE(checks_warn, 0),
+		detail_fetched,
+		comments_fetched,
+		checks_fetched
+	FROM patches`
+
+func scanPatchRowLight(
+	row interface{ Scan(...interface{}) error },
+	r *PatchRow,
+) error {
+	return row.Scan(
+		&r.ID, &r.SeriesID, &r.Name, &r.Date,
+		&r.State, &r.Submitter, &r.SubmitterEmail,
+		&r.Delegate, &r.Archived,
+		&r.ChecksPass, &r.ChecksFail, &r.ChecksWarn,
+		&r.DetailFetched, &r.CommentsFetched, &r.ChecksFetched)
+}
+
 func scanPatches(rows *sql.Rows) []PatchRow {
 	var result []PatchRow
 	for rows.Next() {
@@ -1208,7 +1238,7 @@ func (d *DB) GetAllPatchesBatch(
 	showAll bool, states []string,
 ) map[int][]PatchRow {
 	sub, args := d.seriesIDSubquery(showAll, states)
-	query := patchSelectSQL +
+	query := patchBatchSelectSQL +
 		` WHERE series_id IN (` + sub + `) ORDER BY series_id, id`
 	rows, err := d.conn.Query(query, args...)
 	if err != nil {
@@ -1218,7 +1248,7 @@ func (d *DB) GetAllPatchesBatch(
 	result := map[int][]PatchRow{}
 	for rows.Next() {
 		var r PatchRow
-		scanPatchRow(rows, &r)
+		scanPatchRowLight(rows, &r)
 		result[r.SeriesID] = append(result[r.SeriesID], r)
 	}
 	return result
