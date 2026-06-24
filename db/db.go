@@ -1214,8 +1214,8 @@ func (d *DB) seriesIDSubquery(
 	showAll bool, states []string,
 ) (string, []interface{}) {
 	if showAll {
-		return `SELECT DISTINCT s.id FROM series s
-			JOIN patches p ON p.series_id = s.id`, nil
+		return `SELECT DISTINCT series_id FROM patches
+			WHERE series_id != 0`, nil
 	}
 	parts := make([]string, len(states))
 	args := make([]interface{}, len(states))
