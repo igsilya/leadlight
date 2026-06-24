@@ -15,7 +15,7 @@ import (
 	"sync"
 	"syscall"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type DB struct {
@@ -41,7 +41,7 @@ func Open(path string) (*DB, error) {
 		lockFile = lf
 	}
 
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sql.Open("sqlite3", path)
 	if err != nil {
 		releaseLock(lockFile)
 		return nil, fmt.Errorf("open database: %w", err)
