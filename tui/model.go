@@ -6,6 +6,7 @@ package tui
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -150,6 +151,12 @@ type compareSide struct {
 	ver     string // "v1", "v2", etc.
 }
 
+type searchMatch struct {
+	lineIdx int
+	start   int
+	end     int
+}
+
 func highlightAnimTickCmd() tea.Cmd {
 	return tea.Tick(
 		time.Duration(highlightAnimInterval)*time.Millisecond,
@@ -225,6 +232,11 @@ type Model struct {
 	viewportLoading bool
 	viewportOffset  int
 	viewExpanded    bool
+	searching       bool
+	searchText      string
+	searchRegex     *regexp.Regexp
+	searchMatches   []searchMatch
+	searchIdx       int
 	listPrefix      string
 	delegateNames   map[string]string
 

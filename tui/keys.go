@@ -393,8 +393,21 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+
+	if m.searching {
+		return m.handleSearchInputMode(msg, m.updateViewportSearchMatches)
+	}
+	if m.handleSearchNavigation(key) {
+		return m, nil
+	}
+
+	switch key {
 	case "q", "esc":
+		if m.searchText != "" {
+			m.clearSearch()
+			return m, nil
+		}
 		m.viewMode = viewTable
 		m.viewingPatchID = 0
 		m.viewingCoverID = 0
@@ -983,8 +996,19 @@ func (m *Model) compareMinIdx() int {
 func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	if m.searching {
+		return m.handleSearchInputMode(msg, m.updateCompareSearchMatches)
+	}
+	if m.handleSearchNavigation(key) {
+		return m, nil
+	}
+
 	switch key {
 	case "q", "esc":
+		if m.searchText != "" {
+			m.clearSearch()
+			return m, nil
+		}
 		m.viewMode = viewTable
 		m.compareCount = 0
 		return m, nil
