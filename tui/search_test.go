@@ -73,6 +73,98 @@ func TestMultipleOccurrencesOnSameLine(t *testing.T) {
 	}
 }
 
+func TestSearchHistory(t *testing.T) {
+	m := &Model{
+		viewportLines: []string{
+			"foo bar baz",
+			"hello world",
+			"foo again",
+		},
+	}
+
+	// Commit a few searches
+	m.searchText = "foo"
+	m.commitSearch()
+	m.searchText = "bar"
+	m.commitSearch()
+	m.searchText = "hello"
+	m.commitSearch()
+
+	if len(m.searchHistory) != 3 {
+		t.Fatalf("Expected 3 history entries, got %d", len(m.searchHistory))
+	}
+	if m.searchHistory[0] != "hello" || m.searchHistory[1] != "bar" || m.searchHistory[2] != "foo" {
+		t.Errorf("History order wrong: %v", m.searchHistory)
+	}
+
+	// Duplicate should move to front, not add again
+	m.searchText = "foo"
+	m.commitSearch()
+	if len(m.searchHistory) != 3 {
+		t.Fatalf("Expected 3 history entries after dedup, got %d", len(m.searchHistory))
+	}
+	if m.searchHistory[0] != "foo" {
+		t.Errorf("Expected 'foo' at front, got %q", m.searchHistory[0])
+	}
+
+	// Start a new search and browse history with up arrow
+	m.startSearch()
+	if m.searchHistoryIdx != -1 {
+		t.Errorf("Expected historyIdx -1 at start, got %d", m.searchHistoryIdx)
+	}
+
+	// Simulate up arrow — should recall most recent ("foo")
+	m.searchHistoryIdx = 0
+	m.searchText = m.searchHistory[0]
+	if m.searchText != "foo" {
+		t.Errorf("Expected 'foo' on first up, got %q", m.searchText)
+	}
+
+	// Another up — should get "hello"
+	m.searchHistoryIdx = 1
+	m.searchText = m.searchHistory[1]
+	if m.searchText != "hello" {
+		t.Errorf("Expected 'hello' on second up, got %q", m.searchText)
+	}
+
+	// Down arrow — back to "foo"
+	m.searchHistoryIdx = 0
+	m.searchText = m.searchHistory[0]
+	if m.searchText != "foo" {
+		t.Errorf("Expected 'foo' on down, got %q", m.searchText)
+	}
+}
+
+func TestRecallLastSearch(t *testing.T) {
+	m := &Model{
+		viewportLines: []string{
+			"foo bar foo",
+			"no match",
+			"another foo",
+		},
+	}
+
+	// Search and commit
+	m.searchText = "foo"
+	m.updateViewportSearchMatches()
+	m.commitSearch()
+
+	// Clear search
+	m.clearSearch()
+	if len(m.searchMatches) != 0 {
+		t.Fatal("Expected no matches after clear")
+	}
+
+	// Recall via n
+	m.recallLastSearch()
+	if m.searchText != "foo" {
+		t.Errorf("Expected recalled text 'foo', got %q", m.searchText)
+	}
+	if len(m.searchMatches) != 3 {
+		t.Errorf("Expected 3 matches after recall, got %d", len(m.searchMatches))
+	}
+}
+
 func TestParseVimSearchPattern(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -15,6 +15,7 @@ import (
 func (m *Model) startSearch() {
 	m.searching = true
 	m.searchText = ""
+	m.searchHistoryIdx = -1
 	m.searchMatches = nil
 	m.searchIdx = -1
 }
@@ -29,6 +30,16 @@ func (m *Model) clearSearch() {
 
 func (m *Model) commitSearch() {
 	m.searching = false
+	if m.searchText != "" {
+		// Deduplicate: remove previous occurrence so the latest is always at front.
+		for i, h := range m.searchHistory {
+			if h == m.searchText {
+				m.searchHistory = append(m.searchHistory[:i], m.searchHistory[i+1:]...)
+				break
+			}
+		}
+		m.searchHistory = append([]string{m.searchText}, m.searchHistory...)
+	}
 	if len(m.searchMatches) > 0 && m.searchIdx >= 0 {
 		m.scrollToMatch(m.searchIdx, m.searchMaxLines())
 	}
@@ -41,9 +52,28 @@ func (m *Model) handleSearchInputMode(msg tea.KeyMsg, updateMatches func()) (tea
 		m.commitSearch()
 	case "esc":
 		m.clearSearch()
+	case "up":
+		if len(m.searchHistory) > 0 {
+			if m.searchHistoryIdx < len(m.searchHistory)-1 {
+				m.searchHistoryIdx++
+			}
+			m.searchText = m.searchHistory[m.searchHistoryIdx]
+			updateMatches()
+		}
+	case "down":
+		if m.searchHistoryIdx > 0 {
+			m.searchHistoryIdx--
+			m.searchText = m.searchHistory[m.searchHistoryIdx]
+			updateMatches()
+		} else if m.searchHistoryIdx == 0 {
+			m.searchHistoryIdx = -1
+			m.searchText = ""
+			updateMatches()
+		}
 	case "backspace":
 		if len(m.searchText) > 0 {
 			m.searchText = m.searchText[:len(m.searchText)-1]
+			m.searchHistoryIdx = -1
 			updateMatches()
 		} else {
 			m.clearSearch()
@@ -55,9 +85,11 @@ func (m *Model) handleSearchInputMode(msg tea.KeyMsg, updateMatches func()) (tea
 					m.searchText += string(r)
 				}
 			}
+			m.searchHistoryIdx = -1
 			updateMatches()
 		} else if len(key) == 1 && key[0] >= ' ' && key[0] <= '~' {
 			m.searchText += key
+			m.searchHistoryIdx = -1
 			updateMatches()
 		}
 	}
@@ -72,15 +104,28 @@ func (m *Model) handleSearchNavigation(key string) (handled bool) {
 	case "n":
 		if len(m.searchMatches) > 0 {
 			m.nextSearchMatch()
+		} else if m.searchText == "" && len(m.searchHistory) > 0 {
+			m.recallLastSearch()
 		}
 		return true
 	case "N":
 		if len(m.searchMatches) > 0 {
 			m.prevSearchMatch()
+		} else if m.searchText == "" && len(m.searchHistory) > 0 {
+			m.recallLastSearch()
 		}
 		return true
 	}
 	return false
+}
+
+func (m *Model) recallLastSearch() {
+	m.searchText = m.searchHistory[0]
+	if m.viewMode == viewCompare {
+		m.updateCompareSearchMatches()
+	} else {
+		m.updateViewportSearchMatches()
+	}
 }
 
 // searchMaxLines returns the total line count for the current view mode.

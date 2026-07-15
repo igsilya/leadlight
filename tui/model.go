@@ -222,23 +222,25 @@ type Model struct {
 	renderBuf   strings.Builder // reused by renderMainView each frame
 	gradientBuf strings.Builder // reused by renderGradientRow each frame
 
-	viewMode        viewMode
-	viewingPatchID  int
-	viewingCoverID  int
-	viewComments    []CommentInfo
-	viewCommentIdx  int // -1 = patch/cover, 0+ = comment
-	viewSourceLines map[string]bool
-	viewportLines   []string
-	viewportLoading bool
-	viewportOffset  int
-	viewExpanded    bool
-	searching       bool
-	searchText      string
-	searchRegex     *regexp.Regexp
-	searchMatches   []searchMatch
-	searchIdx       int
-	listPrefix      string
-	delegateNames   map[string]string
+	viewMode         viewMode
+	viewingPatchID   int
+	viewingCoverID   int
+	viewComments     []CommentInfo
+	viewCommentIdx   int // -1 = patch/cover, 0+ = comment
+	viewSourceLines  map[string]bool
+	viewportLines    []string
+	viewportLoading  bool
+	viewportOffset   int
+	viewExpanded     bool
+	searching        bool
+	searchText       string
+	searchRegex      *regexp.Regexp
+	searchMatches    []searchMatch
+	searchIdx        int
+	searchHistory    []string
+	searchHistoryIdx int // -1 = typing new query, 0+ = browsing history
+	listPrefix       string
+	delegateNames    map[string]string
 
 	compare          [2]compareSide
 	compareCount     int // 0, 1, or 2
