@@ -403,11 +403,21 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "q", "esc":
-		if m.searchText != "" {
+	case "q":
+		if m.searchText != "" && len(m.searchMatches) > 0 {
 			m.clearSearch()
 			return m, nil
 		}
+		m.clearSearch()
+		m.viewMode = viewTable
+		m.viewingPatchID = 0
+		m.viewingCoverID = 0
+		m.viewComments = nil
+		m.viewCommentIdx = -1
+		m.viewportLines = nil
+		m.viewExpanded = false
+	case "esc":
+		m.clearSearch()
 		m.viewMode = viewTable
 		m.viewingPatchID = 0
 		m.viewingCoverID = 0
@@ -1004,11 +1014,17 @@ func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "q", "esc":
-		if m.searchText != "" {
+	case "q":
+		if m.searchText != "" && len(m.searchMatches) > 0 {
 			m.clearSearch()
 			return m, nil
 		}
+		m.clearSearch()
+		m.viewMode = viewTable
+		m.compareCount = 0
+		return m, nil
+	case "esc":
+		m.clearSearch()
 		m.viewMode = viewTable
 		m.compareCount = 0
 		return m, nil
