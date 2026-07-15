@@ -91,3 +91,43 @@ func AmAbort() (string, error) {
 	out, err := exec.Command("git", "am", "--abort").CombinedOutput()
 	return string(out), err
 }
+
+// TopLevel returns the absolute path to the top-level directory
+// of the git repository, or empty string if not in a repository.
+func TopLevel() string {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// PatchDirectory returns the directory where patches should be saved.
+// If leadlight.patchDirectory is configured, returns that path relative
+// to the repository root. Otherwise returns the current working directory.
+// Creates the directory if it doesn't exist.
+func PatchDirectory() (string, error) {
+	// Get the configured patch directory name
+	configDir := ConfigGet(".", "leadlight.patchDirectory", false)
+	if configDir == "" {
+		// No config set, use current directory
+		return ".", nil
+	}
+
+	// Get repository root
+	repoRoot := TopLevel()
+	if repoRoot == "" {
+		// Not in a git repo, use current directory
+		return ".", nil
+	}
+
+	// Build full path to patch directory
+	patchDir := filepath.Join(repoRoot, configDir)
+
+	// Create directory if it doesn't exist
+	if err := exec.Command("mkdir", "-p", patchDir).Run(); err != nil {
+		return "", err
+	}
+
+	return patchDir, nil
+}
