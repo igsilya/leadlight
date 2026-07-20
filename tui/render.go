@@ -69,10 +69,10 @@ func (m *Model) renderPatchView() string {
 		end = total
 	}
 
-	// Assemble exactly `visible` lines separated by newlines.
 	lines := make([]string, visible)
 	for i := 0; i < end-start; i++ {
-		lines[i] = m.viewportLines[start+i]
+		lineIdx := start + i
+		lines[i] = m.highlightLineIfMatched(m.viewportLines[lineIdx], lineIdx)
 	}
 	body := strings.Join(lines, "\n")
 
@@ -85,47 +85,55 @@ func (m *Model) renderPatchView() string {
 	bright, desc, sep := m.helpStyles()
 
 	var status string
-	expandKey := func(hb *strings.Builder) {
-		hb.WriteString(helpSepStr(sep))
-		if m.viewExpanded {
-			hb.WriteString(helpKey(bright, desc, "e", "collapse"))
-		} else {
-			hb.WriteString(helpKey(bright, desc, "e", "expand"))
-		}
-	}
-	if len(m.viewComments) > 0 {
-		var hb strings.Builder
-		hb.WriteString(sep.Render(" "))
-		hb.WriteString(bright.Render("←/→"))
-		expandKey(&hb)
-		hb.WriteString(helpSepStr(sep))
-		hb.WriteString(bright.Render("↑/↓") +
-			sep.Render(" ") + bright.Render("pgup/dn"))
-		hb.WriteString(helpSepStr(sep))
-		hb.WriteString(bright.Render("esc"))
-		if m.logConsole {
-			hb.WriteString(helpSepStr(sep))
-			hb.WriteString(helpKey(bright, desc, "tab", "log"))
-		}
-		hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
-		helpText := hb.String()
-		barWidth := m.width - lipgloss.Width(helpText)
-		commentBar := m.renderCommentBar(barWidth)
-		status = commentBar + helpText
+
+	if m.searching {
+		status = m.renderSearchInputHelp(bright, desc, sep)
 	} else {
-		var hb strings.Builder
-		expandKey(&hb)
-		hb.WriteString(helpSepStr(sep))
-		hb.WriteString(bright.Render("↑/↓") +
-			sep.Render(" ") + bright.Render("pgup/dn"))
-		hb.WriteString(helpSepStr(sep))
-		hb.WriteString(helpKey(bright, desc, "esc", "back"))
-		if m.logConsole {
+		expandKey := func(hb *strings.Builder) {
 			hb.WriteString(helpSepStr(sep))
-			hb.WriteString(helpKey(bright, desc, "tab", "log"))
+			if m.viewExpanded {
+				hb.WriteString(helpKey(bright, desc, "e", "collapse"))
+			} else {
+				hb.WriteString(helpKey(bright, desc, "e", "expand"))
+			}
 		}
-		hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
-		status = hb.String()
+
+		if len(m.viewComments) > 0 {
+			var hb strings.Builder
+			hb.WriteString(sep.Render(" "))
+			hb.WriteString(bright.Render("←/→"))
+			expandKey(&hb)
+			hb.WriteString(m.renderSearchKeyHelp(bright, desc, sep))
+			hb.WriteString(helpSepStr(sep))
+			hb.WriteString(bright.Render("↑/↓") +
+				sep.Render(" ") + bright.Render("pgup/dn"))
+			hb.WriteString(helpSepStr(sep))
+			hb.WriteString(bright.Render("esc"))
+			if m.logConsole {
+				hb.WriteString(helpSepStr(sep))
+				hb.WriteString(helpKey(bright, desc, "tab", "log"))
+			}
+			hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
+			helpText := hb.String()
+			barWidth := m.width - lipgloss.Width(helpText)
+			commentBar := m.renderCommentBar(barWidth)
+			status = commentBar + helpText
+		} else {
+			var hb strings.Builder
+			expandKey(&hb)
+			hb.WriteString(m.renderSearchKeyHelp(bright, desc, sep))
+			hb.WriteString(helpSepStr(sep))
+			hb.WriteString(bright.Render("↑/↓") +
+				sep.Render(" ") + bright.Render("pgup/dn"))
+			hb.WriteString(helpSepStr(sep))
+			hb.WriteString(helpKey(bright, desc, "esc", "back"))
+			if m.logConsole {
+				hb.WriteString(helpSepStr(sep))
+				hb.WriteString(helpKey(bright, desc, "tab", "log"))
+			}
+			hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
+			status = hb.String()
+		}
 	}
 
 	var statusLine string
@@ -172,6 +180,10 @@ func (m *Model) renderCompareView() string {
 			compareDiffKind(m.compare[0].kinds, idx))
 		right = comparePadLine(right, rightWidth,
 			compareDiffKind(m.compare[1].kinds, idx))
+
+		left = m.highlightLineIfMatched(left, idx)
+		right = m.highlightLineIfMatched(right, idx)
+
 		lines[i] = left + sep + right
 	}
 	body := strings.Join(lines, "\n")
@@ -183,29 +195,36 @@ func (m *Model) renderCompareView() string {
 	}
 
 	bright, desc, sepS := m.helpStyles()
-	var hb strings.Builder
-	labelL := comparePositionLabel(
-		m.compare[0].idx, len(m.compare[0].patches), m.compare[0].ver)
-	labelR := comparePositionLabel(
-		m.compare[1].idx, len(m.compare[1].patches), m.compare[1].ver)
-	hb.WriteString(desc.Render(labelL + " vs " + labelR))
-	hb.WriteString(helpSepStr(sepS))
-	hb.WriteString(bright.Render("←/→"))
-	hb.WriteString(helpSepStr(sepS))
-	hb.WriteString(helpKey(bright, desc, "1/2+←/→", "single"))
-	hb.WriteString(helpSepStr(sepS))
-	if m.viewExpanded {
-		hb.WriteString(helpKey(bright, desc, "e", "collapse"))
+
+	var helpText string
+	if m.searching {
+		helpText = m.renderSearchInputHelp(bright, desc, sepS)
 	} else {
-		hb.WriteString(helpKey(bright, desc, "e", "expand"))
+		var hb strings.Builder
+		labelL := comparePositionLabel(
+			m.compare[0].idx, len(m.compare[0].patches), m.compare[0].ver)
+		labelR := comparePositionLabel(
+			m.compare[1].idx, len(m.compare[1].patches), m.compare[1].ver)
+		hb.WriteString(desc.Render(labelL + " vs " + labelR))
+		hb.WriteString(helpSepStr(sepS))
+		hb.WriteString(bright.Render("←/→"))
+		hb.WriteString(helpSepStr(sepS))
+		hb.WriteString(helpKey(bright, desc, "1/2+←/→", "single"))
+		hb.WriteString(helpSepStr(sepS))
+		if m.viewExpanded {
+			hb.WriteString(helpKey(bright, desc, "e", "collapse"))
+		} else {
+			hb.WriteString(helpKey(bright, desc, "e", "expand"))
+		}
+		hb.WriteString(m.renderSearchKeyHelp(bright, desc, sepS))
+		hb.WriteString(helpSepStr(sepS))
+		hb.WriteString(bright.Render("↑/↓") +
+			sepS.Render(" ") + bright.Render("pgup/dn"))
+		hb.WriteString(helpSepStr(sepS))
+		hb.WriteString(helpKey(bright, desc, "esc", "back"))
+		hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
+		helpText = hb.String()
 	}
-	hb.WriteString(helpSepStr(sepS))
-	hb.WriteString(bright.Render("↑/↓") +
-		sepS.Render(" ") + bright.Render("pgup/dn"))
-	hb.WriteString(helpSepStr(sepS))
-	hb.WriteString(helpKey(bright, desc, "esc", "back"))
-	hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
-	helpText := hb.String()
 
 	var statusLine string
 	msg, spinning := m.Status.Active()

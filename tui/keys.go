@@ -393,8 +393,31 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc":
+	key := msg.String()
+
+	if m.searching {
+		return m.handleSearchInputMode(msg, m.updateViewportSearchMatches)
+	}
+	if m.handleSearchNavigation(key) {
+		return m, nil
+	}
+
+	switch key {
+	case "q":
+		if m.searchText != "" && len(m.searchMatches) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
+		m.clearSearch()
+		m.viewMode = viewTable
+		m.viewingPatchID = 0
+		m.viewingCoverID = 0
+		m.viewComments = nil
+		m.viewCommentIdx = -1
+		m.viewportLines = nil
+		m.viewExpanded = false
+	case "esc":
+		m.clearSearch()
 		m.viewMode = viewTable
 		m.viewingPatchID = 0
 		m.viewingCoverID = 0
@@ -983,8 +1006,25 @@ func (m *Model) compareMinIdx() int {
 func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	if m.searching {
+		return m.handleSearchInputMode(msg, m.updateCompareSearchMatches)
+	}
+	if m.handleSearchNavigation(key) {
+		return m, nil
+	}
+
 	switch key {
-	case "q", "esc":
+	case "q":
+		if m.searchText != "" && len(m.searchMatches) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
+		m.clearSearch()
+		m.viewMode = viewTable
+		m.compareCount = 0
+		return m, nil
+	case "esc":
+		m.clearSearch()
 		m.viewMode = viewTable
 		m.compareCount = 0
 		return m, nil
