@@ -253,8 +253,11 @@ type Model struct {
 		delegateUsername *string, unsetDelegate bool,
 	)
 
-	Signoff          bool // add -s to git am (default true)
-	FixGmailWrapping bool // rejoin broken quoted lines (default true)
+	Signoff          bool   // add -s to git am (default true)
+	FixGmailWrapping bool   // rejoin broken quoted lines (default true)
+	LoreURL          string // lore archive base URL for URL construction
+	BaseURL          string // patchwork base URL (without /api/...)
+	ProjectName      string // patchwork project name
 
 	applyState          applyState
 	applyPatchIDs       []int // patches to apply, in N/M order
@@ -645,12 +648,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewportComments()
 		}
 		if m.viewMode == viewCompare {
+			archiveFmt := m.db.GetListArchiveURLFormat()
 			for i := range m.compare {
 				mark := m.compare[i].mark
 				m.compare[i].patches = buildComparePatches(
-					m.db.GetPatchesForSeries(mark.seriesID))
+					m.db.GetPatchesForSeries(mark.seriesID),
+					m.LoreURL, archiveFmt)
 				cover, _ := m.db.GetCover(mark.seriesID)
-				m.compare[i].cover = buildCompareCover(cover)
+				m.compare[i].cover = buildCompareCover(
+					cover, m.LoreURL, archiveFmt,
+					m.seriesURL(mark.seriesID))
 			}
 			m.compareDiffCache = nil
 			m.buildCompareContent()
@@ -728,6 +735,8 @@ func (m *Model) refreshViewport() {
 			return
 		}
 		parsed := BuildParsedMboxFromCover(*cover)
+		parsed.URL = m.patchURL(cover.MsgID, cover.WebURL)
+		parsed.SeriesURL = m.seriesURL(cover.SeriesID)
 		m.buildViewportContent(parsed, nil)
 		return
 	}
@@ -739,8 +748,26 @@ func (m *Model) refreshViewport() {
 		return
 	}
 	parsed := BuildParsedMboxFromPatch(*row)
+	parsed.URL = m.patchURL(row.MsgID, row.WebURL)
+	parsed.SeriesURL = m.seriesURL(row.SeriesID)
 	checks := GetChecksForPatch(m.db, m.viewingPatchID)
 	m.buildViewportContent(parsed, checks)
+}
+
+func (m *Model) patchURL(msgid, webURL string) string {
+	archiveFmt := ""
+	if m.db != nil {
+		archiveFmt = m.db.GetListArchiveURLFormat()
+	}
+	return buildPatchURL(m.LoreURL, archiveFmt, msgid, webURL)
+}
+
+func (m *Model) seriesURL(seriesID int) string {
+	if m.BaseURL == "" || m.ProjectName == "" || seriesID < 0 {
+		return ""
+	}
+	return upgradeHTTP(fmt.Sprintf("%s/project/%s/list/?series=%d&state=*&archive=both",
+		strings.TrimRight(m.BaseURL, "/"), m.ProjectName, seriesID))
 }
 
 func (m *Model) refreshViewportComments() {

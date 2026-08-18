@@ -4,14 +4,18 @@
 package db
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
 	"syscall"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type DB struct {
@@ -37,7 +41,7 @@ func Open(path string) (*DB, error) {
 		lockFile = lf
 	}
 
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sql.Open("sqlite3", path)
 	if err != nil {
 		releaseLock(lockFile)
 		return nil, fmt.Errorf("open database: %w", err)
@@ -53,7 +57,9 @@ func Open(path string) (*DB, error) {
 		releaseLock(lockFile)
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	return &DB{conn: conn, lockFile: lockFile}, nil
+	d := &DB{conn: conn, lockFile: lockFile}
+	d.migrateOrphanPatches()
+	return d, nil
 }
 
 func releaseLock(f *os.File) {
@@ -69,6 +75,131 @@ func (d *DB) Close() error {
 	err := d.conn.Close()
 	releaseLock(d.lockFile)
 	return err
+}
+
+// queryRows bypasses database/sql's per-row type introspection and
+// conversion overhead by using sql.Conn.Raw() to access the underlying
+// driver.Conn directly. For high-volume queries (thousands of rows),
+// this avoids the Scan/convertAssignRows/ColumnTypeDatabaseTypeName
+// cost that adds up significantly.
+func (d *DB) queryRows(
+	query string, args []interface{},
+	numCols int, scan func(dest []driver.Value),
+) error {
+	conn, err := d.conn.Conn(context.Background())
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return conn.Raw(func(driverConn interface{}) error {
+		qc := driverConn.(driver.QueryerContext)
+		named := make([]driver.NamedValue, len(args))
+		for i, a := range args {
+			// driver.Value requires int64, not int.
+			v := a
+			if n, ok := a.(int); ok {
+				v = int64(n)
+			}
+			named[i] = driver.NamedValue{Ordinal: i + 1, Value: v}
+		}
+		rows, err := qc.QueryContext(
+			context.Background(), query, named)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		dest := make([]driver.Value, numCols)
+		for {
+			if err := rows.Next(dest); err != nil {
+				if err == io.EOF {
+					return nil
+				}
+				return err
+			}
+			scan(dest)
+		}
+	})
+}
+
+// scanCtx carries table name and row ID for diagnostic logging
+// when a column value has an unexpected type or NULL.
+type scanCtx struct {
+	table string
+	id    int
+}
+
+func (sc scanCtx) str(v driver.Value, col string) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	log.Printf("DB: %s.%s (id=%d): expected string, got %T: %v",
+		sc.table, col, sc.id, v, v)
+	return fmt.Sprint(v)
+}
+
+func (sc scanCtx) strNN(v driver.Value, col string) string {
+	if v == nil {
+		log.Printf("DB: unexpected NULL in %s.%s (id=%d)",
+			sc.table, col, sc.id)
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	log.Printf("DB: %s.%s (id=%d): expected string, got %T: %v",
+		sc.table, col, sc.id, v, v)
+	return fmt.Sprint(v)
+}
+
+func (sc scanCtx) int_(v driver.Value, col string) int {
+	if v == nil {
+		return 0
+	}
+	if i, ok := v.(int64); ok {
+		return int(i)
+	}
+	log.Printf("DB: %s.%s (id=%d): expected int64, got %T: %v",
+		sc.table, col, sc.id, v, v)
+	return 0
+}
+
+func (sc scanCtx) bool_(v driver.Value, col string) bool {
+	if v == nil {
+		return false
+	}
+	if i, ok := v.(int64); ok {
+		return i != 0
+	}
+	log.Printf("DB: %s.%s (id=%d): expected int64 (bool), got %T: %v",
+		sc.table, col, sc.id, v, v)
+	return false
+}
+
+// valInt extracts an int from a driver.Value without logging context
+// (used for parsing the row ID before scanCtx is created).
+func valInt(v driver.Value) int {
+	if v == nil {
+		return 0
+	}
+	if i, ok := v.(int64); ok {
+		return int(i)
+	}
+	return 0
+}
+
+// valString extracts a string from a driver.Value without logging
+// context (used for simple two-column queries without a row ID).
+func valString(v driver.Value) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
 }
 
 type SeriesRow struct {
@@ -110,6 +241,7 @@ type PatchRow struct {
 	Diff            string
 	Headers         string
 	Prefixes        string
+	PullURL         string
 	DetailFetched   bool
 	CommentsFetched bool
 	ChecksFetched   bool
@@ -198,8 +330,9 @@ func (d *DB) SaveSeriesSummary(
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	_, err := d.conn.Exec(`
-		INSERT INTO series (id, name, date, version)
-		VALUES (?,?,?,?)
+		INSERT INTO series (id, name, date, version,
+			submitter, submitter_email, web_url, mbox_url)
+		VALUES (?,?,?,?,'','','','')
 		ON CONFLICT(id) DO UPDATE SET
 			name = CASE WHEN excluded.name != ''
 				THEN excluded.name ELSE series.name END,
@@ -220,8 +353,9 @@ func (d *DB) SavePatch(p PatchRow) error {
 		INSERT INTO patches (id, series_id, name, date,
 			state, submitter, submitter_email,
 			delegate_id, delegate, delegate_email,
-			web_url, msgid, mbox_url, commit_ref, archived)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			web_url, msgid, mbox_url, commit_ref, archived,
+			pull_url)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			series_id = CASE WHEN excluded.series_id != 0
 				THEN excluded.series_id
@@ -241,12 +375,15 @@ func (d *DB) SavePatch(p PatchRow) error {
 				THEN excluded.mbox_url
 				ELSE patches.mbox_url END,
 			commit_ref = excluded.commit_ref,
-			archived = excluded.archived`,
+			archived = excluded.archived,
+			pull_url = CASE WHEN excluded.pull_url != ''
+				THEN excluded.pull_url
+				ELSE patches.pull_url END`,
 		p.ID, p.SeriesID, p.Name, p.Date,
 		p.State, p.Submitter, p.SubmitterEmail,
 		p.DelegateID, p.Delegate, p.DelegateEmail,
 		p.WebURL, p.MsgID, p.MboxURL,
-		p.CommitRef, boolToInt(p.Archived))
+		p.CommitRef, boolToInt(p.Archived), p.PullURL)
 	return err
 }
 
@@ -579,6 +716,91 @@ func (d *DB) GetSyncState(key string) string {
 	return value
 }
 
+func (d *DB) SaveProject(id int, name, listArchiveURLFormat string) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(`INSERT INTO projects (id, name, list_archive_url_format)
+		VALUES (?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			list_archive_url_format = excluded.list_archive_url_format`,
+		id, name, listArchiveURLFormat)
+}
+
+func (d *DB) GetListArchiveURLFormat() string {
+	var v string
+	d.conn.QueryRow(
+		"SELECT list_archive_url_format FROM projects LIMIT 1").Scan(&v)
+	return v
+}
+
+// UpdatePatchSeriesID sets series_id on a patch, but only if the
+// current series_id is 0 (orphan patch). This prevents overwriting
+// a real series association.
+func (d *DB) UpdatePatchSeriesID(patchID, seriesID int) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec("UPDATE patches SET series_id = ? WHERE id = ? AND series_id = 0",
+		seriesID, patchID)
+}
+
+// GetOldestActivePatchDate returns the oldest date among patches
+// with the given active states and archived = 0. Returns "" if
+// no active patches exist.
+func (d *DB) GetOldestActivePatchDate(states []string) string {
+	if len(states) == 0 {
+		return ""
+	}
+	ph := make([]string, len(states))
+	args := make([]interface{}, len(states))
+	for i, s := range states {
+		ph[i] = "?"
+		args[i] = s
+	}
+	var date string
+	d.conn.QueryRow(fmt.Sprintf(
+		`SELECT MIN(date) FROM patches
+		 WHERE state IN (%s) AND archived = 0`,
+		strings.Join(ph, ",")), args...).Scan(&date)
+	return date
+}
+
+// CreateSyntheticSeries creates synthetic series for orphan patches
+// (series_id = 0). Old Patchwork instances predate the series concept,
+// so these patches will never get a real series from the API. Uses
+// negative patch ID as series ID to avoid collision with real series.
+// Patches with pull_url are excluded — they are pull requests that
+// Patchwork didn't associate with their series.
+// Idempotent — safe to call multiple times.
+func (d *DB) CreateSyntheticSeries() {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	d.conn.Exec(`INSERT OR IGNORE INTO series
+		(id, name, date, version, detail_fetched,
+		 complete, total_patches, received_patches,
+		 submitter, submitter_email, web_url, mbox_url)
+		SELECT -p.id, p.name, p.date, 0, 1, 1, 1, 1,
+			COALESCE(p.submitter, ''),
+			COALESCE(p.submitter_email, ''),
+			COALESCE(p.web_url, ''),
+			COALESCE(p.mbox_url, '')
+		FROM patches p
+		WHERE p.series_id = 0 AND COALESCE(p.pull_url, '') = ''`)
+	d.conn.Exec(`UPDATE patches SET series_id = -id
+		WHERE series_id = 0 AND COALESCE(pull_url, '') = ''`)
+}
+
+// migrateOrphanPatches is a one-time migration that creates synthetic
+// series for existing orphan patches on database open.
+func (d *DB) migrateOrphanPatches() {
+	if d.GetSyncState("orphan_patch_migration") == "1" {
+		return
+	}
+	d.CreateSyntheticSeries()
+	d.RecomputeAllActiveFlags()
+	d.SetSyncState("orphan_patch_migration", "1")
+}
+
 func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 	if len(states) == 0 {
 		return nil
@@ -601,23 +823,25 @@ func (d *DB) GetActiveSeries(states []string) []SeriesRow {
 		ORDER BY s.date DESC`,
 		strings.Join(placeholders, ","))
 
-	rows, err := d.conn.Query(query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
 	var result []SeriesRow
-	for rows.Next() {
-		var r SeriesRow
-		rows.Scan(
-			&r.ID, &r.Name, &r.Date, &r.Version,
-			&r.Submitter, &r.SubmitterEmail,
-			&r.WebURL, &r.MboxURL, &r.Complete,
-			&r.TotalPatches, &r.ReceivedPatches,
-			&r.DetailFetched, &r.UpdatedAt)
-		result = append(result, r)
-	}
+	d.queryRows(query, args, 13, func(dest []driver.Value) {
+		sc := scanCtx{"series", valInt(dest[0])}
+		result = append(result, SeriesRow{
+			ID:              sc.id,
+			Name:            sc.strNN(dest[1], "name"),
+			Date:            sc.strNN(dest[2], "date"),
+			Version:         sc.int_(dest[3], "version"),
+			Submitter:       sc.str(dest[4], "submitter"),
+			SubmitterEmail:  sc.str(dest[5], "submitter_email"),
+			WebURL:          sc.str(dest[6], "web_url"),
+			MboxURL:         sc.str(dest[7], "mbox_url"),
+			Complete:        sc.bool_(dest[8], "complete"),
+			TotalPatches:    sc.int_(dest[9], "total_patches"),
+			ReceivedPatches: sc.int_(dest[10], "received_patches"),
+			DetailFetched:   sc.bool_(dest[11], "detail_fetched"),
+			UpdatedAt:       sc.str(dest[12], "updated_at"),
+		})
+	})
 	return result
 }
 
@@ -638,18 +862,10 @@ func (d *DB) GetCoverFetchStatus(
 		MIN(detail_fetched) = 1 AND MIN(comments_fetched) = 1
 		FROM covers WHERE series_id IN (` + sub + `)
 		GROUP BY series_id`
-	rows, err := d.conn.Query(query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	result := map[int]bool{}
-	for rows.Next() {
-		var sid int
-		var fetched bool
-		rows.Scan(&sid, &fetched)
-		result[sid] = fetched
-	}
+	d.queryRows(query, args, 2, func(dest []driver.Value) {
+		result[valInt(dest[0])] = valInt(dest[1]) != 0
+	})
 	return result
 }
 
@@ -669,43 +885,65 @@ func (d *DB) GetSeriesTotalPatches(seriesID int) int {
 }
 
 func (d *DB) GetAllSeries() []SeriesRow {
-	rows, err := d.conn.Query(`
-		SELECT DISTINCT s.id, s.name, s.date, s.version,
+	var result []SeriesRow
+	d.queryRows(`
+		SELECT s.id, s.name, s.date, s.version,
 			s.submitter, s.submitter_email,
 			s.web_url, s.mbox_url, s.complete,
 			s.total_patches, s.received_patches,
 			s.detail_fetched, COALESCE(s.updated_at, '')
 		FROM series s
-		JOIN patches p ON p.series_id = s.id
-		ORDER BY s.date DESC`)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var result []SeriesRow
-	for rows.Next() {
-		var r SeriesRow
-		rows.Scan(
-			&r.ID, &r.Name, &r.Date, &r.Version,
-			&r.Submitter, &r.SubmitterEmail,
-			&r.WebURL, &r.MboxURL, &r.Complete,
-			&r.TotalPatches, &r.ReceivedPatches,
-			&r.DetailFetched, &r.UpdatedAt)
-		result = append(result, r)
-	}
+		WHERE EXISTS (SELECT 1 FROM patches p WHERE p.series_id = s.id)
+		ORDER BY s.date DESC`, nil, 13, func(dest []driver.Value) {
+		sc := scanCtx{"series", valInt(dest[0])}
+		result = append(result, SeriesRow{
+			ID:              sc.id,
+			Name:            sc.strNN(dest[1], "name"),
+			Date:            sc.strNN(dest[2], "date"),
+			Version:         sc.int_(dest[3], "version"),
+			Submitter:       sc.str(dest[4], "submitter"),
+			SubmitterEmail:  sc.str(dest[5], "submitter_email"),
+			WebURL:          sc.str(dest[6], "web_url"),
+			MboxURL:         sc.str(dest[7], "mbox_url"),
+			Complete:        sc.bool_(dest[8], "complete"),
+			TotalPatches:    sc.int_(dest[9], "total_patches"),
+			ReceivedPatches: sc.int_(dest[10], "received_patches"),
+			DetailFetched:   sc.bool_(dest[11], "detail_fetched"),
+			UpdatedAt:       sc.str(dest[12], "updated_at"),
+		})
+	})
 	return result
 }
 
 func (d *DB) GetPatchesForSeries(seriesID int) []PatchRow {
-	rows, err := d.conn.Query(patchSelectSQL+
-		` WHERE series_id = ? ORDER BY date ASC`,
-		seriesID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	return scanPatches(rows)
+	var result []PatchRow
+	d.queryRows(patchSelectSQL+` WHERE series_id = ? ORDER BY date ASC`,
+		[]interface{}{seriesID}, 27, func(dest []driver.Value) {
+			sc := scanCtx{"patches", valInt(dest[0])}
+			result = append(result, PatchRow{
+				ID: sc.id, SeriesID: sc.int_(dest[1], "series_id"),
+				Name: sc.strNN(dest[2], "name"), Date: sc.strNN(dest[3], "date"),
+				State: sc.strNN(dest[4], "state"), Submitter: sc.str(dest[5], "submitter"),
+				SubmitterEmail: sc.str(dest[6], "submitter_email"),
+				DelegateID:     sc.int_(dest[7], "delegate_id"),
+				Delegate:       sc.str(dest[8], "delegate"),
+				DelegateEmail:  sc.str(dest[9], "delegate_email"),
+				WebURL:         sc.str(dest[10], "web_url"), MsgID: sc.str(dest[11], "msgid"),
+				MboxURL: sc.str(dest[12], "mbox_url"), CommitRef: sc.str(dest[13], "commit_ref"),
+				Archived:   sc.bool_(dest[14], "archived"),
+				ChecksPass: sc.int_(dest[15], "checks_pass"),
+				ChecksFail: sc.int_(dest[16], "checks_fail"),
+				ChecksWarn: sc.int_(dest[17], "checks_warn"),
+				Content:    sc.str(dest[18], "content"), Diff: sc.str(dest[19], "diff"),
+				Headers: sc.str(dest[20], "headers"), Prefixes: sc.str(dest[21], "prefixes"),
+				PullURL:         sc.str(dest[22], "pull_url"),
+				DetailFetched:   sc.bool_(dest[23], "detail_fetched"),
+				CommentsFetched: sc.bool_(dest[24], "comments_fetched"),
+				ChecksFetched:   sc.bool_(dest[25], "checks_fetched"),
+				UpdatedAt:       sc.str(dest[26], "updated_at"),
+			})
+		})
+	return result
 }
 
 func (d *DB) GetPatch(patchID int) (*PatchRow, error) {
@@ -738,6 +976,7 @@ const patchSelectSQL = `
 		COALESCE(diff, ''),
 		COALESCE(headers, ''),
 		COALESCE(prefixes, ''),
+		COALESCE(pull_url, ''),
 		detail_fetched,
 		comments_fetched,
 		checks_fetched,
@@ -756,19 +995,28 @@ func scanPatchRow(
 		&r.Archived, &r.ChecksPass, &r.ChecksFail,
 		&r.ChecksWarn,
 		&r.Content, &r.Diff, &r.Headers, &r.Prefixes,
+		&r.PullURL,
 		&r.DetailFetched, &r.CommentsFetched, &r.ChecksFetched,
 		&r.UpdatedAt)
 }
 
-func scanPatches(rows *sql.Rows) []PatchRow {
-	var result []PatchRow
-	for rows.Next() {
-		var r PatchRow
-		scanPatchRow(rows, &r)
-		result = append(result, r)
-	}
-	return result
-}
+// patchBatchSelectSQL selects only the lightweight fields needed
+// for the TUI table view. Heavy fields (content, diff, headers,
+// prefixes) are skipped to avoid loading multi-KB data for every
+// patch when building the row list.
+const patchBatchSelectSQL = `
+	SELECT id, COALESCE(series_id, 0), name, date, state,
+		COALESCE(submitter, ''),
+		COALESCE(submitter_email, ''),
+		COALESCE(delegate, ''),
+		COALESCE(archived, 0),
+		COALESCE(checks_pass, 0),
+		COALESCE(checks_fail, 0),
+		COALESCE(checks_warn, 0),
+		detail_fetched,
+		comments_fetched,
+		checks_fetched
+	FROM patches`
 
 func (d *DB) GetMaintainers() []MaintainerRow {
 	rows, err := d.conn.Query(`
@@ -814,20 +1062,11 @@ func (d *DB) ClearMaintainerUserID(username string) {
 }
 
 func (d *DB) GetDelegateDisplayNames() map[string]string {
-	rows, err := d.conn.Query(`
-		SELECT username, first_name FROM maintainers
-		WHERE first_name != ''`)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
 	result := map[string]string{}
-	for rows.Next() {
-		var username, firstName string
-		rows.Scan(&username, &firstName)
-		result[username] = firstName
-	}
+	d.queryRows(`SELECT username, first_name FROM maintainers
+		WHERE first_name != ''`, nil, 2, func(dest []driver.Value) {
+		result[valString(dest[0])] = valString(dest[1])
+	})
 	return result
 }
 
@@ -1084,8 +1323,8 @@ func (d *DB) seriesIDSubquery(
 	showAll bool, states []string,
 ) (string, []interface{}) {
 	if showAll {
-		return `SELECT DISTINCT s.id FROM series s
-			JOIN patches p ON p.series_id = s.id`, nil
+		return `SELECT DISTINCT series_id FROM patches
+			WHERE series_id != 0`, nil
 	}
 	parts := make([]string, len(states))
 	args := make([]interface{}, len(states))
@@ -1108,56 +1347,67 @@ func (d *DB) GetAllPatchesBatch(
 	showAll bool, states []string,
 ) map[int][]PatchRow {
 	sub, args := d.seriesIDSubquery(showAll, states)
-	query := patchSelectSQL +
+	query := patchBatchSelectSQL +
 		` WHERE series_id IN (` + sub + `) ORDER BY series_id, id`
-	rows, err := d.conn.Query(query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	result := map[int][]PatchRow{}
-	for rows.Next() {
-		var r PatchRow
-		scanPatchRow(rows, &r)
+	d.queryRows(query, args, 15, func(dest []driver.Value) {
+		sc := scanCtx{"patches", valInt(dest[0])}
+		r := PatchRow{
+			ID: sc.id, SeriesID: sc.int_(dest[1], "series_id"),
+			Name: sc.strNN(dest[2], "name"), Date: sc.strNN(dest[3], "date"),
+			State: sc.strNN(dest[4], "state"), Submitter: sc.str(dest[5], "submitter"),
+			SubmitterEmail:  sc.str(dest[6], "submitter_email"),
+			Delegate:        sc.str(dest[7], "delegate"),
+			Archived:        sc.bool_(dest[8], "archived"),
+			ChecksPass:      sc.int_(dest[9], "checks_pass"),
+			ChecksFail:      sc.int_(dest[10], "checks_fail"),
+			ChecksWarn:      sc.int_(dest[11], "checks_warn"),
+			DetailFetched:   sc.bool_(dest[12], "detail_fetched"),
+			CommentsFetched: sc.bool_(dest[13], "comments_fetched"),
+			ChecksFetched:   sc.bool_(dest[14], "checks_fetched"),
+		}
 		result[r.SeriesID] = append(result[r.SeriesID], r)
-	}
+	})
 	return result
 }
 
 // GetTagsBatch fetches all tags for all matching series in a
 // single query.  Tags can be on patches (patch_id > 0) or on
-// covers (cover_id > 0).  The LEFT JOINs with patches and
-// covers resolve the series_id for each tag.  The subquery
-// args are passed twice — once for the patches join filter and
-// once for the covers join filter.
+// covers (cover_id > 0).  Uses UNION ALL with INNER JOINs so
+// SQLite can use idx_tags_patch and idx_tags_cover indexes
+// instead of a full table scan.  The subquery args are passed
+// twice - once for the patches branch and once for the covers
+// branch.
 func (d *DB) GetTagsBatch(
 	showAll bool, states []string,
 ) map[int][]TagRow {
 	sub, subArgs := d.seriesIDSubquery(showAll, states)
 	query := `SELECT t.patch_id, t.cover_id, t.comment_id,
-		t.source, t.type, t.identity,
-		COALESCE(p.series_id, c.series_id) as series_id
+			t.source, t.type, t.identity, p.series_id
 		FROM tags t
-		LEFT JOIN patches p ON t.patch_id = p.id
-			AND t.patch_id > 0
-		LEFT JOIN covers c ON t.cover_id = c.id
-			AND t.cover_id > 0
-		WHERE p.series_id IN (` + sub + `)
-		   OR c.series_id IN (` + sub + `)`
+		JOIN patches p ON t.patch_id = p.id
+		WHERE t.patch_id > 0
+		  AND p.series_id IN (` + sub + `)
+		UNION ALL
+		SELECT t.patch_id, t.cover_id, t.comment_id,
+			t.source, t.type, t.identity, c.series_id
+		FROM tags t
+		JOIN covers c ON t.cover_id = c.id
+		WHERE t.cover_id > 0
+		  AND c.series_id IN (` + sub + `)`
 	args := append(subArgs, subArgs...)
-	rows, err := d.conn.Query(query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	result := map[int][]TagRow{}
-	for rows.Next() {
-		var r TagRow
-		var seriesID int
-		rows.Scan(&r.PatchID, &r.CoverID, &r.CommentID,
-			&r.Source, &r.Type, &r.Identity, &seriesID)
-		result[seriesID] = append(result[seriesID], r)
-	}
+	d.queryRows(query, args, 7, func(dest []driver.Value) {
+		seriesID := valInt(dest[6])
+		result[seriesID] = append(result[seriesID], TagRow{
+			PatchID:   valInt(dest[0]),
+			CoverID:   valInt(dest[1]),
+			CommentID: valInt(dest[2]),
+			Source:    dest[3].(string),
+			Type:      dest[4].(string),
+			Identity:  dest[5].(string),
+		})
+	})
 	return result
 }
 
@@ -1181,17 +1431,10 @@ func (d *DB) GetCommentCountsBatch(
 		WHERE cv.series_id IN (` + sub + `)
 	) sub GROUP BY sub.series_id`
 	args := append(subArgs, subArgs...)
-	rows, err := d.conn.Query(query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	result := map[int]int{}
-	for rows.Next() {
-		var seriesID, count int
-		rows.Scan(&seriesID, &count)
-		result[seriesID] = count
-	}
+	d.queryRows(query, args, 2, func(dest []driver.Value) {
+		result[valInt(dest[0])] = valInt(dest[1])
+	})
 	return result
 }
 
@@ -1205,17 +1448,10 @@ func (d *DB) GetPatchCommentCountsBatch(
 		JOIN patches p ON c.patch_id = p.id
 		WHERE p.series_id IN (` + sub + `)
 		GROUP BY c.patch_id`
-	rows, err := d.conn.Query(query, subArgs...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	result := map[int]int{}
-	for rows.Next() {
-		var patchID, count int
-		rows.Scan(&patchID, &count)
-		result[patchID] = count
-	}
+	d.queryRows(query, subArgs, 2, func(dest []driver.Value) {
+		result[valInt(dest[0])] = valInt(dest[1])
+	})
 	return result
 }
 
@@ -1234,25 +1470,19 @@ func (d *DB) GetCommentSubmittersBatch(
 		JOIN covers cv ON c.cover_id = cv.id WHERE cv.series_id IN (` + sub + `)
 	) sub ORDER BY sub.series_id, sub.date`
 	args := append(subArgs, subArgs...)
-	rows, err := d.conn.Query(query, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	result := map[int][]string{}
 	seen := map[int]map[string]bool{}
-	for rows.Next() {
-		var seriesID int
-		var submitter string
-		rows.Scan(&seriesID, &submitter)
-		if seen[seriesID] == nil {
-			seen[seriesID] = map[string]bool{}
+	d.queryRows(query, args, 2, func(dest []driver.Value) {
+		sid := valInt(dest[0])
+		name := valString(dest[1])
+		if seen[sid] == nil {
+			seen[sid] = map[string]bool{}
 		}
-		if !seen[seriesID][submitter] {
-			seen[seriesID][submitter] = true
-			result[seriesID] = append(result[seriesID], submitter)
+		if !seen[sid][name] {
+			seen[sid][name] = true
+			result[sid] = append(result[sid], name)
 		}
-	}
+	})
 	return result
 }
 
@@ -1268,25 +1498,19 @@ func (d *DB) GetPatchCommentSubmittersBatch(
 		JOIN patches p ON c.patch_id = p.id
 		WHERE p.series_id IN (` + sub + `)
 		ORDER BY c.patch_id, c.date`
-	rows, err := d.conn.Query(query, subArgs...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	result := map[int][]string{}
 	seen := map[int]map[string]bool{}
-	for rows.Next() {
-		var patchID int
-		var submitter string
-		rows.Scan(&patchID, &submitter)
-		if seen[patchID] == nil {
-			seen[patchID] = map[string]bool{}
+	d.queryRows(query, subArgs, 2, func(dest []driver.Value) {
+		pid := valInt(dest[0])
+		name := valString(dest[1])
+		if seen[pid] == nil {
+			seen[pid] = map[string]bool{}
 		}
-		if !seen[patchID][submitter] {
-			seen[patchID][submitter] = true
-			result[patchID] = append(result[patchID], submitter)
+		if !seen[pid][name] {
+			seen[pid][name] = true
+			result[pid] = append(result[pid], name)
 		}
-	}
+	})
 	return result
 }
 

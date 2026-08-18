@@ -54,7 +54,8 @@ Linux kernel netdev::
 Building
 --------
 
-Requires Go 1.24 or later.
+Requires Go 1.24 or later and a C compiler (gcc or clang) for the
+SQLite driver.
 
 ::
 

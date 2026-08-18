@@ -628,9 +628,12 @@ func formatSeriesReviews(patches []db.PatchRow, tags []db.TagRow) string {
 	return formatCount(a) + " " + formatCount(f) + " " + formatCount(r) + " " + formatCount(t)
 }
 
-func isTerminalState(state string) bool {
+func isTerminalState(state string, archived bool) bool {
+	if archived {
+		return true
+	}
 	switch state {
-	case "new", "under-review":
+	case "new", "under-review", "needs-ack":
 		return false
 	}
 	return true
@@ -661,7 +664,7 @@ func colorForSeries(
 ) string {
 	allTerminal := len(patches) > 0
 	for _, p := range patches {
-		if !isTerminalState(p.State) {
+		if !isTerminalState(p.State, p.Archived) {
 			allTerminal = false
 			break
 		}
@@ -777,7 +780,7 @@ func isPatchReviewed(patchID int, tags []db.TagRow) bool {
 func colorForPatch(
 	p db.PatchRow, tags []db.TagRow, commentCount int,
 ) string {
-	if isTerminalState(p.State) {
+	if isTerminalState(p.State, p.Archived) {
 		return "closed"
 	}
 	if isPatchReviewed(p.ID, tags) {
@@ -841,13 +844,17 @@ type comparePatch struct {
 	parsed   ParsedMbox
 }
 
-func buildComparePatches(patches []db.PatchRow) []comparePatch {
+func buildComparePatches(
+	patches []db.PatchRow, loreURL, archiveFormat string,
+) []comparePatch {
 	result := make([]comparePatch, len(patches))
 	for i, p := range patches {
+		parsed := BuildParsedMboxFromPatch(p)
+		parsed.URL = buildPatchURL(loreURL, archiveFormat, p.MsgID, p.WebURL)
 		result[i] = comparePatch{
 			id:       p.ID,
 			position: patchNumber(p.Name),
-			parsed:   BuildParsedMboxFromPatch(p),
+			parsed:   parsed,
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -856,10 +863,14 @@ func buildComparePatches(patches []db.PatchRow) []comparePatch {
 	return result
 }
 
-func buildCompareCover(cover *db.CoverRow) *ParsedMbox {
+func buildCompareCover(
+	cover *db.CoverRow, loreURL, archiveFormat, seriesURL string,
+) *ParsedMbox {
 	if cover == nil {
 		return nil
 	}
 	parsed := BuildParsedMboxFromCover(*cover)
+	parsed.URL = buildPatchURL(loreURL, archiveFormat, cover.MsgID, cover.WebURL)
+	parsed.SeriesURL = seriesURL
 	return &parsed
 }

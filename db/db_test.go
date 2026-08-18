@@ -5,6 +5,7 @@ package db
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -2804,5 +2805,274 @@ func TestNeedsSeriesDetail(t *testing.T) {
 	// Non-existent series
 	if !d.NeedsSeriesDetail(999) {
 		t.Error("non-existent series should need detail")
+	}
+}
+
+func TestUpdatePatchSeriesID(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 0,
+		Name: "Lorem orphan", State: "new", Date: "2026-01-01",
+	})
+	d.UpdatePatchSeriesID(100, -100)
+	row, _ := d.GetPatch(100)
+	if row.SeriesID != -100 {
+		t.Errorf("SeriesID = %d, want -100", row.SeriesID)
+	}
+}
+
+func TestUpdatePatchSeriesID_NoOverwrite(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "Lorem with series", State: "new", Date: "2026-01-01",
+	})
+	d.UpdatePatchSeriesID(100, -100)
+	row, _ := d.GetPatch(100)
+	if row.SeriesID != 50 {
+		t.Errorf("SeriesID = %d, want 50 (should not overwrite)",
+			row.SeriesID)
+	}
+}
+
+func TestOrphanPatchMigration(t *testing.T) {
+	// Use a temp file DB so we can close and reopen to trigger
+	// the real migrate() path with orphan patches present.
+	tmpFile, err := os.CreateTemp("", "leadlight-test-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".lock")
+
+	// First open: creates schema, migration runs but no orphans exist.
+	d, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SavePatch(PatchRow{
+		ID: 200, SeriesID: 0,
+		Name: "Lorem old patch", State: "new",
+		Date: "2018-06-01T10:00:00", Submitter: "Ipsum",
+	})
+	d.SavePatch(PatchRow{
+		ID: 201, SeriesID: 0,
+		Name: "Dolor old patch", State: "new",
+		Date: "2018-06-02T10:00:00", Submitter: "Amet",
+	})
+	// Reset migration flag so it runs again on next open.
+	d.SetSyncState("orphan_patch_migration", "")
+	d.Close()
+
+	// Second open: migrate() finds orphan patches and creates
+	// synthetic series.
+	d, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	// Verify patches now have synthetic series IDs.
+	row, _ := d.GetPatch(200)
+	if row.SeriesID != -200 {
+		t.Errorf("patch 200: SeriesID = %d, want -200", row.SeriesID)
+	}
+	row, _ = d.GetPatch(201)
+	if row.SeriesID != -201 {
+		t.Errorf("patch 201: SeriesID = %d, want -201", row.SeriesID)
+	}
+
+	// Verify synthetic series were created and are visible.
+	series := d.GetAllSeries()
+	found := map[int]bool{}
+	for _, s := range series {
+		found[s.ID] = true
+	}
+	if !found[-200] {
+		t.Error("synthetic series -200 not found")
+	}
+	if !found[-201] {
+		t.Error("synthetic series -201 not found")
+	}
+
+	// Verify detail_fetched is set (no unfetched dot).
+	for _, s := range series {
+		if s.ID == -200 || s.ID == -201 {
+			if !s.DetailFetched {
+				t.Errorf("series %d: DetailFetched should be true", s.ID)
+			}
+		}
+	}
+
+	// Verify migration flag prevents re-run.
+	if v := d.GetSyncState("orphan_patch_migration"); v != "1" {
+		t.Errorf("migration flag = %q, want '1'", v)
+	}
+}
+
+func TestCreateSyntheticSeries(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	// Insert orphan patches.
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 0,
+		Name: "Lorem orphan", State: "new",
+		Date: "2018-01-01T10:00:00", Submitter: "Ipsum",
+	})
+	d.SavePatch(PatchRow{
+		ID: 301, SeriesID: 0,
+		Name: "Dolor orphan", State: "accepted",
+		Date: "2018-01-02T10:00:00", Submitter: "Amet",
+	})
+	// Insert a normal patch — should not be affected.
+	d.SaveSeriesSummary(50, "Real series", "2026-01-01", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50,
+		Name: "Normal patch", State: "new",
+		Date: "2026-01-01T10:00:00", Submitter: "Sit",
+	})
+
+	d.CreateSyntheticSeries()
+
+	// Orphan patches should now have synthetic series IDs.
+	row, _ := d.GetPatch(300)
+	if row.SeriesID != -300 {
+		t.Errorf("patch 300: SeriesID = %d, want -300", row.SeriesID)
+	}
+	row, _ = d.GetPatch(301)
+	if row.SeriesID != -301 {
+		t.Errorf("patch 301: SeriesID = %d, want -301", row.SeriesID)
+	}
+	// Normal patch should be unaffected.
+	row, _ = d.GetPatch(100)
+	if row.SeriesID != 50 {
+		t.Errorf("patch 100: SeriesID = %d, want 50", row.SeriesID)
+	}
+
+	// Synthetic series should be visible.
+	all := d.GetAllSeries()
+	found := map[int]bool{}
+	for _, s := range all {
+		found[s.ID] = true
+	}
+	if !found[-300] || !found[-301] {
+		t.Error("synthetic series not found in GetAllSeries")
+	}
+	if !found[50] {
+		t.Error("real series 50 should still be present")
+	}
+}
+
+func TestCreateSyntheticSeries_SkipsPullRequests(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	// Orphan patch — should get a synthetic series.
+	d.SavePatch(PatchRow{
+		ID: 300, SeriesID: 0,
+		Name: "Lorem orphan", State: "new",
+		Date: "2018-01-01T10:00:00", Submitter: "Ipsum",
+	})
+	// Pull request — should NOT get a synthetic series.
+	d.SavePatch(PatchRow{
+		ID: 301, SeriesID: 0,
+		Name: "[net-next,v12,0/6] Lorem pull request", State: "new",
+		Date: "2018-01-02T10:00:00", Submitter: "Amet",
+		PullURL: "https://github.com/lorem/linux.git tags/lorem-v12",
+	})
+
+	d.CreateSyntheticSeries()
+
+	// Orphan should have synthetic series.
+	row, _ := d.GetPatch(300)
+	if row.SeriesID != -300 {
+		t.Errorf("patch 300: SeriesID = %d, want -300", row.SeriesID)
+	}
+	// Pull request should remain with series_id = 0.
+	row, _ = d.GetPatch(301)
+	if row.SeriesID != 0 {
+		t.Errorf("patch 301 (pull request): SeriesID = %d, want 0",
+			row.SeriesID)
+	}
+
+	// Only the orphan should have a synthetic series.
+	all := d.GetAllSeries()
+	for _, s := range all {
+		if s.ID == -301 {
+			t.Error("synthetic series -301 should not exist for pull request")
+		}
+	}
+}
+
+func TestCreateSyntheticSeries_Idempotent(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	d.SavePatch(PatchRow{
+		ID: 400, SeriesID: 0,
+		Name: "Lorem orphan", State: "new",
+		Date: "2018-01-01T10:00:00", Submitter: "Ipsum",
+	})
+
+	d.CreateSyntheticSeries()
+	d.CreateSyntheticSeries() // second call should be a no-op
+
+	row, _ := d.GetPatch(400)
+	if row.SeriesID != -400 {
+		t.Errorf("SeriesID = %d, want -400", row.SeriesID)
+	}
+
+	all := d.GetAllSeries()
+	count := 0
+	for _, s := range all {
+		if s.ID == -400 {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("synthetic series -400 appears %d times, want 1", count)
+	}
+}
+
+func TestGetOldestActivePatchDate(t *testing.T) {
+	d, _ := Open(":memory:")
+	defer d.Close()
+
+	// No patches — empty string.
+	if got := d.GetOldestActivePatchDate([]string{"new"}); got != "" {
+		t.Errorf("empty DB: got %q, want empty", got)
+	}
+
+	d.SaveSeriesSummary(50, "Lorem series", "2026-01-01", 1)
+	d.SavePatch(PatchRow{
+		ID: 100, SeriesID: 50, Name: "Newer",
+		State: "new", Date: "2026-03-01T10:00:00",
+	})
+	d.SavePatch(PatchRow{
+		ID: 101, SeriesID: 50, Name: "Older",
+		State: "new", Date: "2026-01-15T10:00:00",
+	})
+	// Archived patch — should be excluded.
+	d.SavePatch(PatchRow{
+		ID: 102, SeriesID: 50, Name: "Archived",
+		State: "new", Date: "2025-06-01T10:00:00", Archived: true,
+	})
+	// Terminal state — should be excluded.
+	d.SavePatch(PatchRow{
+		ID: 103, SeriesID: 50, Name: "Accepted",
+		State: "accepted", Date: "2025-01-01T10:00:00",
+	})
+
+	got := d.GetOldestActivePatchDate([]string{"new", "under-review"})
+	want := "2026-01-15T10:00:00"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

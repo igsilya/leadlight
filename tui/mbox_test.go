@@ -2182,6 +2182,85 @@ func TestBuildParsedMboxFromPatch_SubjectFromHeaders(t *testing.T) {
 	}
 }
 
+func TestUpgradeHTTP(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"http://pw.example.com/patch/1/", "https://pw.example.com/patch/1/"},
+		{"https://pw.example.com/patch/1/", "https://pw.example.com/patch/1/"},
+		{"", ""},
+		{"ftp://example.com", "ftp://example.com"},
+	}
+	for _, tt := range tests {
+		got := upgradeHTTP(tt.in)
+		if got != tt.want {
+			t.Errorf("upgradeHTTP(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestBuildPatchURL_UpgradesHTTP(t *testing.T) {
+	got := buildPatchURL("", "", "",
+		"http://pw.example.com/patch/1/")
+	want := "https://pw.example.com/patch/1/"
+	if got != want {
+		t.Errorf("buildPatchURL http = %q, want %q", got, want)
+	}
+}
+
+func TestBuildPatchURL_LorePriority(t *testing.T) {
+	got := buildPatchURL(
+		"https://lore.example.com/dev",
+		"https://archive.example.com/dev/{}",
+		"<msg@lorem.example>",
+		"https://pw.example.com/patch/1/")
+	want := "https://lore.example.com/dev/msg@lorem.example/"
+	if got != want {
+		t.Errorf("buildPatchURL lore = %q, want %q", got, want)
+	}
+}
+
+func TestBuildPatchURL_ArchiveFormat(t *testing.T) {
+	got := buildPatchURL(
+		"",
+		"https://archive.example.com/dev/{}",
+		"<msg@lorem.example>",
+		"https://pw.example.com/patch/1/")
+	want := "https://archive.example.com/dev/msg@lorem.example"
+	if got != want {
+		t.Errorf("buildPatchURL archive = %q, want %q", got, want)
+	}
+}
+
+func TestBuildPatchURL_WebFallback(t *testing.T) {
+	got := buildPatchURL("", "", "<msg@lorem.example>",
+		"https://pw.example.com/patch/1/")
+	if got != "https://pw.example.com/patch/1/" {
+		t.Errorf("buildPatchURL web = %q", got)
+	}
+}
+
+func TestBuildPatchURL_EmptyMsgID(t *testing.T) {
+	got := buildPatchURL(
+		"https://lore.example.com/dev",
+		"https://archive.example.com/dev/{}",
+		"",
+		"https://pw.example.com/patch/1/")
+	if got != "https://pw.example.com/patch/1/" {
+		t.Errorf("buildPatchURL empty msgid = %q", got)
+	}
+}
+
+func TestBuildPatchURL_LoreTrailingSlash(t *testing.T) {
+	got := buildPatchURL(
+		"https://lore.example.com/dev/",
+		"", "<msg@lorem.example>", "")
+	want := "https://lore.example.com/dev/msg@lorem.example/"
+	if got != want {
+		t.Errorf("buildPatchURL trailing slash = %q, want %q", got, want)
+	}
+}
+
 func TestFormatChecks_AllFourStates(t *testing.T) {
 	checks := []CheckInfo{
 		{Context: "ci/build", State: "success"},

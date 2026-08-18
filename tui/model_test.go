@@ -858,6 +858,36 @@ func TestFilterEditing_AllPrintableKeysAreTextInput(t *testing.T) {
 	}
 }
 
+func TestFilterEditing_Paste(t *testing.T) {
+	m := testModel()
+	m = pressKey(m, "/")
+	// Simulate a bracketed paste.
+	result, _ := m.Update(tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune("lorem ipsum"),
+		Paste: true,
+	})
+	m = result.(*Model)
+	if m.filterText != "lorem ipsum" {
+		t.Errorf("filterText = %q, want %q", m.filterText, "lorem ipsum")
+	}
+}
+
+func TestFilterEditing_PasteStripsControl(t *testing.T) {
+	m := testModel()
+	m = pressKey(m, "/")
+	result, _ := m.Update(tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune("lorem\nipsum"),
+		Paste: true,
+	})
+	m = result.(*Model)
+	want := "loremipsum"
+	if m.filterText != want {
+		t.Errorf("filterText = %q, want %q", m.filterText, want)
+	}
+}
+
 func TestFilterCommit(t *testing.T) {
 	m := testModel()
 	// Enter filter editing, type "lo", commit

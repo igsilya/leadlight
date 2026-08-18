@@ -266,6 +266,8 @@ func (s *Syncer) Run(ctx context.Context) {
 		s.notify()
 	}
 	s.backfillHistory(ctx)
+	s.fetchProjectInfo(ctx)
+	s.refreshArchivedPatches(ctx)
 	s.incrementalSync(ctx)
 
 	var wg gosync.WaitGroup
@@ -363,7 +365,8 @@ func (s *Syncer) runSyncLoop(ctx context.Context, wg *gosync.WaitGroup) {
 		s.incrementalSync(syncCtx)
 		s.status.Clear(status.Sync)
 		if time.Since(lastMaintainerRefresh) > maintainerRefresh {
-			s.fetchMaintainers(syncCtx)
+			s.fetchProjectInfo(syncCtx)
+			s.refreshArchivedPatches(syncCtx)
 			lastMaintainerRefresh = time.Now()
 		}
 	}
@@ -436,8 +439,8 @@ func (s *Syncer) initialSync(ctx context.Context) {
 	s.status.Set(status.Sync, "Fetching patch list...", true)
 	s.fetchListPages(ctx)
 	s.notify()
-	s.status.Set(status.Sync, "Fetching maintainers...", true)
-	s.fetchMaintainers(ctx)
+	s.status.Set(status.Sync, "Fetching project info...", true)
+	s.fetchProjectInfo(ctx)
 	s.status.Set(status.Sync, "Fetching patches...", true)
 	s.fetchAllActivePatches(ctx)
 
@@ -452,13 +455,17 @@ func (s *Syncer) initialSync(ctx context.Context) {
 			since = target
 		}
 	}
+	var fetched bool
 	if since != "" {
-		s.fetchPatchesSince(ctx, since, status.Sync)
+		fetched = s.fetchPatchesSince(ctx, since, status.Sync)
 		s.fetchSeriesSince(ctx, since, status.Sync)
 	}
 
 	s.status.Set(status.Sync, "Fetching events...", true)
 	s.fetchInitialEvents(ctx)
+	if fetched {
+		s.db.CreateSyntheticSeries()
+	}
 	s.db.RecomputeAllActiveFlags()
 	s.status.Clear(status.Sync)
 	s.db.SetSyncState("initial_sync_complete", "true")
@@ -505,10 +512,10 @@ func (s *Syncer) fetchListPages(ctx context.Context) {
 	}
 }
 
-func (s *Syncer) fetchMaintainers(ctx context.Context) {
+func (s *Syncer) fetchProjectInfo(ctx context.Context) {
 	project, err := s.client.GetProject(ctx, s.cfg.Project)
 	if err != nil {
-		log.Printf("fetch maintainers: %v", err)
+		log.Printf("fetch project info: %v", err)
 		return
 	}
 	rows := make([]db.MaintainerRow, len(project.Maintainers))
@@ -522,6 +529,54 @@ func (s *Syncer) fetchMaintainers(ctx context.Context) {
 		}
 	}
 	s.db.SaveMaintainers(rows)
+	archiveFmt := ""
+	if project.ListArchiveURLFormat != nil {
+		archiveFmt = *project.ListArchiveURLFormat
+	}
+	s.db.SaveProject(project.ID, project.Name, archiveFmt)
+}
+
+// refreshArchivedPatches detects patches that were archived on the
+// server after leadlight fetched them. Fetches archived patches from
+// the API that are newer than our oldest active patch in the DB.
+// Any that we have as active get updated directly from the API data.
+func (s *Syncer) refreshArchivedPatches(ctx context.Context) {
+	oldest := s.db.GetOldestActivePatchDate(db.ActiveStates)
+	if oldest == "" {
+		return
+	}
+	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
+		State:    db.ActiveStates,
+		Project:  s.cfg.Project,
+		Archived: "true",
+		Since:    oldest,
+	})
+	affected := map[int]bool{}
+	for pageURL != "" {
+		page, err := s.client.GetPatchesPage(ctx, pageURL)
+		if err != nil {
+			log.Printf("SYNC: refreshArchivedPatches: %v", err)
+			return
+		}
+		for _, p := range page.Items {
+			s.db.SavePatch(patchToRow(p))
+			if len(p.Series) > 0 {
+				sid := p.Series[0].ID
+				s.db.RecomputeActiveFlag(sid)
+				affected[sid] = true
+			}
+		}
+		pageURL = page.NextURL
+	}
+	if len(affected) > 0 {
+		ids := make([]int, 0, len(affected))
+		for id := range affected {
+			ids = append(ids, id)
+		}
+		s.notify(ids...)
+		log.Printf("SYNC: refreshed %d series with archived patches",
+			len(affected))
+	}
 }
 
 func (s *Syncer) fetchAllActivePatches(ctx context.Context) {
@@ -1055,7 +1110,15 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 		if !ref.IsActive {
 			s.lastTerminalPatchDetail = time.Now()
 		}
-		return ref.SeriesID
+		// Re-read series ID: fetchDetailForPatch may have created
+		// a synthetic series for a previously seriesless patch.
+		sid := ref.SeriesID
+		if sid == 0 {
+			if row, _ := s.db.GetPatch(ref.ID); row != nil {
+				sid = row.SeriesID
+			}
+		}
+		return sid
 	}
 	return 0
 }
@@ -1096,19 +1159,23 @@ func (s *Syncer) backfillHistory(ctx context.Context) {
 		return
 	}
 	target := s.cfg.HistoryLimit.Before().Format("2006-01-02T15:04:05")
-	s.fetchPatchesSince(ctx, target, status.History)
+	fetched := s.fetchPatchesSince(ctx, target, status.History)
 	s.fetchSeriesSince(ctx, target, status.History)
+	if fetched {
+		s.db.CreateSyntheticSeries()
+	}
 	s.db.RecomputeAllActiveFlags()
 	s.status.Clear(status.History)
 }
 
 // fetchPatchesSince fetches all patches (any state, including archived)
 // since the given date. Skips if the backfill_patches_since flag
-// indicates this range was already searched.
-func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey status.Key) {
+// indicates this range was already searched. Returns true if any
+// patches were fetched.
+func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey status.Key) bool {
 	searched := s.db.GetSyncState("backfill_patches_since")
 	if searched != "" && searched <= since {
-		return
+		return false
 	}
 
 	pageURL := s.client.BuildPatchesURL(api.PatchListParams{
@@ -1117,20 +1184,22 @@ func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey 
 		Order:   "-date",
 	})
 	pageNum := 0
+	fetched := false
 
 	for pageURL != "" {
 		pageNum++
 		page, err := s.client.GetPatchesPage(ctx, pageURL)
 		if err != nil {
 			log.Printf("SYNC: fetchPatchesSince: %v", err)
-			return
+			return fetched
 		}
 		s.status.Set(statusKey,
 			fmt.Sprintf("Fetching all patches (%s)...",
 				pageProgress(pageNum, page.TotalPages)), true)
 		if len(page.Items) == 0 {
-			return
+			return fetched
 		}
+		fetched = true
 		for _, p := range page.Items {
 			s.db.SavePatch(patchToRow(p))
 			for _, ss := range p.Series {
@@ -1141,6 +1210,7 @@ func (s *Syncer) fetchPatchesSince(ctx context.Context, since string, statusKey 
 		pageURL = page.NextURL
 	}
 	s.db.SetSyncState("backfill_patches_since", since)
+	return fetched
 }
 
 // fetchSeriesSince fetches all series since the given date. Saves
@@ -1335,6 +1405,24 @@ func (s *Syncer) fetchDetailForPatch(
 	s.db.SavePatch(patchToRow(detail.Patch))
 	for _, ss := range detail.Series {
 		s.db.SaveSeriesSummary(ss.ID, ss.Name, ss.Date, ss.Version)
+	}
+	// Permanently seriesless patch — create a synthetic series so
+	// the patch is visible in the TUI. Uses -patchID as series ID
+	// to avoid collision with real series. Pull requests are
+	// excluded — they are not real patches.
+	if len(detail.Series) == 0 && detail.PullURL == nil {
+		row, _ := s.db.GetPatch(patchID)
+		if row != nil && row.SeriesID == 0 {
+			sid := -patchID
+			s.db.SaveSeries(db.SeriesRow{
+				ID: sid, Name: row.Name, Date: row.Date,
+				Submitter: row.Submitter, SubmitterEmail: row.SubmitterEmail,
+				WebURL: row.WebURL, Complete: true,
+				TotalPatches: 1, ReceivedPatches: 1,
+			})
+			s.db.UpdatePatchSeriesID(patchID, sid)
+			s.db.RecomputeActiveFlag(sid)
+		}
 	}
 	if seriesID != 0 {
 		s.db.RecomputeActiveFlag(seriesID)
@@ -1626,6 +1714,9 @@ func patchToRow(p api.Patch) db.PatchRow {
 	}
 	if p.CommitRef != nil {
 		r.CommitRef = *p.CommitRef
+	}
+	if p.PullURL != nil {
+		r.PullURL = *p.PullURL
 	}
 	if p.Delegate != nil {
 		r.DelegateID = p.Delegate.ID

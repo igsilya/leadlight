@@ -4,6 +4,7 @@
 .PHONY: all tidy audit test build install vendor
 
 GOFLAGS := -mod=vendor
+export CGO_ENABLED := 1
 
 all: tidy audit test build
 

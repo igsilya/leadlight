@@ -20,13 +20,15 @@ import (
 )
 
 type ParsedMbox struct {
-	Subject string
-	From    string
-	To      string
-	Cc      string
-	Date    string
-	Body    string
-	Diff    string
+	Subject   string
+	From      string
+	To        string
+	Cc        string
+	Date      string
+	URL       string
+	SeriesURL string
+	Body      string
+	Diff      string
 }
 
 // parseJSONHeaders parses the JSON-encoded headers string from the DB
@@ -103,6 +105,27 @@ func formatFrom(name, email string) string {
 	return email
 }
 
+// upgradeHTTP converts http:// URLs to https://.
+func upgradeHTTP(u string) string {
+	if strings.HasPrefix(u, "http://") {
+		return "https://" + u[len("http://"):]
+	}
+	return u
+}
+
+// buildPatchURL returns the best available URL for a patch or cover.
+// Priority: lore URL > list archive URL format > patchwork web URL.
+func buildPatchURL(loreURL, archiveFormat, msgid, webURL string) string {
+	id := strings.Trim(msgid, "<>")
+	if loreURL != "" && id != "" {
+		return upgradeHTTP(strings.TrimRight(loreURL, "/") + "/" + id + "/")
+	}
+	if archiveFormat != "" && id != "" {
+		return upgradeHTTP(strings.Replace(archiveFormat, "{}", id, 1))
+	}
+	return upgradeHTTP(webURL)
+}
+
 // BuildParsedMboxFromPatch constructs a ParsedMbox from patch detail
 // data, eliminating the need for a separate mbox HTTP fetch.
 func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
@@ -111,6 +134,7 @@ func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 			Subject: row.Name,
 			From:    formatFrom(row.Submitter, row.SubmitterEmail),
 			Date:    row.Date,
+			URL:     row.WebURL,
 			Body:    row.Content,
 			Diff:    row.Diff,
 		}
@@ -133,6 +157,7 @@ func BuildParsedMboxFromPatch(row db.PatchRow) ParsedMbox {
 		To:      decodeHeader(compactHeader(getHeader(row.Headers, "To"))),
 		Cc:      decodeHeader(compactHeader(getHeader(row.Headers, "Cc"))),
 		Date:    date,
+		URL:     row.WebURL,
 		Body:    row.Content,
 		Diff:    row.Diff,
 	}
@@ -145,6 +170,7 @@ func BuildParsedMboxFromCover(row db.CoverRow) ParsedMbox {
 		return ParsedMbox{
 			Subject: row.Name,
 			Date:    row.Date,
+			URL:     row.WebURL,
 			Body:    row.Content,
 		}
 	}
@@ -166,6 +192,7 @@ func BuildParsedMboxFromCover(row db.CoverRow) ParsedMbox {
 		To:      decodeHeader(compactHeader(getHeader(row.Headers, "To"))),
 		Cc:      decodeHeader(compactHeader(getHeader(row.Headers, "Cc"))),
 		Date:    date,
+		URL:     row.WebURL,
 		Body:    row.Content,
 	}
 }
@@ -274,6 +301,8 @@ func FormatMboxParts(
 	writeHeader(&hb, "To:      ", p.To, collapse, labelWidth, valWidth)
 	writeHeader(&hb, "Cc:      ", p.Cc, collapse, labelWidth, valWidth)
 	writeHeader(&hb, "Date:    ", p.Date, false, labelWidth, valWidth)
+	writeHeader(&hb, "URL:     ", p.URL, false, labelWidth, valWidth)
+	writeHeader(&hb, "Series:  ", p.SeriesURL, false, labelWidth, valWidth)
 	headers = hb.String()
 
 	if p.Body != "" {
@@ -1018,7 +1047,7 @@ func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[stri
 	if url == "" {
 		url = c.WebURL
 	}
-	writeHeader(&b, "URL:     ", url, false, labelWidth, valWidth)
+	writeHeader(&b, "URL:     ", upgradeHTTP(url), false, labelWidth, valWidth)
 
 	if c.Content != "" {
 		b.WriteByte('\n')

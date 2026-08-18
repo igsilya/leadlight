@@ -683,14 +683,20 @@ func TestIsTerminalState(t *testing.T) {
 		"deferred", "changes-requested", "rfc",
 	}
 	for _, s := range terminal {
-		if !isTerminalState(s) {
+		if !isTerminalState(s, false) {
 			t.Errorf("%q should be terminal", s)
 		}
 	}
-	active := []string{"new", "under-review"}
+	active := []string{"new", "under-review", "needs-ack"}
 	for _, s := range active {
-		if isTerminalState(s) {
+		if isTerminalState(s, false) {
 			t.Errorf("%q should NOT be terminal", s)
+		}
+	}
+	// Archived patches are always terminal regardless of state.
+	for _, s := range active {
+		if !isTerminalState(s, true) {
+			t.Errorf("%q+archived should be terminal", s)
 		}
 	}
 }
