@@ -1222,4 +1222,79 @@ func TestSeriesToRow_FetchedStatus(t *testing.T) {
 	}
 }
 
+func TestSeriesToRow_SubRowsSortedByPatchNumber(t *testing.T) {
+	d := time.Now().UTC().Format("2006-01-02T15:04:05")
+	tests := []struct {
+		name       string
+		listPrefix string
+		patches    []db.PatchRow
+		want       []string
+	}{
+		{
+			"out of order",
+			"",
+			[]db.PatchRow{
+				{ID: 103, Name: "[PATCH 3/4] third", Date: d, State: "new"},
+				{ID: 101, Name: "[PATCH 1/4] first", Date: d, State: "new"},
+				{ID: 104, Name: "[PATCH 4/4] fourth", Date: d, State: "new"},
+				{ID: 102, Name: "[PATCH 2/4] second", Date: d, State: "new"},
+			},
+			[]string{"101", "102", "103", "104"},
+		},
+		{
+			"already sorted",
+			"",
+			[]db.PatchRow{
+				{ID: 201, Name: "[PATCH 1/3] alpha", Date: d, State: "new"},
+				{ID: 202, Name: "[PATCH 2/3] beta", Date: d, State: "new"},
+				{ID: 203, Name: "[PATCH 3/3] gamma", Date: d, State: "new"},
+			},
+			[]string{"201", "202", "203"},
+		},
+		{
+			// IDs are assigned in the opposite order of the patch
+			// numbers, so sorting by ID would produce the wrong result.
+			"IDs don't match patch number order",
+			"",
+			[]db.PatchRow{
+				{ID: 303, Name: "[PATCH 1/3] a", Date: d, State: "new"},
+				{ID: 302, Name: "[PATCH 2/3] b", Date: d, State: "new"},
+				{ID: 301, Name: "[PATCH 3/3] c", Date: d, State: "new"},
+			},
+			[]string{"303", "302", "301"},
+		},
+		{
+			"no position marker preserves original order",
+			"",
+			[]db.PatchRow{
+				{ID: 402, Name: "second patch", Date: d, State: "new"},
+				{ID: 401, Name: "first patch", Date: d, State: "new"},
+			},
+			[]string{"402", "401"},
+		},
+		{
+			"with list prefix",
+			"mylist",
+			[]db.PatchRow{
+				{ID: 502, Name: "[mylist,2/2] second", Date: d, State: "new"},
+				{ID: 501, Name: "[mylist,1/2] first", Date: d, State: "new"},
+			},
+			[]string{"501", "502"},
+		},
+	}
+	for _, tt := range tests {
+		s := db.SeriesRow{
+			Name: tt.name, Date: d, TotalPatches: len(tt.patches),
+		}
+		row := seriesToRow(s, tt.patches, tt.listPrefix,
+			nil, nil, 0, nil, nil, nil, nil)
+		for i, want := range tt.want {
+			if i < len(row.SubRows) && row.SubRows[i][ColID] != want {
+				t.Errorf("%s: SubRow[%d] ID = %q, want %q",
+					tt.name, i, row.SubRows[i][ColID], want)
+			}
+		}
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }

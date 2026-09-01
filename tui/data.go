@@ -427,6 +427,10 @@ func seriesToRow(
 		},
 	}
 
+	sort.SliceStable(patches, func(i, j int) bool {
+		return patchNumber(patches[i].Name) < patchNumber(patches[j].Name)
+	})
+
 	row.SubRows = make([][]string, len(patches))
 	row.SubRowStyles = make([]RowStyle, len(patches))
 	row.SubRowFetched = make([]bool, len(patches))
