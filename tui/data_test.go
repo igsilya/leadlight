@@ -1222,4 +1222,105 @@ func TestSeriesToRow_FetchedStatus(t *testing.T) {
 	}
 }
 
+func TestSeriesToRow_SubRowsSortedByPatchNumber(t *testing.T) {
+	d := time.Now().UTC().Format("2006-01-02T15:04:05")
+	s := db.SeriesRow{
+		ID: 1, Name: "Sort test series", Date: d, TotalPatches: 4,
+	}
+
+	t.Run("out of order", func(t *testing.T) {
+		patches := []db.PatchRow{
+			{ID: 103, Name: "[PATCH 3/4] third", Date: d, State: "new"},
+			{ID: 101, Name: "[PATCH 1/4] first", Date: d, State: "new"},
+			{ID: 104, Name: "[PATCH 4/4] fourth", Date: d, State: "new"},
+			{ID: 102, Name: "[PATCH 2/4] second", Date: d, State: "new"},
+		}
+		row := seriesToRow(s, patches, "", nil, nil, 0, nil, nil, nil, nil)
+		if len(row.SubRows) != 4 {
+			t.Fatalf("SubRows = %d, want 4", len(row.SubRows))
+		}
+		wantIDs := []string{"101", "102", "103", "104"}
+		for i, want := range wantIDs {
+			if row.SubRows[i][ColID] != want {
+				t.Errorf("SubRow[%d] ID = %q, want %q",
+					i, row.SubRows[i][ColID], want)
+			}
+		}
+	})
+
+	t.Run("already sorted", func(t *testing.T) {
+		patches := []db.PatchRow{
+			{ID: 201, Name: "[PATCH 1/3] alpha", Date: d, State: "new"},
+			{ID: 202, Name: "[PATCH 2/3] beta", Date: d, State: "new"},
+			{ID: 203, Name: "[PATCH 3/3] gamma", Date: d, State: "new"},
+		}
+		s3 := db.SeriesRow{
+			ID: 2, Name: "Already sorted", Date: d, TotalPatches: 3,
+		}
+		row := seriesToRow(s3, patches, "", nil, nil, 0, nil, nil, nil, nil)
+		wantIDs := []string{"201", "202", "203"}
+		for i, want := range wantIDs {
+			if row.SubRows[i][ColID] != want {
+				t.Errorf("SubRow[%d] ID = %q, want %q",
+					i, row.SubRows[i][ColID], want)
+			}
+		}
+	})
+
+	t.Run("reverse order", func(t *testing.T) {
+		patches := []db.PatchRow{
+			{ID: 303, Name: "[PATCH 3/3] c", Date: d, State: "new"},
+			{ID: 302, Name: "[PATCH 2/3] b", Date: d, State: "new"},
+			{ID: 301, Name: "[PATCH 1/3] a", Date: d, State: "new"},
+		}
+		s3 := db.SeriesRow{
+			ID: 3, Name: "Reversed", Date: d, TotalPatches: 3,
+		}
+		row := seriesToRow(s3, patches, "", nil, nil, 0, nil, nil, nil, nil)
+		wantIDs := []string{"301", "302", "303"}
+		for i, want := range wantIDs {
+			if row.SubRows[i][ColID] != want {
+				t.Errorf("SubRow[%d] ID = %q, want %q",
+					i, row.SubRows[i][ColID], want)
+			}
+		}
+	})
+
+	t.Run("no position marker preserves original order", func(t *testing.T) {
+		patches := []db.PatchRow{
+			{ID: 402, Name: "second patch", Date: d, State: "new"},
+			{ID: 401, Name: "first patch", Date: d, State: "new"},
+		}
+		s2 := db.SeriesRow{
+			ID: 4, Name: "No positions", Date: d, TotalPatches: 2,
+		}
+		row := seriesToRow(s2, patches, "", nil, nil, 0, nil, nil, nil, nil)
+		if row.SubRows[0][ColID] != "402" {
+			t.Errorf("SubRow[0] ID = %q, want 402 (original order preserved)",
+				row.SubRows[0][ColID])
+		}
+		if row.SubRows[1][ColID] != "401" {
+			t.Errorf("SubRow[1] ID = %q, want 401 (original order preserved)",
+				row.SubRows[1][ColID])
+		}
+	})
+
+	t.Run("with list prefix", func(t *testing.T) {
+		patches := []db.PatchRow{
+			{ID: 502, Name: "[mylist,2/2] second", Date: d, State: "new"},
+			{ID: 501, Name: "[mylist,1/2] first", Date: d, State: "new"},
+		}
+		s2 := db.SeriesRow{
+			ID: 5, Name: "List prefix test", Date: d, TotalPatches: 2,
+		}
+		row := seriesToRow(s2, patches, "mylist", nil, nil, 0, nil, nil, nil, nil)
+		if row.SubRows[0][ColID] != "501" {
+			t.Errorf("SubRow[0] ID = %q, want 501", row.SubRows[0][ColID])
+		}
+		if row.SubRows[1][ColID] != "502" {
+			t.Errorf("SubRow[1] ID = %q, want 502", row.SubRows[1][ColID])
+		}
+	})
+}
+
 func boolPtr(v bool) *bool { return &v }
