@@ -469,6 +469,9 @@ func TestGetEvents(t *testing.T) {
 			if r.URL.Query().Get("since") != "2026-03-10" {
 				t.Errorf("since = %q", r.URL.Query().Get("since"))
 			}
+			if r.URL.Query().Get("category") != "patch-created" {
+				t.Errorf("category = %q", r.URL.Query().Get("category"))
+			}
 			w.Write([]byte(`[
 				{
 					"id": 1,
@@ -493,8 +496,9 @@ func TestGetEvents(t *testing.T) {
 		}))
 
 	params := EventListParams{
-		Since:   "2026-03-10",
-		Project: "test-project",
+		Since:    "2026-03-10",
+		Project:  "test-project",
+		Category: "patch-created",
 	}
 	events, err := c.GetEvents(context.Background(), params)
 	if err != nil {
@@ -509,6 +513,25 @@ func TestGetEvents(t *testing.T) {
 	}
 	if p.Patch.ID != 100 {
 		t.Errorf("Patch.ID = %d", p.Patch.ID)
+	}
+}
+
+func TestBuildEventsURL_Category(t *testing.T) {
+	c := testClient(t, http.NotFoundHandler())
+
+	url := c.BuildEventsURL(EventListParams{
+		Project:  "test-project",
+		Order:    "-id",
+		Category: "patch-comment-created",
+	})
+	if !strings.Contains(url, "category=patch-comment-created") {
+		t.Errorf("url missing category: %s", url)
+	}
+
+	// Category omitted when empty.
+	url = c.BuildEventsURL(EventListParams{Project: "test-project"})
+	if strings.Contains(url, "category=") {
+		t.Errorf("url should not contain category: %s", url)
 	}
 }
 

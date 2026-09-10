@@ -455,6 +455,74 @@ func TestSaveCover(t *testing.T) {
 	}
 }
 
+func TestInsertCoverIfAbsent(t *testing.T) {
+	d := openTestDB(t)
+
+	// Inserts when absent.
+	if err := d.InsertCoverIfAbsent(CoverRow{
+		ID: 99, SeriesID: 50, Name: "bare", Date: "2026-03-10",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !d.CoverExists(99) {
+		t.Fatal("cover 99 should exist after insert")
+	}
+
+	// A richer row is written by the detail loop.
+	d.SaveCover(CoverRow{
+		ID: 99, SeriesID: 50, Name: "rich",
+		Submitter: "Dolor Amet", SubmitterEmail: "dolor@amet.example",
+		Date: "2026-03-10T12:00:00",
+	})
+
+	// A subsequent sparse InsertCoverIfAbsent must NOT clobber it.
+	if err := d.InsertCoverIfAbsent(CoverRow{
+		ID: 99, Name: "bare-again",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := d.GetCover(50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Name != "rich" {
+		t.Errorf("Name = %q, want rich (should not be clobbered)", row.Name)
+	}
+	if row.Submitter != "Dolor Amet" {
+		t.Errorf("Submitter = %q, want preserved", row.Submitter)
+	}
+}
+
+func TestUpdateCoverSeriesID(t *testing.T) {
+	d := openTestDB(t)
+
+	// Bare cover with no series link.
+	d.InsertCoverIfAbsent(CoverRow{ID: 99, Name: "bare", Date: "2026-03-10"})
+
+	// Fills when unset.
+	if err := d.UpdateCoverSeriesID(99, 50); err != nil {
+		t.Fatal(err)
+	}
+	row, err := d.GetCover(50)
+	if err != nil {
+		t.Fatalf("cover should be linked to series 50: %v", err)
+	}
+	if row.ID != 99 {
+		t.Errorf("cover ID = %d, want 99", row.ID)
+	}
+
+	// Does not override an existing link.
+	if err := d.UpdateCoverSeriesID(99, 77); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.GetCover(77); err == nil {
+		t.Error("series link should not have been overridden to 77")
+	}
+	if _, err := d.GetCover(50); err != nil {
+		t.Error("series link 50 should be preserved")
+	}
+}
+
 func TestUpdateCoverDetail(t *testing.T) {
 	d := openTestDB(t)
 
@@ -1566,6 +1634,19 @@ func TestGetOldestPatchDate(t *testing.T) {
 
 	if v := d.GetOldestPatchDate(); v != "2026-01-05T08:00:00" {
 		t.Errorf("got %q", v)
+	}
+}
+
+func TestGetCoverSeriesID(t *testing.T) {
+	d := openTestDB(t)
+	d.SaveCover(CoverRow{ID: 99, SeriesID: 50, Date: "2026-03-10"})
+
+	got, err := d.GetCoverSeriesID(99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 50 {
+		t.Errorf("series ID = %d, want 50", got)
 	}
 }
 

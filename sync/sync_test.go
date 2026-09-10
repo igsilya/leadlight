@@ -6,10 +6,12 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	gosync "sync"
 	"testing"
 	"time"
 
@@ -57,8 +59,15 @@ func setupSyncer(
 
 	s := NewSyncer(client, d, cfg, func(...int) {},
 		status.NewRegistry(nil))
+	// Pin the clock so date-bounded logic (comment backfill window) is
+	// deterministic and independent of the real wall-clock date.
+	s.now = func() time.Time { return testNow }
 	return s, d
 }
+
+// testNow is the fixed "current time" used by tests, chosen to sit just
+// after the 2026-03 fixtures so the comment backfill window includes them.
+var testNow = time.Date(2026, 3, 20, 0, 0, 0, 0, time.UTC)
 
 func savePatch(d *db.DB, id int, name, date, state string) {
 	d.SavePatch(db.PatchRow{
@@ -777,6 +786,52 @@ func TestProcessEvent_PatchCommentCreated(t *testing.T) {
 	}
 }
 
+func TestProcessEvent_PatchCommentCreated_SkipsWhenCommentKnown(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	savePatch(d, 100, "test", "2026-03-10", "new")
+	d.MarkCommentsFetched(100)
+	// We already have comment 301.
+	d.InsertComment(db.CommentRow{ID: 301, PatchID: 100})
+
+	ev := api.Event{
+		Category: "patch-comment-created",
+		Payload: &api.PatchCommentCreatedPayload{
+			Patch:   api.PatchSummary{ID: 100},
+			Comment: api.CommentSummary{ID: 301},
+		},
+	}
+	if err := s.processEvent(ev, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Comment already present -> no reset, stays fetched.
+	if d.NeedsPatchComments(100) {
+		t.Error("patch should remain fetched (comment already known)")
+	}
+}
+
+func TestProcessEvent_PatchCommentCreated_ResetsForNewComment(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	savePatch(d, 100, "test", "2026-03-10", "new")
+	d.MarkCommentsFetched(100)
+	// We have an older comment, but not the new one (302).
+	d.InsertComment(db.CommentRow{ID: 301, PatchID: 100})
+
+	ev := api.Event{
+		Category: "patch-comment-created",
+		Payload: &api.PatchCommentCreatedPayload{
+			Patch:   api.PatchSummary{ID: 100},
+			Comment: api.CommentSummary{ID: 302},
+		},
+	}
+	if err := s.processEvent(ev, 0); err != nil {
+		t.Fatal(err)
+	}
+	// New comment -> reset for re-fetch even though row was fetched.
+	if !d.NeedsPatchComments(100) {
+		t.Error("patch should be reset for a genuinely new comment")
+	}
+}
+
 func TestProcessEvent_CoverCommentCreated(t *testing.T) {
 	s, d := setupSyncer(t, http.NotFoundHandler())
 	d.SaveCover(db.CoverRow{
@@ -806,6 +861,593 @@ func TestProcessEvent_CoverCommentCreated(t *testing.T) {
 	ids = d.GetCoversNeedingComments(100)
 	if len(ids) != 1 || ids[0].ID != 99 {
 		t.Errorf("got %v, want [99] (reset by event)", ids)
+	}
+}
+
+func TestProcessEvent_StateChangeCreatesMissingPatch(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+
+	// Patch 500 was never seen (its patch-created event was skipped).
+	if _, err := d.GetPatch(500); err == nil {
+		t.Fatal("patch 500 should not exist yet")
+	}
+
+	ev := api.Event{
+		ID:       9,
+		Category: "patch-state-changed",
+		Date:     "2026-03-11T00:00:00",
+		Payload: &api.PatchStateChangedPayload{
+			Patch: api.PatchSummary{
+				ID:   500,
+				Name: "[PATCH] recovered",
+				Date: "2026-03-10T00:00:00",
+			},
+			PreviousState: "new",
+			CurrentState:  "accepted",
+		},
+	}
+
+	if err := s.processEvent(ev, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	row, err := d.GetPatch(500)
+	if err != nil {
+		t.Fatalf("patch 500 should have been created: %v", err)
+	}
+	if row.State != "accepted" {
+		t.Errorf("state = %q, want accepted", row.State)
+	}
+	if row.Name != "[PATCH] recovered" {
+		t.Errorf("name = %q, want recovered", row.Name)
+	}
+}
+
+func TestProcessEvent_PatchCommentCreatesMissingPatch(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+
+	ev := api.Event{
+		Category: "patch-comment-created",
+		Payload: &api.PatchCommentCreatedPayload{
+			Patch: api.PatchSummary{
+				ID:   600,
+				Name: "[PATCH] with comment",
+				Date: "2026-03-10T00:00:00",
+			},
+			Comment: api.CommentSummary{ID: 700},
+		},
+	}
+
+	if err := s.processEvent(ev, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.GetPatch(600); err != nil {
+		t.Fatalf("patch 600 should have been created: %v", err)
+	}
+	// Newly created row defaults comments_fetched=0, so it needs a fetch.
+	ids := d.GetPatchesNeedingComments(10)
+	found := false
+	for _, r := range ids {
+		if r.ID == 600 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("patch 600 should be queued for comment fetch")
+	}
+}
+
+func TestProcessEvent_CoverCommentCreatesMissingCover(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+
+	ev := api.Event{
+		Category: "cover-comment-created",
+		Payload: &api.CoverCommentCreatedPayload{
+			Cover: api.CoverSummary{
+				ID:   800,
+				Name: "[PATCH 0/2] cover",
+				Date: "2026-03-10T00:00:00",
+			},
+			Comment: api.CommentSummary{ID: 900},
+		},
+	}
+
+	if err := s.processEvent(ev, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if !d.CoverExists(800) {
+		t.Fatal("cover 800 should have been created")
+	}
+	ids := d.GetCoversNeedingComments(10)
+	found := false
+	for _, r := range ids {
+		if r.ID == 800 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("cover 800 should be queued for comment fetch")
+	}
+}
+
+func TestProcessEvent_PatchRelationCreatesMissingPatch(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	previous, current := "", "related"
+	ev := api.Event{
+		Category: "patch-relation-changed",
+		Payload: &api.PatchRelationChangedPayload{
+			Patch: api.PatchSummary{
+				ID:   100,
+				Name: "[PATCH] relation update",
+				Date: "2026-03-10T00:00:00",
+			},
+			PreviousRelation: &previous,
+			CurrentRelation:  &current,
+		},
+	}
+
+	if err := s.processEvent(ev, 50); err != nil {
+		t.Fatal(err)
+	}
+	row, err := d.GetPatch(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.SeriesID != 50 || row.Name != "[PATCH] relation update" {
+		t.Errorf("patch = %+v", row)
+	}
+	if got := s.seriesIDForEventPatch(ev); got != 50 {
+		t.Errorf("series ID = %d, want 50", got)
+	}
+}
+
+func TestCheckEventCategories_MarksAndAdvancesCursor(t *testing.T) {
+	queried := map[string]bool{}
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/events/" {
+				w.WriteHeader(404)
+				return
+			}
+			cat := r.URL.Query().Get("category")
+			queried[cat] = true
+			page := r.URL.Query().Get("page")
+			if page == "2" {
+				w.WriteHeader(404)
+				w.Write([]byte(`{"detail":"Invalid page."}`))
+				return
+			}
+			if cat == "patch-comment-created" {
+				// Comment 1002 is new, 1001 already stored.
+				w.Write([]byte(`[
+					{"id":50, "category":"patch-comment-created",
+					 "project":` + testProjectJSON + `,
+					 "date":"2026-03-18T03:00:00", "actor":null,
+					 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
+					   "list_archive_url":null,"date":"2026-03-18","name":"p","mbox":""},
+					   "comment":{"id":1002,"url":"","web_url":"","msgid":"",
+					   "list_archive_url":null,"date":"2026-03-18"}}},
+					{"id":49, "category":"patch-comment-created",
+					 "project":` + testProjectJSON + `,
+					 "date":"2026-03-18T02:00:00", "actor":null,
+					 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
+					   "list_archive_url":null,"date":"2026-03-18","name":"p","mbox":""},
+					   "comment":{"id":1001,"url":"","web_url":"","msgid":"",
+					   "list_archive_url":null,"date":"2026-03-18"}}}
+				]`))
+				return
+			}
+			w.Write([]byte(`[]`))
+		})
+	s, d := setupSyncer(t, handler)
+	s.cfg.APIVersion = "1.3" // comment events require API >= 1.3
+
+	savePatch(d, 100, "p", "2026-03-10", "new")
+	d.MarkCommentsFetched(100)
+	// We already have comment 1001.
+	d.InsertComment(db.CommentRow{ID: 1001, PatchID: 100})
+
+	s.checkEventCategories(context.Background())
+
+	// All critical categories are walked unconditionally.
+	for _, cat := range []string{
+		"patch-created", "patch-completed", "cover-created", "series-created",
+		"patch-comment-created", "cover-comment-created",
+	} {
+		if !queried[cat] {
+			t.Errorf("category %q should be queried", cat)
+		}
+	}
+	// The new comment (1002) should have reset patch 100 for refetch.
+	ids := d.GetPatchesNeedingComments(10)
+	found := false
+	for _, r := range ids {
+		if r.ID == 100 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("patch 100 should be queued for comment refetch")
+	}
+}
+
+func TestCheckEventCategories_CreatesMissingPatch(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("category") != "patch-created" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		if r.URL.Query().Get("page") != "1" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"detail":"Invalid page."}`))
+			return
+		}
+		w.Write([]byte(`[
+			{"id":70, "category":"patch-created",
+			 "project":` + testProjectJSON + `,
+			 "date":"2026-03-18T00:00:00", "actor":null,
+			 "payload":{"patch":{"id":500,"url":"","web_url":"","msgid":"",
+			   "list_archive_url":null,"date":"2026-03-18","name":"new patch","mbox":""}}}
+		]`))
+	})
+	s, d := setupSyncer(t, handler)
+
+	s.checkEventCategories(context.Background())
+
+	row, err := d.GetPatch(500)
+	if err != nil || row == nil {
+		t.Fatalf("patch 500 should have been created: %v", err)
+	}
+	if got := d.GetSyncState("last_patch_created_event_id"); got != "70" {
+		t.Errorf("patch-created cursor = %q, want 70", got)
+	}
+}
+
+// A patch-completed event links a patch to its series, so the series becomes
+// visible in the TUI list without waiting for a detail fetch.
+func TestCheckEventCategories_CompletedLinksSeriesForListing(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("category") != "patch-completed" {
+			w.Write([]byte(`[]`))
+			return
+		}
+		if r.URL.Query().Get("page") != "1" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"detail":"Invalid page."}`))
+			return
+		}
+		w.Write([]byte(`[
+			{"id":80, "category":"patch-completed",
+			 "project":` + testProjectJSON + `,
+			 "date":"2026-03-18T00:00:00", "actor":null,
+			 "payload":{
+			   "patch":{"id":600,"url":"","web_url":"","msgid":"",
+			     "list_archive_url":null,"date":"2026-03-18","name":"p","mbox":""},
+			   "series":{"id":700,"url":"","web_url":"","name":"my series",
+			     "date":"2026-03-18","version":1,"mbox":""}}}
+		]`))
+	})
+	s, d := setupSyncer(t, handler)
+
+	s.checkEventCategories(context.Background())
+
+	// Patch stored linked to its series.
+	row, err := d.GetPatch(600)
+	if err != nil || row == nil {
+		t.Fatalf("patch 600 should exist: %v", err)
+	}
+	if row.SeriesID != 700 {
+		t.Errorf("patch 600 series = %d, want 700", row.SeriesID)
+	}
+	// Series is listable in the default active view (patch is 'new'),
+	// with no detail fetch performed.
+	active := d.GetActiveSeries([]string{"new"})
+	found := false
+	for _, sr := range active {
+		if sr.ID == 700 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("series 700 should be listed via its completed patch")
+	}
+	if got := d.GetSyncState("last_patch_completed_event_id"); got != "80" {
+		t.Errorf("patch-completed cursor = %q, want 80", got)
+	}
+}
+
+func TestProcessEvent_PropagatesEnsureError(t *testing.T) {
+	s, d := setupSyncer(t, http.NotFoundHandler())
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.processEvent(api.Event{
+		Category: "patch-state-changed",
+		Payload: &api.PatchStateChangedPayload{
+			Patch:        api.PatchSummary{ID: 100},
+			CurrentState: "accepted",
+		},
+	}, 0)
+	if err == nil {
+		t.Fatal("expected database error")
+	}
+}
+
+func TestCheckEventCategories_KnownCommentDoesNotHideOlderEvent(t *testing.T) {
+	var patchPages []string
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/events/" {
+				w.WriteHeader(404)
+				return
+			}
+			if r.URL.Query().Get("category") != "patch-comment-created" {
+				w.Write([]byte(`[]`))
+				return
+			}
+			page := r.URL.Query().Get("page")
+			patchPages = append(patchPages, page)
+			switch page {
+			case "1":
+				w.Write([]byte(`[
+				{"id":50, "category":"patch-comment-created",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-03-18T00:00:00", "actor":null,
+				 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"2026-03-18","name":"p","mbox":""},
+				   "comment":{"id":1001,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"2026-03-18"}}}
+			]`))
+			case "2":
+				w.Write([]byte(`[
+				{"id":49, "category":"patch-comment-created",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-03-17T00:00:00", "actor":null,
+				 "payload":{"patch":{"id":101,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"2026-03-17","name":"older","mbox":""},
+				   "comment":{"id":1002,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"2026-03-17"}}}
+			]`))
+			default:
+				w.WriteHeader(404)
+				w.Write([]byte(`{"detail":"Invalid page."}`))
+			}
+		})
+	s, d := setupSyncer(t, handler)
+	s.cfg.APIVersion = "1.3" // comment events require API >= 1.3
+
+	savePatch(d, 100, "p", "2026-03-10", "new")
+	savePatch(d, 101, "older", "2026-03-10", "new")
+	d.MarkCommentsFetched(100)
+	d.MarkCommentsFetched(101)
+	d.InsertComment(db.CommentRow{ID: 1001, PatchID: 100})
+
+	s.checkEventCategories(context.Background())
+
+	if !d.NeedsPatchComments(101) {
+		t.Error("older unknown comment should queue patch 101")
+	}
+	if got := d.GetSyncState("last_patch_comment_event_id"); got != "50" {
+		t.Errorf("comment cursor = %q, want 50", got)
+	}
+	patchPages = nil
+	s.checkEventCategories(context.Background())
+	if len(patchPages) != 1 || patchPages[0] != "1" {
+		t.Errorf("second walk pages = %v, want page 1 only", patchPages)
+	}
+}
+
+func TestWalkEvents_StopsProcessingOnHandlerError(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"detail":"Invalid page."}`))
+			return
+		}
+		w.Write([]byte(`[
+			{"id":2,"category":"unknown","project":` + testProjectJSON + `,
+			 "date":"2026-03-11T02:00:00","actor":null,"payload":{}},
+			{"id":1,"category":"unknown","project":` + testProjectJSON + `,
+			 "date":"2026-03-11T01:00:00","actor":null,"payload":{}}
+		]`))
+	})
+	s, _ := setupSyncer(t, handler)
+	wantErr := errors.New("write failed")
+	var handled []int
+
+	got := s.walkEvents(context.Background(), status.BgSync,
+		api.EventListParams{}, 0, eventWalkTarget{},
+		func(api.Event) bool { return false },
+		func(ev api.Event, _ int) error {
+			handled = append(handled, ev.ID)
+			return wantErr
+		})
+
+	if got != 0 {
+		t.Errorf("processed = %d, want 0", got)
+	}
+	if len(handled) != 1 || handled[0] != 1 {
+		t.Errorf("handled = %v, want [1]", handled)
+	}
+}
+
+func TestWalkEvents_EstimatesRemainingPages(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("page") {
+		case "1":
+			w.Write([]byte(`[
+				{"id":100,"category":"unknown","project":` + testProjectJSON + `,
+				 "date":"2026-03-11T02:00:00","actor":null,"payload":{}},
+				{"id":90,"category":"unknown","project":` + testProjectJSON + `,
+				 "date":"2026-03-11T01:00:00","actor":null,"payload":{}}
+			]`))
+		case "2":
+			w.Write([]byte(`[
+				{"id":80,"category":"unknown","project":` + testProjectJSON + `,
+				 "date":"2026-03-10T02:00:00","actor":null,"payload":{}},
+				{"id":70,"category":"unknown","project":` + testProjectJSON + `,
+				 "date":"2026-03-10T01:00:00","actor":null,"payload":{}}
+			]`))
+		default:
+			w.Write([]byte(`[
+				{"id":10,"category":"unknown","project":` + testProjectJSON + `,
+				 "date":"2026-03-09T01:00:00","actor":null,"payload":{}}
+			]`))
+		}
+	})
+	s, _ := setupSyncer(t, handler)
+
+	s.walkEvents(context.Background(), status.BgSync,
+		api.EventListParams{}, 0, eventWalkTarget{cursorID: 10},
+		func(ev api.Event) bool { return ev.ID <= 10 },
+		func(api.Event, int) error { return nil })
+
+	msg, _ := s.status.Active()
+	if !strings.Contains(msg, "page 3, ~4 remaining") {
+		t.Errorf("status = %q", msg)
+	}
+}
+
+func TestWalkEvents_EstimatesRemainingPagesByDate(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("page") {
+		case "1":
+			w.Write([]byte(`[
+				{"id":100,"category":"patch-comment-created","project":` + testProjectJSON + `,
+				 "date":"2026-03-11T00:00:00","actor":null,"payload":{}},
+				{"id":90,"category":"patch-comment-created","project":` + testProjectJSON + `,
+				 "date":"2026-03-10T00:00:00","actor":null,"payload":{}}
+			]`))
+		case "2":
+			w.Write([]byte(`[
+				{"id":80,"category":"patch-comment-created","project":` + testProjectJSON + `,
+				 "date":"2026-03-09T00:00:00","actor":null,"payload":{}},
+				{"id":70,"category":"patch-comment-created","project":` + testProjectJSON + `,
+				 "date":"2026-03-08T00:00:00","actor":null,"payload":{}}
+			]`))
+		default:
+			w.Write([]byte(`[
+				{"id":10,"category":"patch-comment-created","project":` + testProjectJSON + `,
+				 "date":"2026-03-01T00:00:00","actor":null,"payload":{}}
+			]`))
+		}
+	})
+	s, _ := setupSyncer(t, handler)
+	cutoff := parseEventDate("2026-03-04T00:00:00")
+
+	s.walkEvents(context.Background(), status.BgSync,
+		api.EventListParams{}, 0, eventWalkTarget{cursorDate: cutoff},
+		func(ev api.Event) bool {
+			return parseEventDate(ev.Date).Before(cutoff)
+		},
+		func(api.Event, int) error { return nil })
+
+	msg, _ := s.status.Active()
+	if !strings.Contains(msg, "remaining") {
+		t.Errorf("status = %q, want a remaining estimate", msg)
+	}
+}
+
+func TestCheckEventCategories_WalksEmptyDB(t *testing.T) {
+	// Creation walks must run even on an empty DB: that is how newly
+	// created patches/covers are discovered when the unfiltered stream
+	// omits *-created events.
+	queried := map[string]bool{}
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/events/" {
+				queried[r.URL.Query().Get("category")] = true
+			}
+			w.Write([]byte(`[]`))
+		})
+	s, _ := setupSyncer(t, handler)
+
+	s.checkEventCategories(context.Background())
+
+	if !queried["patch-created"] || !queried["cover-created"] {
+		t.Errorf("creation categories should be walked on empty DB: %v", queried)
+	}
+}
+
+func TestCheckEventCategories_DateBackstop(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/events/" {
+				w.WriteHeader(404)
+				return
+			}
+			if r.URL.Query().Get("category") != "patch-comment-created" {
+				w.Write([]byte(`[]`))
+				return
+			}
+			page := r.URL.Query().Get("page")
+			if page == "2" {
+				// If the walk ever asks for page 2, the backstop failed.
+				t.Error("walk should have stopped on page 1 via date backstop")
+				w.WriteHeader(404)
+				w.Write([]byte(`{"detail":"Invalid page."}`))
+				return
+			}
+			// Comment event well before the backfill window (testNow-14d),
+			// so it is not processed and the walk stops on page 1.
+			w.Write([]byte(`[
+				{"id":40, "category":"patch-comment-created",
+				 "project":` + testProjectJSON + `,
+				 "date":"2026-01-01T00:00:00", "actor":null,
+				 "payload":{"patch":{"id":100,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"2026-01-01","name":"p","mbox":""},
+				   "comment":{"id":2001,"url":"","web_url":"","msgid":"",
+				   "list_archive_url":null,"date":"2026-01-01"}}}
+			]`))
+		})
+	s, d := setupSyncer(t, handler)
+	s.cfg.APIVersion = "1.3" // comment events require API >= 1.3
+
+	savePatch(d, 100, "p", "2026-03-10", "new")
+	d.MarkCommentsFetched(100)
+
+	s.checkEventCategories(context.Background())
+
+	// Comment 2001 is older than the backfill window -> not processed,
+	// so patch 100 stays fetched.
+	if d.NeedsPatchComments(100) {
+		t.Error("old comment event should not have reset patch 100")
+	}
+}
+
+// When API < 1.3 and a mail archive is configured, comments come from the
+// archive, so the comment category walks must be skipped; only the creation
+// categories are queried.
+func TestCheckEventCategories_SkipsCommentWalksWithArchive(t *testing.T) {
+	queried := map[string]bool{}
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/events/" {
+				queried[r.URL.Query().Get("category")] = true
+			}
+			w.Write([]byte(`[]`))
+		})
+	s, _ := setupSyncer(t, handler) // default APIVersion 1.2
+	s.cfg.MailArchive = "https://mail.example.org/"
+
+	s.checkEventCategories(context.Background())
+
+	for _, cat := range []string{
+		"patch-created", "patch-completed", "cover-created", "series-created",
+	} {
+		if !queried[cat] {
+			t.Errorf("category %q should be queried", cat)
+		}
+	}
+	for _, cat := range []string{
+		"patch-comment-created", "cover-comment-created",
+	} {
+		if queried[cat] {
+			t.Errorf("category %q should be skipped when archive polling", cat)
+		}
 	}
 }
 
@@ -1191,6 +1833,145 @@ func TestFetchNextCoverDetail(t *testing.T) {
 	ids = d.GetCoversNeedingDetail(100)
 	if len(ids) != 0 {
 		t.Errorf("after: %v, want empty", ids)
+	}
+}
+
+// TestCommentSkipConcurrent exercises the two comment loops that share the
+// commentSkip map from separate goroutines. Run with -race to catch the
+// concurrent-map-writes regression. The server always errors so both loops
+// hit the skipSet/skipActive/skipDelete paths repeatedly.
+func TestCommentSkipConcurrent(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(500)
+		})
+	s, d := setupSyncer(t, handler)
+	for i := 1; i <= 20; i++ {
+		savePatch(d, i, "p", "2026-03-10", "new")
+		d.SaveCover(db.CoverRow{
+			ID: 1000 + i, SeriesID: i, Name: "c", Date: "2026-03-10"})
+	}
+
+	var wg gosync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			s.fetchNextComments(context.Background())
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			s.fetchNextCoverComments(context.Background())
+		}
+	}()
+	wg.Wait()
+}
+
+func TestFetchDetailForCover_RepairsSeriesLink(t *testing.T) {
+	handler := http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/covers/99/" {
+				json.NewEncoder(w).Encode(api.CoverDetail{
+					Cover: api.Cover{
+						ID:   99,
+						Name: "Lorem cover",
+						Date: "2026-03-10",
+						Series: []api.SeriesSummary{
+							{ID: 50, Name: "series", Date: "2026-03-10", Version: 1},
+						},
+					},
+					Content: "Cover body",
+					Headers: map[string]interface{}{},
+				})
+				return
+			}
+			http.NotFound(w, r)
+		})
+
+	s, d := setupSyncer(t, handler)
+	// Bare cover backfilled from a comment event: no series link.
+	d.InsertCoverIfAbsent(db.CoverRow{
+		ID: 99, Name: "Lorem cover", Date: "2026-03-10",
+	})
+	if _, err := d.GetCover(50); err == nil {
+		t.Fatal("cover should not be linked to series 50 yet")
+	}
+
+	if got := s.fetchNextCoverDetail(context.Background()); got != 50 {
+		t.Fatalf("series ID = %d, want 50", got)
+	}
+
+	// Series link repaired from the cover's series list.
+	row, err := d.GetCover(50)
+	if err != nil {
+		t.Fatalf("cover should be linked to series 50 after detail: %v", err)
+	}
+	if row.ID != 99 {
+		t.Errorf("cover ID = %d, want 99", row.ID)
+	}
+}
+
+func TestFetchNextCoverDetail_RetriesUnlinkedCoverWithoutSeries(t *testing.T) {
+	requests := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/covers/99/" {
+			requests++
+			json.NewEncoder(w).Encode(api.CoverDetail{
+				Cover: api.Cover{
+					ID: 99, Name: "Unlinked cover", Date: "2026-03-10",
+				},
+				Content: "Cover body",
+				Headers: map[string]interface{}{},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	s, d := setupSyncer(t, handler)
+	d.InsertCoverIfAbsent(db.CoverRow{
+		ID: 99, Name: "Unlinked cover", Date: "2026-03-10",
+	})
+
+	if got := s.fetchNextCoverDetail(context.Background()); got != 0 {
+		t.Fatalf("series ID = %d, want 0", got)
+	}
+	if !d.NeedsCoverDetail(99) {
+		t.Fatal("unlinked cover should remain queued for detail retry")
+	}
+	if !s.skipActive(s.detailSkip, 99) {
+		t.Fatal("unlinked cover should be placed on retry cooldown")
+	}
+
+	s.fetchNextCoverDetail(context.Background())
+	if requests != 1 {
+		t.Errorf("detail requests = %d, want 1 during cooldown", requests)
+	}
+}
+
+func TestFetchDetailForCover_PropagatesDatabaseError(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/covers/99/" {
+			json.NewEncoder(w).Encode(api.CoverDetail{
+				Cover:   api.Cover{ID: 99, Name: "cover"},
+				Content: "body",
+				Headers: map[string]interface{}{},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	s, d := setupSyncer(t, handler)
+	d.SaveCover(db.CoverRow{ID: 99, SeriesID: 50, Name: "cover"})
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.fetchDetailForCover(
+		context.Background(), 99, 50, status.Detail)
+	if err == nil {
+		t.Fatal("expected database error")
 	}
 }
 

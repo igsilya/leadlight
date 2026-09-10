@@ -103,9 +103,10 @@ type SeriesListParams struct {
 }
 
 type EventListParams struct {
-	Since   string
-	Project string
-	Order   string
+	Since    string
+	Project  string
+	Order    string
+	Category string
 }
 
 type PatchUpdate struct {
@@ -605,6 +606,9 @@ func (c *Client) BuildEventsURL(
 	if params.Order != "" {
 		v.Set("order", params.Order)
 	}
+	if params.Category != "" {
+		v.Set("category", params.Category)
+	}
 	return c.baseURL + "/events/?" + v.Encode()
 }
 
@@ -706,6 +710,9 @@ func (c *Client) GetEvents(
 	}
 	if params.Order != "" {
 		v.Set("order", params.Order)
+	}
+	if params.Category != "" {
+		v.Set("category", params.Category)
 	}
 	return getAll[Event](c, ctx, "/events/", v)
 }

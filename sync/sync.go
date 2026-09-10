@@ -48,6 +48,10 @@ type Syncer struct {
 	syncNowC  chan context.Context
 
 	// Error cooldown: skip retrying failed fetches for 30 minutes.
+	// The background loops run on separate goroutines and some share a
+	// map (comment/cover-comment share commentSkip; patch/cover-detail
+	// share detailSkip), so all access is guarded by skipMu.
+	skipMu      gosync.Mutex
 	commentSkip map[int]time.Time
 	detailSkip  map[int]time.Time
 	checkSkip   map[int]time.Time
@@ -60,6 +64,10 @@ type Syncer struct {
 	lastTerminalCoverDetail  time.Time
 	lastTerminalSeriesDetail time.Time
 	lastTerminalCheck        time.Time
+
+	// now returns the current time; overridable in tests so date-bounded
+	// logic (e.g. the comment backfill window) is deterministic.
+	now func() time.Time
 }
 
 type patchUpdateRequest struct {
@@ -129,6 +137,7 @@ func NewSyncer(
 		detailSkip:  map[int]time.Time{},
 		checkSkip:   map[int]time.Time{},
 		seriesSkip:  map[int]time.Time{},
+		now:         time.Now,
 	}
 }
 
@@ -249,12 +258,18 @@ const (
 	syncInterval      = 5 * time.Minute // check for new events
 	activeInterval    = 5 * time.Second // poll interval for all background loops
 	terminalInterval  = 5 * time.Minute // cooldown between terminal-state fetches
-	archiveInterval   = 5 * time.Minute // poll mail archive (only for Patchwork < 1.3)
+	archiveInterval   = 5 * time.Minute // poll mail archive (Patchwork < 1.3)
 	maintainerRefresh = 24 * time.Hour  // re-fetch project maintainer list
+
+	// eventBackfillWindow caps how far back the first (cursorless) per-category
+	// event walk scans. Without it the walk would page through most of event
+	// history; deep history comes from the initial patch/series list dump
+	// instead. Later runs use the id cursor.
+	eventBackfillWindow = 14 * 24 * time.Hour
 )
 
-// Patchwork >= 1.3 emits comment events; older versions need mail
-// archive polling to discover new comments.
+// Patchwork >= 1.3 emits comment events; older versions need mail archive
+// polling to discover new comments.
 func (s *Syncer) needsArchiveMonitoring() bool {
 	return s.cfg.APIVersion < "1.3" && s.cfg.MailArchive != ""
 }
@@ -621,6 +636,7 @@ func (s *Syncer) fetchInitialEvents(ctx context.Context) {
 func (s *Syncer) incrementalSync(ctx context.Context) {
 	s.status.Set(status.BgSync, "Checking events...", true)
 	s.fetchEvents(ctx, status.BgSync)
+	s.checkEventCategories(ctx)
 	s.status.Clear(status.BgSync)
 }
 
@@ -628,6 +644,7 @@ func parseEventDate(s string) time.Time {
 	for _, layout := range []string{
 		"2006-01-02T15:04:05.999999",
 		"2006-01-02T15:04:05",
+		"2006-01-02",
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t
@@ -636,48 +653,97 @@ func parseEventDate(s string) time.Time {
 	return time.Time{}
 }
 
-// fetchEvents fetches events in descending order (newest first),
-// scanning backward until the last processed event is found, then
-// processes all new events in ascending order. This avoids the
-// 'since' date filter which causes server errors on some instances.
-func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
-	lastID, _ := strconv.Atoi(s.db.GetSyncState("last_event_id"))
-	lastDate := s.db.GetSyncState("last_event_date")
+// estimateRemainingPages approximates how many more pages the backward walk
+// must fetch to reach its target, assuming a roughly uniform event density.
+// It measures the density seen so far (by ID or by date) and divides the
+// remaining distance to the target by the per-page average.
+func estimateRemainingPages(
+	pages [][]api.Event, newestID int, target eventWalkTarget,
+) (int, bool) {
+	if len(pages) == 0 {
+		return 0, false
+	}
+	lastPage := pages[len(pages)-1]
+	oldest := lastPage[len(lastPage)-1]
 
-	// Compute generous date cutoff for initial transition
-	// (no last_event_id yet, use last_event_date - 24h).
-	var dateCutoff time.Time
-	if lastID == 0 && lastDate != "" {
-		dateCutoff = parseEventDate(lastDate).Add(-24 * time.Hour)
+	switch {
+	case target.cursorID > 0 && newestID > 0:
+		averageSpan := (newestID - oldest.ID) / len(pages)
+		if averageSpan <= 0 {
+			return 0, false
+		}
+		remaining := (oldest.ID - target.cursorID) / averageSpan
+		if remaining < 0 {
+			remaining = 0
+		}
+		return remaining, true
+	case !target.cursorDate.IsZero():
+		newest := pages[0][0]
+		newestDate := parseEventDate(newest.Date)
+		oldestDate := parseEventDate(oldest.Date)
+		if newestDate.IsZero() || oldestDate.IsZero() {
+			return 0, false
+		}
+		spanSeen := newestDate.Sub(oldestDate)
+		if spanSeen <= 0 {
+			return 0, false
+		}
+		averageSpan := spanSeen / time.Duration(len(pages))
+		if averageSpan <= 0 {
+			return 0, false
+		}
+		remaining := int(oldestDate.Sub(target.cursorDate) / averageSpan)
+		if remaining < 0 {
+			remaining = 0
+		}
+		return remaining, true
+	}
+	return 0, false
+}
+
+// eventWalkTarget bounds a walkEvents scan for progress estimation. Set
+// cursorID for an ID-bounded walk, or cursorDate for the first date-bounded
+// walk; walkEvents estimates the pages remaining until whichever is reached.
+type eventWalkTarget struct {
+	cursorID   int
+	cursorDate time.Time
+}
+
+// walkEvents fetches events newest-first, scanning backward until stop()
+// reports the stream boundary, then processes new events oldest-first via
+// handle(). The boundary event is not processed. maxPages caps
+// the walk (0 = unlimited) to bound it when stop() can never fire (e.g. a
+// fresh database). Returns the number of events handled.
+func (s *Syncer) walkEvents(
+	ctx context.Context, sk status.Key,
+	params api.EventListParams, maxPages int, target eventWalkTarget,
+	stop func(ev api.Event) bool,
+	handle func(ev api.Event, seriesID int) error,
+) int {
+	params.Order = "-id"
+	if params.Project == "" {
+		params.Project = s.cfg.Project
+	}
+	baseURL := s.client.BuildEventsURL(params)
+
+	// Label the walk by its category (e.g. "patch-created"), or "all" for
+	// the unfiltered stream, so the status shows which events are syncing.
+	label := params.Category
+	if label == "" {
+		label = "all"
 	}
 
-	baseURL := s.client.BuildEventsURL(api.EventListParams{
-		Project: s.cfg.Project,
-		Order:   "-id",
-	})
-
-	// Fetch pages backward (newest first) until we find the
-	// last processed event or reach the date cutoff.
+	// Fetch pages backward until stop() recognizes a known event.
 	var pages [][]api.Event
-	var newestID int
+	stopped := false
+	newestID := 0
 	for p := 1; ; p++ {
 		if p > 1 {
-			msg := fmt.Sprintf("Catching up on events (page %d", p)
-			if newestID > 0 && lastID > 0 && len(pages) > 0 {
-				lastPage := pages[len(pages)-1]
-				oldestSeen := lastPage[len(lastPage)-1].ID
-				totalSpan := newestID - oldestSeen
-				if totalSpan > 0 {
-					avgSpan := totalSpan / len(pages)
-					remaining := (oldestSeen - lastID) / avgSpan
-					if remaining < 0 {
-						remaining = 0
-					}
-					msg += fmt.Sprintf(", ~%d remaining", remaining)
-				}
+			msg := fmt.Sprintf("Catching up on %s events (page %d", label, p)
+			if r, ok := estimateRemainingPages(pages, newestID, target); ok {
+				msg += fmt.Sprintf(", ~%d remaining", r)
 			}
-			msg += ")..."
-			s.status.Set(sk, msg, true)
+			s.status.Set(sk, msg+")...", true)
 		}
 		pageURL := fmt.Sprintf("%s&page=%d", baseURL, p)
 		page, err := s.client.GetEventsPage(ctx, pageURL)
@@ -686,33 +752,28 @@ func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
 		}
 		if err != nil {
 			log.Printf("SYNC: fetch events page %d: %v", p, err)
-			return
+			return 0
 		}
 		if len(page.Items) == 0 {
 			log.Printf("SYNC: events page %d returned empty", p)
-			return
+			break
 		}
-		if newestID == 0 && len(page.Items) > 0 {
+		if newestID == 0 {
 			newestID = page.Items[0].ID
 		}
 
 		pages = append(pages, page.Items)
 
-		found := false
 		for _, ev := range page.Items {
-			if lastID > 0 && ev.ID <= lastID {
-				found = true
+			if stop(ev) {
+				stopped = true
 				break
 			}
-			if lastID == 0 && !dateCutoff.IsZero() {
-				evTime := parseEventDate(ev.Date)
-				if !evTime.IsZero() && evTime.Before(dateCutoff) {
-					found = true
-					break
-				}
-			}
 		}
-		if found || (lastID == 0 && lastDate == "") {
+		if stopped {
+			break
+		}
+		if maxPages > 0 && p >= maxPages {
 			break
 		}
 	}
@@ -726,6 +787,7 @@ func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
 	affected := map[int]bool{}
 	total := 0
 	processed := 0
+	failed := false
 	for _, pageEvents := range pages {
 		// Reverse events within each page (they arrived descending).
 		for i, j := 0, len(pageEvents)-1; i < j; i, j = i+1, j-1 {
@@ -733,16 +795,9 @@ func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
 		}
 		for _, ev := range pageEvents {
 			total++
-			if ev.ID <= lastID {
+			if stop(ev) {
 				continue
 			}
-			if lastID == 0 && !dateCutoff.IsZero() {
-				evTime := parseEventDate(ev.Date)
-				if !evTime.IsZero() && evTime.Before(dateCutoff) {
-					continue
-				}
-			}
-			processed++
 			actor := ""
 			if ev.Actor != nil {
 				actor = " (by " + ev.Actor.Username + ")"
@@ -752,15 +807,21 @@ func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
 			if seriesID == 0 {
 				seriesID = s.seriesIDForEventPatch(ev)
 			}
-			if err := s.processEvent(ev, seriesID); err != nil {
+			if err := handle(ev, seriesID); err != nil {
 				log.Printf("SYNC: process event %d: %v", ev.ID, err)
+				// Handlers fail on database writes, not event contents. Keep
+				// the cursor before this event so a transient outage loses no data.
+				failed = true
+				break
 			}
+			processed++
 			if seriesID != 0 {
 				s.db.RecomputeActiveFlag(seriesID)
 				affected[seriesID] = true
 			}
-			s.db.SetSyncState("last_event_date", ev.Date)
-			s.db.SetSyncState("last_event_id", strconv.Itoa(ev.ID))
+		}
+		if failed {
+			break
 		}
 	}
 	if total > 0 {
@@ -776,6 +837,108 @@ func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
 	} else if processed > 0 {
 		s.notify()
 	}
+	return processed
+}
+
+// fetchEvents processes the unfiltered event stream, scanning back to the
+// last event it processed (tracked via last_event_id/last_event_date).
+func (s *Syncer) fetchEvents(ctx context.Context, sk status.Key) {
+	lastID, _ := strconv.Atoi(s.db.GetSyncState("last_event_id"))
+	lastDate := s.db.GetSyncState("last_event_date")
+
+	// Date cutoff for the initial id-less transition (last_event_date - 24h).
+	var dateCutoff time.Time
+	if lastID == 0 && lastDate != "" {
+		dateCutoff = parseEventDate(lastDate).Add(-24 * time.Hour)
+	}
+
+	// Fresh DB has no cursor: process one page instead of all of history.
+	maxPages := 0
+	if lastID == 0 && lastDate == "" {
+		maxPages = 1
+	}
+
+	stop := func(ev api.Event) bool {
+		if lastID > 0 && ev.ID <= lastID {
+			return true
+		}
+		if lastID == 0 && !dateCutoff.IsZero() {
+			evTime := parseEventDate(ev.Date)
+			if !evTime.IsZero() && evTime.Before(dateCutoff) {
+				return true
+			}
+		}
+		return false
+	}
+
+	handle := func(ev api.Event, seriesID int) error {
+		if err := s.processEvent(ev, seriesID); err != nil {
+			return err
+		}
+		s.db.SetSyncState("last_event_date", ev.Date)
+		s.db.SetSyncState("last_event_id", strconv.Itoa(ev.ID))
+		return nil
+	}
+
+	s.walkEvents(ctx, sk, api.EventListParams{
+		Project: s.cfg.Project,
+	}, maxPages, eventWalkTarget{cursorID: lastID, cursorDate: dateCutoff},
+		stop, handle)
+}
+
+// checkEventCategories walks the critical event categories directly, each on
+// its own cursor. Some Patchwork deployments do not reliably return
+// *-created events in the unfiltered stream, so creation events (the most
+// important) and comment events are fetched via category-filtered requests.
+// Creations run before comments so a comment's patch/cover is more likely
+// already present in the same cycle.
+func (s *Syncer) checkEventCategories(ctx context.Context) {
+	type walk struct{ category, stateKey string }
+	cats := []walk{
+		{"patch-created", "last_patch_created_event_id"},
+		{"patch-completed", "last_patch_completed_event_id"},
+		{"cover-created", "last_cover_created_event_id"},
+		{"series-created", "last_series_created_event_id"},
+	}
+	if !s.needsArchiveMonitoring() {
+		cats = append(cats,
+			walk{"patch-comment-created", "last_patch_comment_event_id"},
+			walk{"cover-comment-created", "last_cover_comment_event_id"},
+		)
+	}
+	for _, c := range cats {
+		s.walkCategory(ctx, c.category, c.stateKey)
+	}
+}
+
+// walkCategory walks a single event category newest-first on its own cursor
+// (stateKey). The first (cursorless) run is bounded to the backfill window so
+// it never pages through the whole history; later runs stop at the stored id.
+func (s *Syncer) walkCategory(ctx context.Context, category, stateKey string) {
+	lastID, _ := strconv.Atoi(s.db.GetSyncState(stateKey))
+	cutoff := s.now().Add(-eventBackfillWindow)
+	stop := func(ev api.Event) bool {
+		if lastID > 0 {
+			return ev.ID <= lastID
+		}
+		evTime := parseEventDate(ev.Date)
+		return !evTime.IsZero() && evTime.Before(cutoff)
+	}
+	handle := func(ev api.Event, seriesID int) error {
+		if err := s.processEvent(ev, seriesID); err != nil {
+			return err
+		}
+		s.db.SetSyncState(stateKey, strconv.Itoa(ev.ID))
+		return nil
+	}
+	target := eventWalkTarget{cursorID: lastID}
+	if lastID == 0 {
+		target.cursorDate = cutoff
+	}
+	s.walkEvents(ctx, status.BgSync, api.EventListParams{
+		Project:  s.cfg.Project,
+		Category: category,
+	}, 0, target, stop, handle)
 }
 
 func seriesIDFromEvent(ev api.Event) int {
@@ -799,6 +962,8 @@ func (s *Syncer) seriesIDForEventPatch(ev api.Event) int {
 		patchID = p.Patch.ID
 	case *api.PatchDelegatedPayload:
 		patchID = p.Patch.ID
+	case *api.PatchRelationChangedPayload:
+		patchID = p.Patch.ID
 	case *api.CheckCreatedPayload:
 		patchID = p.Patch.ID
 	case *api.PatchCommentCreatedPayload:
@@ -819,15 +984,20 @@ func eventSummary(ev api.Event) string {
 	case *api.PatchCreatedPayload:
 		return fmt.Sprintf("patch %d %q", p.Patch.ID, p.Patch.Name)
 	case *api.PatchStateChangedPayload:
-		return fmt.Sprintf("patch %d %s → %s", p.Patch.ID, p.PreviousState, p.CurrentState)
+		return fmt.Sprintf("patch %d %s → %s", p.Patch.ID,
+			p.PreviousState, p.CurrentState)
 	case *api.PatchDelegatedPayload:
 		delegate := "(none)"
 		if p.CurrentDelegate != nil {
 			delegate = p.CurrentDelegate.Username
 		}
 		return fmt.Sprintf("patch %d → %s", p.Patch.ID, delegate)
+	case *api.PatchRelationChangedPayload:
+		return fmt.Sprintf("patch %d relation %s → %s", p.Patch.ID,
+			ptrStr(p.PreviousRelation), ptrStr(p.CurrentRelation))
 	case *api.CheckCreatedPayload:
-		return fmt.Sprintf("patch %d check %s %s", p.Patch.ID, p.Check.Context, p.Check.State)
+		return fmt.Sprintf("patch %d check %s %s", p.Patch.ID,
+			p.Check.Context, p.Check.State)
 	case *api.PatchCompletedPayload:
 		return fmt.Sprintf("patch %d series %d", p.Patch.ID, p.Series.ID)
 	case *api.SeriesCreatedPayload:
@@ -844,14 +1014,44 @@ func eventSummary(ev api.Event) string {
 	return "(unknown)"
 }
 
+// ensurePatch backfills a bare patch row from an event summary so update
+// events self-heal when the patch-created event was skipped. The upsert
+// preserves existing fields; missing seriesID/state are repaired later by
+// fetchDetailForPatch.
+func (s *Syncer) ensurePatch(p api.PatchSummary, seriesID int) error {
+	return s.db.SavePatchSummary(p.ID, seriesID,
+		p.Name, p.Date, p.MsgID, p.Mbox, p.WebURL)
+}
+
+// ensureCover backfills a bare cover row from an event summary, inserting
+// only when absent so it never clobbers richer detail-loop fields. The
+// missing series link is repaired later by fetchDetailForCover.
+func (s *Syncer) ensureCover(c api.CoverSummary) error {
+	return s.db.InsertCoverIfAbsent(db.CoverRow{
+		ID:      c.ID,
+		Name:    c.Name,
+		Date:    c.Date,
+		MsgID:   c.MsgID,
+		MboxURL: c.Mbox,
+		WebURL:  c.WebURL,
+	})
+}
+
 func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 	switch p := ev.Payload.(type) {
 	case *api.PatchCreatedPayload:
 		return s.db.SavePatchSummary(p.Patch.ID, seriesID,
-			p.Patch.Name, p.Patch.Date, p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
+			p.Patch.Name, p.Patch.Date, p.Patch.MsgID, p.Patch.Mbox,
+			p.Patch.WebURL)
 	case *api.PatchStateChangedPayload:
+		if err := s.ensurePatch(p.Patch, seriesID); err != nil {
+			return err
+		}
 		return s.db.UpdatePatchState(p.Patch.ID, p.CurrentState)
 	case *api.PatchDelegatedPayload:
+		if err := s.ensurePatch(p.Patch, seriesID); err != nil {
+			return err
+		}
 		id, name, email := 0, "", ""
 		if p.CurrentDelegate != nil {
 			id = p.CurrentDelegate.ID
@@ -859,7 +1059,12 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 			email = p.CurrentDelegate.Email
 		}
 		return s.db.UpdatePatchDelegate(p.Patch.ID, id, name, email)
+	case *api.PatchRelationChangedPayload:
+		return s.ensurePatch(p.Patch, seriesID)
 	case *api.CheckCreatedPayload:
+		if err := s.ensurePatch(p.Patch, seriesID); err != nil {
+			return err
+		}
 		err := s.db.SaveCheck(db.CheckRow{
 			ID:          p.Check.ID,
 			PatchID:     p.Patch.ID,
@@ -881,13 +1086,19 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 		}
 		return s.db.RecountPatchChecks(p.Patch.ID)
 	case *api.SeriesCreatedPayload:
-		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name, p.Series.Date, p.Series.Version)
+		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name,
+			p.Series.Date, p.Series.Version)
 	case *api.SeriesCompletedPayload:
-		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name, p.Series.Date, p.Series.Version)
+		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name,
+			p.Series.Date, p.Series.Version)
 	case *api.PatchCompletedPayload:
-		s.db.SavePatchSummary(p.Patch.ID, p.Series.ID,
-			p.Patch.Name, p.Patch.Date, p.Patch.MsgID, p.Patch.Mbox, p.Patch.WebURL)
-		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name, p.Series.Date, p.Series.Version)
+		if err := s.db.SavePatchSummary(p.Patch.ID, p.Series.ID,
+			p.Patch.Name, p.Patch.Date, p.Patch.MsgID, p.Patch.Mbox,
+			p.Patch.WebURL); err != nil {
+			return err
+		}
+		return s.db.SaveSeriesSummary(p.Series.ID, p.Series.Name,
+			p.Series.Date, p.Series.Version)
 	case *api.CoverCreatedPayload:
 		return s.db.SaveCover(db.CoverRow{
 			ID:       p.Cover.ID,
@@ -899,18 +1110,61 @@ func (s *Syncer) processEvent(ev api.Event, seriesID int) error {
 			WebURL:   p.Cover.WebURL,
 		})
 	case *api.PatchCommentCreatedPayload:
-		return s.db.ResetCommentsFetched(p.Patch.ID)
+		if err := s.ensurePatch(p.Patch, seriesID); err != nil {
+			return err
+		}
+		// Reset only when we don't already have this exact comment: skips
+		// churn on re-walks yet always re-fetches for a genuinely new one.
+		if !s.db.CommentExists(p.Comment.ID) {
+			return s.db.ResetCommentsFetched(p.Patch.ID)
+		}
+		return nil
 	case *api.CoverCommentCreatedPayload:
-		return s.db.ResetCoverCommentsFetched(p.Cover.ID)
+		if err := s.ensureCover(p.Cover); err != nil {
+			return err
+		}
+		if !s.db.CommentExists(p.Comment.ID) {
+			return s.db.ResetCoverCommentsFetched(p.Cover.ID)
+		}
+		return nil
 	}
 	return nil
 }
 
+// Skip-map helpers. All access to the cooldown maps goes through these so
+// the shared maps are safe across the background-loop goroutines. Locks
+// are held only for the map op, never across DB/HTTP calls.
+
+func (s *Syncer) skipLen(m map[int]time.Time) int {
+	s.skipMu.Lock()
+	defer s.skipMu.Unlock()
+	return len(m)
+}
+
+// skipActive reports whether id is still within its cooldown window.
+func (s *Syncer) skipActive(m map[int]time.Time, id int) bool {
+	s.skipMu.Lock()
+	defer s.skipMu.Unlock()
+	t, ok := m[id]
+	return ok && time.Since(t) < commentSkipCooldown
+}
+
+func (s *Syncer) skipSet(m map[int]time.Time, id int) {
+	s.skipMu.Lock()
+	defer s.skipMu.Unlock()
+	m[id] = time.Now()
+}
+
+func (s *Syncer) skipDelete(m map[int]time.Time, id int) {
+	s.skipMu.Lock()
+	defer s.skipMu.Unlock()
+	delete(m, id)
+}
+
 func (s *Syncer) fetchNextComments(ctx context.Context) int {
-	refs := s.db.GetPatchesNeedingComments(len(s.commentSkip) + 1)
+	refs := s.db.GetPatchesNeedingComments(s.skipLen(s.commentSkip) + 1)
 	for _, ref := range refs {
-		if t, ok := s.commentSkip[ref.ID]; ok &&
-			time.Since(t) < commentSkipCooldown {
+		if s.skipActive(s.commentSkip, ref.ID) {
 			continue
 		}
 		if !ref.IsActive &&
@@ -919,10 +1173,10 @@ func (s *Syncer) fetchNextComments(ctx context.Context) int {
 		}
 		if !s.fetchCommentsForPatch(ctx, ref.ID, ref.SeriesID,
 			status.BgComments) {
-			s.commentSkip[ref.ID] = time.Now()
+			s.skipSet(s.commentSkip, ref.ID)
 			return 0
 		}
-		delete(s.commentSkip, ref.ID)
+		s.skipDelete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgComments,
 			fmt.Sprintf("Comments fetched (%d remaining)",
 				s.db.CountUnfetched("patches", "comments_fetched")), 3*time.Second)
@@ -935,10 +1189,9 @@ func (s *Syncer) fetchNextComments(ctx context.Context) int {
 }
 
 func (s *Syncer) fetchNextCoverComments(ctx context.Context) int {
-	refs := s.db.GetCoversNeedingComments(len(s.commentSkip) + 1)
+	refs := s.db.GetCoversNeedingComments(s.skipLen(s.commentSkip) + 1)
 	for _, ref := range refs {
-		if t, ok := s.commentSkip[ref.ID]; ok &&
-			time.Since(t) < commentSkipCooldown {
+		if s.skipActive(s.commentSkip, ref.ID) {
 			continue
 		}
 		if !ref.IsActive &&
@@ -947,10 +1200,10 @@ func (s *Syncer) fetchNextCoverComments(ctx context.Context) int {
 		}
 		if !s.fetchCommentsForCover(ctx, ref.ID, ref.SeriesID,
 			status.BgCoverComments) {
-			s.commentSkip[ref.ID] = time.Now()
+			s.skipSet(s.commentSkip, ref.ID)
 			return 0
 		}
-		delete(s.commentSkip, ref.ID)
+		s.skipDelete(s.commentSkip, ref.ID)
 		s.status.SetTimed(status.BgCoverComments,
 			fmt.Sprintf("Cover comments fetched (%d remaining)",
 				s.db.CountUnfetched("covers", "comments_fetched")), 3*time.Second)
@@ -1088,10 +1341,9 @@ func (s *Syncer) checkArchiveMonth(
 }
 
 func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
-	refs := s.db.GetPatchesNeedingDetail(len(s.detailSkip) + 1)
+	refs := s.db.GetPatchesNeedingDetail(s.skipLen(s.detailSkip) + 1)
 	for _, ref := range refs {
-		if t, ok := s.detailSkip[ref.ID]; ok &&
-			time.Since(t) < commentSkipCooldown {
+		if s.skipActive(s.detailSkip, ref.ID) {
 			continue
 		}
 		if !ref.IsActive &&
@@ -1100,10 +1352,10 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 		}
 		if err := s.fetchDetailForPatch(ctx, ref.ID,
 			ref.SeriesID, status.Detail); err != nil {
-			s.detailSkip[ref.ID] = time.Now()
+			s.skipSet(s.detailSkip, ref.ID)
 			return 0
 		}
-		delete(s.detailSkip, ref.ID)
+		s.skipDelete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
 			fmt.Sprintf("Patch details fetched (%d remaining)",
 				s.db.CountUnfetched("patches", "detail_fetched")), 3*time.Second)
@@ -1124,10 +1376,9 @@ func (s *Syncer) fetchNextPatchDetail(ctx context.Context) int {
 }
 
 func (s *Syncer) fetchNextCoverDetail(ctx context.Context) int {
-	refs := s.db.GetCoversNeedingDetail(len(s.detailSkip) + 1)
+	refs := s.db.GetCoversNeedingDetail(s.skipLen(s.detailSkip) + 1)
 	for _, ref := range refs {
-		if t, ok := s.detailSkip[ref.ID]; ok &&
-			time.Since(t) < commentSkipCooldown {
+		if s.skipActive(s.detailSkip, ref.ID) {
 			continue
 		}
 		if !ref.IsActive &&
@@ -1136,17 +1387,21 @@ func (s *Syncer) fetchNextCoverDetail(ctx context.Context) int {
 		}
 		if err := s.fetchDetailForCover(ctx, ref.ID,
 			ref.SeriesID, status.Detail); err != nil {
-			s.detailSkip[ref.ID] = time.Now()
+			s.skipSet(s.detailSkip, ref.ID)
 			return 0
 		}
-		delete(s.detailSkip, ref.ID)
+		s.skipDelete(s.detailSkip, ref.ID)
 		s.status.SetTimed(status.Detail,
 			fmt.Sprintf("Cover details fetched (%d remaining)",
 				s.db.CountUnfetched("covers", "detail_fetched")), 3*time.Second)
 		if !ref.IsActive {
 			s.lastTerminalCoverDetail = time.Now()
 		}
-		return ref.SeriesID
+		sid := ref.SeriesID
+		if sid == 0 {
+			sid, _ = s.db.GetCoverSeriesID(ref.ID)
+		}
+		return sid
 	}
 	return 0
 }
@@ -1271,10 +1526,9 @@ func (s *Syncer) fetchSeriesSince(ctx context.Context, since string, statusKey s
 }
 
 func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
-	refs := s.db.GetSeriesNeedingDetail(len(s.seriesSkip) + 1)
+	refs := s.db.GetSeriesNeedingDetail(s.skipLen(s.seriesSkip) + 1)
 	for _, ref := range refs {
-		if t, ok := s.seriesSkip[ref.ID]; ok &&
-			time.Since(t) < commentSkipCooldown {
+		if s.skipActive(s.seriesSkip, ref.ID) {
 			continue
 		}
 		if !ref.IsActive &&
@@ -1282,10 +1536,10 @@ func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
 			break
 		}
 		if err := s.fetchDetailForSeries(ctx, ref.ID, status.BgSeriesDetail); err != nil {
-			s.seriesSkip[ref.ID] = time.Now()
+			s.skipSet(s.seriesSkip, ref.ID)
 			return 0
 		}
-		delete(s.seriesSkip, ref.ID)
+		s.skipDelete(s.seriesSkip, ref.ID)
 		s.status.SetTimed(status.BgSeriesDetail,
 			fmt.Sprintf("Series details fetched (%d remaining)",
 				s.db.CountUnfetched("series", "detail_fetched")), 3*time.Second)
@@ -1298,10 +1552,9 @@ func (s *Syncer) fetchNextSeriesDetail(ctx context.Context) int {
 }
 
 func (s *Syncer) fetchNextChecks(ctx context.Context) int {
-	refs := s.db.GetPatchesNeedingChecks(len(s.checkSkip) + 1)
+	refs := s.db.GetPatchesNeedingChecks(s.skipLen(s.checkSkip) + 1)
 	for _, ref := range refs {
-		if t, ok := s.checkSkip[ref.ID]; ok &&
-			time.Since(t) < commentSkipCooldown {
+		if s.skipActive(s.checkSkip, ref.ID) {
 			continue
 		}
 		if !ref.IsActive &&
@@ -1311,10 +1564,10 @@ func (s *Syncer) fetchNextChecks(ctx context.Context) int {
 		s.fetchChecksForPatch(ctx, ref.ID, ref.SeriesID,
 			status.BgChecks)
 		if s.db.NeedsPatchChecks(ref.ID) {
-			s.checkSkip[ref.ID] = time.Now()
+			s.skipSet(s.checkSkip, ref.ID)
 			return 0
 		}
-		delete(s.checkSkip, ref.ID)
+		s.skipDelete(s.checkSkip, ref.ID)
 		s.status.SetTimed(status.BgChecks,
 			fmt.Sprintf("Checks fetched (%d remaining)",
 				s.db.CountUnfetched("patches", "checks_fetched")), 3*time.Second)
@@ -1455,9 +1708,33 @@ func (s *Syncer) fetchDetailForCover(
 			fetchOrigin(ctx), coverID, err)
 		return err
 	}
+	// Repair the series link for covers backfilled from comment events
+	// (ensureCover inserts them with series_id=0).
+	if len(cover.Series) > 0 {
+		ss := cover.Series[0]
+		if err := s.db.SaveSeriesSummary(
+			ss.ID, ss.Name, ss.Date, ss.Version); err != nil {
+			return err
+		}
+		if err := s.db.UpdateCoverSeriesID(coverID, ss.ID); err != nil {
+			return err
+		}
+		s.db.RecomputeActiveFlag(ss.ID)
+	} else if seriesID == 0 {
+		currentSeriesID, err := s.db.GetCoverSeriesID(coverID)
+		if err != nil {
+			return err
+		}
+		if currentSeriesID == 0 {
+			// Keep detail_fetched unset so the existing detail cooldown
+			// retries until Patchwork exposes the cover's series link.
+			return fmt.Errorf("cover %d has no series", coverID)
+		}
+	}
 	hdrs := filterHeaders(cover.Headers)
-	s.db.UpdateCoverDetail(coverID,
-		cover.Content, hdrs)
+	if err := s.db.UpdateCoverDetail(coverID, cover.Content, hdrs); err != nil {
+		return err
+	}
 	if cover.Content != "" {
 		s.db.ClearTags(0, coverID, "original")
 		tags := extractReviewTags(cover.Content)

@@ -603,6 +603,37 @@ func (d *DB) RecountPatchChecks(patchID int) error {
 	return err
 }
 
+func (d *DB) CommentExists(id int) bool {
+	var x int
+	err := d.conn.QueryRow(
+		"SELECT 1 FROM comments WHERE id = ?", id).Scan(&x)
+	return err == nil
+}
+
+func (d *DB) CoverExists(id int) bool {
+	var x int
+	err := d.conn.QueryRow(
+		"SELECT 1 FROM covers WHERE id = ?", id).Scan(&x)
+	return err == nil
+}
+
+// InsertCoverIfAbsent inserts a bare cover row only if the id is absent,
+// leaving any existing (richer) row untouched.
+func (d *DB) InsertCoverIfAbsent(c CoverRow) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(`
+		INSERT INTO covers (id, series_id, name, date,
+			submitter, submitter_email, msgid,
+			web_url, mbox_url)
+		VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO NOTHING`,
+		c.ID, c.SeriesID, c.Name, c.Date,
+		c.Submitter, c.SubmitterEmail,
+		c.MsgID, c.WebURL, c.MboxURL)
+	return err
+}
+
 func (d *DB) InsertComment(c CommentRow) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -656,6 +687,18 @@ func (d *DB) UpdateCoverDetail(coverID int, content, headers string) error {
 		SET content = ?, headers = ?, detail_fetched = 1
 		WHERE id = ?`,
 		content, headers, coverID)
+	return err
+}
+
+// UpdateCoverSeriesID links a cover to its series, but only when the link
+// is not already set, so it never overrides a real link from SaveCover.
+func (d *DB) UpdateCoverSeriesID(coverID, seriesID int) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.conn.Exec(`
+		UPDATE covers SET series_id = ?
+		WHERE id = ? AND (series_id = 0 OR series_id IS NULL)`,
+		seriesID, coverID)
 	return err
 }
 
@@ -1621,6 +1664,12 @@ func (d *DB) GetPatchesNeedingComments(limit int) []FetchRef {
 		scanFetchRefs(d.conn.Query(q2, append(args, limit-len(refs))...))...)
 }
 
+// MarkCommentsFetched marks a patch's comments as fetched.
+//
+// NOTE: known narrow race — a comment created while a fetch is in flight
+// (after GetPatchComments' snapshot) is marked fetched here without being
+// stored, and is only recovered when a later comment event resets the
+// flag. Left as a follow-up.
 func (d *DB) MarkCommentsFetched(patchID int) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -1813,6 +1862,14 @@ func (d *DB) GetCover(seriesID int) (*CoverRow, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+func (d *DB) GetCoverSeriesID(coverID int) (int, error) {
+	var seriesID int
+	err := d.conn.QueryRow(
+		"SELECT COALESCE(series_id, 0) FROM covers WHERE id = ?",
+		coverID).Scan(&seriesID)
+	return seriesID, err
 }
 
 func boolToInt(b bool) int {
