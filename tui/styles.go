@@ -87,6 +87,8 @@ var (
 	compareSepStyle        lipgloss.Style
 	compareAddBg           lipgloss.Color
 	compareDelBg           lipgloss.Color
+	searchCurrentStyle     lipgloss.Style
+	searchOtherStyle       lipgloss.Style
 )
 
 type gradientEntry struct{ bg, fg string }
@@ -172,6 +174,13 @@ func buildStyles(t *theme) {
 	compareSepStyle = fg(t.CompareSepFg)
 	compareAddBg = lipgloss.Color(t.CompareAddBg)
 	compareDelBg = lipgloss.Color(t.CompareDelBg)
+	searchCurrentStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color(t.SearchCurrentBg)).
+		Foreground(lipgloss.Color(t.SearchCurrentFg)).
+		Bold(true)
+	searchOtherStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color(t.SearchOtherBg)).
+		Foreground(lipgloss.Color(t.SearchOtherFg))
 
 	bgStyles = map[string]*cachedBgStyle{}
 	gradientPalettes = map[string][256]gradientEntry{}
