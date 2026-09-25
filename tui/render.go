@@ -102,6 +102,8 @@ func (m *Model) renderPatchView() string {
 		hb.WriteString(bright.Render("↑/↓") +
 			sep.Render(" ") + bright.Render("pgup/dn"))
 		hb.WriteString(helpSepStr(sep))
+		hb.WriteString(helpKey(bright, desc, "w", "save"))
+		hb.WriteString(helpSepStr(sep))
 		hb.WriteString(bright.Render("esc"))
 		if m.logConsole {
 			hb.WriteString(helpSepStr(sep))
@@ -118,6 +120,8 @@ func (m *Model) renderPatchView() string {
 		hb.WriteString(helpSepStr(sep))
 		hb.WriteString(bright.Render("↑/↓") +
 			sep.Render(" ") + bright.Render("pgup/dn"))
+		hb.WriteString(helpSepStr(sep))
+		hb.WriteString(helpKey(bright, desc, "w", "save"))
 		hb.WriteString(helpSepStr(sep))
 		hb.WriteString(helpKey(bright, desc, "esc", "back"))
 		if m.logConsole {
@@ -1107,6 +1111,8 @@ func (m *Model) renderHelpBar(out *strings.Builder) {
 	b.WriteString(helpKey(bright, desc, "f", "fetch"))
 	b.WriteString(helpSepStr(sep))
 	b.WriteString(helpKey(bright, desc, "p", "apply"))
+	b.WriteString(helpSepStr(sep))
+	b.WriteString(helpKey(bright, desc, "w", "save"))
 	b.WriteString(helpSepStr(sep))
 	b.WriteString(helpKey(bright, desc, "v", "versions"))
 	b.WriteString(helpSepStr(sep))
