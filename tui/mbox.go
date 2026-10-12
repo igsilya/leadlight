@@ -310,6 +310,7 @@ func FormatMboxParts(
 		bb.WriteByte('\n')
 		cleaned := replaceControlChars(p.Body)
 		for _, line := range strings.Split(cleaned, "\n") {
+			line = expandTabs(line, 8) // widths must be final before wrapping
 			depth := quoteDepth(line)
 			for _, wl := range wrapLine(line, width) {
 				writeStyledLine(&bb, wl, depth)
@@ -379,9 +380,9 @@ func comparePaddingMarker() string {
 // the diff background tint to all wrapped segments.
 func styleBodyLine(line string, width int, kind diffLineKind) []string {
 	var result []string
+	line = expandTabs(line, 8) // widths must be final before wrapping
 	depth := quoteDepth(line)
 	for _, wl := range wrapLine(line, width) {
-		wl = expandTabs(wl, 8)
 		var styled string
 		if depth > 0 {
 			if depth%2 == 1 {
@@ -532,8 +533,10 @@ func expandTabs(s string, tabWidth int) string {
 	return buf.String()
 }
 
+// writeStyledLine styles one already-wrapped segment. Callers expand
+// tabs on the whole line before wrapping it, so that wrapping sees the
+// final widths.
 func writeStyledLine(b *strings.Builder, line string, depth int) {
-	line = expandTabs(line, 8) // position-aware tabs before lipgloss
 	if depth > 0 {
 		if depth%2 == 1 {
 			b.WriteString(quotedLineStyle.Render(line))
@@ -1058,6 +1061,7 @@ func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[stri
 			contentLines = collapseQuotedBlocks(contentLines)
 		}
 		for _, line := range contentLines {
+			line = expandTabs(line, 8) // widths must be final before wrapping
 			depth := quoteDepth(line)
 			for _, wl := range wrapLine(line, width) {
 				writeStyledLine(&b, wl, depth)
