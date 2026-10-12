@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -1001,6 +1002,217 @@ func TestFormatMbox_LineWidths(t *testing.T) {
 			if vw > width {
 				t.Errorf("width=%d line %d visual width %d > %d",
 					width, i, vw, width)
+			}
+		}
+	}
+}
+
+// checkSegsAreRunsOf asserts the wrapSeg invariant: every segment's
+// text is a contiguous run of the source line starting at seg.off, and
+// the segments advance through the source without going backwards.
+// This is what lets a position in the source be mapped onto the
+// segment that displays it.
+func checkSegsAreRunsOf(t *testing.T, src string, segs []wrapSeg) {
+	t.Helper()
+	runes := []rune(src)
+	prev := -1
+	for i, seg := range segs {
+		n := utf8.RuneCountInString(seg.text)
+		if seg.off < 0 || seg.off+n > len(runes) {
+			t.Errorf("src %q: seg %d spans [%d,%d), source has %d runes",
+				src, i, seg.off, seg.off+n, len(runes))
+			continue
+		}
+		if got := string(runes[seg.off : seg.off+n]); got != seg.text {
+			t.Errorf("src %q: seg %d at off %d is %q, source has %q",
+				src, i, seg.off, seg.text, got)
+		}
+		if seg.off <= prev {
+			t.Errorf("src %q: seg %d offset %d did not advance past %d",
+				src, i, seg.off, prev)
+		}
+		prev = seg.off
+	}
+}
+
+func wrapTestCorpus() []string {
+	return []string{
+		"",
+		"short",
+		"lorem ipsum dolor sit amet consectetur adipiscing elit sed do",
+		strings.Repeat("averylongtokenwithoutanyspaces", 6),
+		"Lorem Ipsum <lorem@ipsum.example>, Dolor Sit <dolor@amet.example>, " +
+			"Consectetur Adipiscing <consectetur@elit.example>",
+		strings.Repeat("ünïcödé wörds with áccents ", 8),
+		"日本語のテキストが折り返される場合のテスト" + strings.Repeat("あ", 40),
+		"trailing spaces   ",
+		"   leading spaces and then a lot more text to force a wrap here",
+		"a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v",
+		// Non-ASCII either side of the ", " separators, so that a
+		// byte-counted offset drifts away from the rune-counted one.
+		"Ünïcödé Nâme <u@ipsum.example>, Åñother Përsön <a@ipsum.example>, " +
+			"Thïrd Üser <t@ipsum.example>, Fourth Nämé <f@ipsum.example>",
+		"日本 太郎 <taro@ipsum.example>, 山田 花子 <hanako@ipsum.example>, " +
+			"Suzuki Ichirō <ichiro@ipsum.example>",
+		"one-very-long-unbreakable-" + strings.Repeat("x", 90) + " tail",
+	}
+}
+
+func TestWrapLineSegsAreRunsOfSource(t *testing.T) {
+	for _, src := range wrapTestCorpus() {
+		for _, width := range []int{5, 7, 13, 20, 40, 80, 120} {
+			checkSegsAreRunsOf(t, src, wrapLineSegs(src, width))
+		}
+	}
+}
+
+func TestWrapHeaderValueSegsAreRunsOfSource(t *testing.T) {
+	for _, src := range wrapTestCorpus() {
+		for _, width := range []int{20, 40, 60, 80, 120} {
+			checkSegsAreRunsOf(t, src, wrapHeaderValueSegs(src, width))
+		}
+	}
+}
+
+func TestWrapHeaderValueRespectsWidthWithMultiByte(t *testing.T) {
+	// Counting bytes instead of runes made the cut land mid-rune and
+	// produced lines far narrower than the available width.
+	src := strings.Repeat("ünïcödé-wörd ", 20)
+	for _, width := range []int{20, 40, 80} {
+		for i, line := range wrapHeaderValue(src, width) {
+			if n := utf8.RuneCountInString(line); n > width {
+				t.Errorf("width=%d line %d has %d runes: %q",
+					width, i, n, line)
+			}
+			if !utf8.ValidString(line) {
+				t.Errorf("width=%d line %d is not valid UTF-8: %q",
+					width, i, line)
+			}
+		}
+	}
+}
+
+// checkDocRowsSliceLogical asserts that every row of a document shows
+// the slice of its source line that it claims to: the non-synthetic
+// span text of a row at offset off must equal the source line's runes
+// from off onwards. This is what the renderer relies on to put a
+// highlight over the right columns.
+func checkDocRowsSliceLogical(t *testing.T, what string, d *renderedDoc) {
+	t.Helper()
+	for row, v := range d.visual {
+		var text strings.Builder
+		for _, sp := range v.spans {
+			if !sp.synthetic {
+				text.WriteString(sp.text)
+			}
+		}
+		if v.logical < 0 {
+			if text.Len() != 0 {
+				t.Errorf("%s: chrome row %d carries source text %q",
+					what, row, text.String())
+			}
+			continue
+		}
+		if v.logical >= len(d.logical) {
+			t.Errorf("%s: row %d points at source line %d of %d",
+				what, row, v.logical, len(d.logical))
+			continue
+		}
+		runes := []rune(d.logical[v.logical])
+		n := utf8.RuneCountInString(text.String())
+		if v.off < 0 || v.off+n > len(runes) {
+			t.Errorf("%s: row %d spans [%d,%d) of a %d-rune line",
+				what, row, v.off, v.off+n, len(runes))
+			continue
+		}
+		if got := string(runes[v.off : v.off+n]); got != text.String() {
+			t.Errorf("%s: row %d at off %d shows %q, source has %q",
+				what, row, v.off, text.String(), got)
+		}
+	}
+	for i, first := range d.first {
+		if first < 0 {
+			continue
+		}
+		if d.visual[first].logical != i {
+			t.Errorf("%s: first[%d] = %d points at source line %d",
+				what, i, first, d.visual[first].logical)
+			continue
+		}
+		// The rows of a source line have to reach its end. Text the
+		// line claims but no row displays could be matched by a
+		// search and then never shown.
+		last := first
+		for last+1 < len(d.visual) && d.visual[last+1].logical == i {
+			last++
+		}
+		v := d.visual[last]
+		if got, want := v.off+v.runeLen(),
+			utf8.RuneCountInString(d.logical[i]); got != want {
+			t.Errorf("%s: source line %d is %d runes but its rows stop "+
+				"at %d: %q", what, i, want, got, d.logical[i])
+		}
+	}
+}
+
+func TestFormatMboxDocRowsSliceLogical(t *testing.T) {
+	var addrs []string
+	for i := 0; i < 12; i++ {
+		addrs = append(addrs, fmt.Sprintf(
+			"Lorem Ipsüm%d <lorem%d@ipsum.example>", i, i))
+	}
+	p := ParsedMbox{
+		Subject: "[PATCH v2 1/3] Lorem ipsum dolor sit amet consectetur elit",
+		From:    "Lorem Ipsum <lorem@ipsum.example>",
+		To:      "dev@ipsum.example",
+		Cc:      strings.Join(addrs, ", "),
+		Date:    "Mon, 23 Mar 2026 12:00:19 -0400",
+		URL:     "https://lore.example/a/b/c",
+		Body: "Hello.\n\nA fairly long body line that has to wrap somewhere.\n" +
+			"> a quoted line that is also long enough to need wrapping\n" +
+			"\ttabbed\tline\twith\ttabs and enough text to overflow\n",
+		Diff: "diff --git a/x.c b/x.c\n@@ -1,3 +1,4 @@\n context\n" +
+			"-removed line long enough to wrap at the narrow widths\n" +
+			"+added line long enough to wrap at the narrow widths\n",
+	}
+
+	for _, width := range []int{40, 60, 80, 120} {
+		for _, collapse := range []bool{true, false} {
+			h, b, d := formatMboxDoc(p, width, collapse)
+			what := fmt.Sprintf("width=%d collapse=%v", width, collapse)
+			checkDocRowsSliceLogical(t, what+" headers", h)
+			checkDocRowsSliceLogical(t, what+" body", b)
+			checkDocRowsSliceLogical(t, what+" diff", d)
+
+			// The documents must flatten to what the string API returns.
+			if got, want := h.String()+b.String()+d.String(),
+				FormatMbox(p, width, collapse); got != want {
+				t.Errorf("%s: document flattens to %q, FormatMbox gives %q",
+					what, got, want)
+			}
+		}
+	}
+}
+
+func TestFormatCommentDocRowsSliceLogical(t *testing.T) {
+	c := CommentInfo{
+		Subject: "Re: [PATCH v2 1/3] Lorem ipsum",
+		Date:    "2026-03-23T12:00:19",
+		Content: "Reply text.\n\n" +
+			strings.Repeat("> quoted line that needs to wrap somewhere\n", 12) +
+			"\tTabbed\treply\tline with enough text to overflow the width\n",
+		WebURL: "http://patches.example/comment/99/",
+	}
+
+	for _, width := range []int{40, 80, 120} {
+		for _, collapse := range []bool{true, false} {
+			d := formatCommentDoc(c, width, collapse, nil)
+			what := fmt.Sprintf("width=%d collapse=%v", width, collapse)
+			checkDocRowsSliceLogical(t, what, d)
+
+			if got, want := d.String(),
+				FormatComment(c, width, collapse, nil); got != want {
+				t.Errorf("%s: document and FormatComment disagree", what)
 			}
 		}
 	}
@@ -2445,4 +2657,37 @@ func TestFormatChecks_URLAlwaysOnNextLine(t *testing.T) {
 	if !strings.Contains(urlLine, "https://ci.example.com") {
 		t.Errorf("URL should be on the next line, got %q", urlLine)
 	}
+}
+
+// flattenSegs joins wrapped segments back into display lines. Only the
+// tests need this; the formatters build documents from the segments
+// instead.
+func flattenSegs(segs []wrapSeg) []string {
+	lines := make([]string, len(segs))
+	for i, seg := range segs {
+		lines[i] = seg.pre + seg.text
+	}
+	return lines
+}
+
+func wrapLine(s string, width int) []string {
+	return flattenSegs(wrapLineSegs(s, width))
+}
+
+func wrapHeaderValue(s string, width int) []string {
+	return flattenSegs(wrapHeaderValueSegs(s, width))
+}
+
+func splitLines(content string) []string {
+	return strings.Split(content, "\n")
+}
+
+// formatDiff renders a diff section on its own. Only the tests use
+// it; the viewport builds the section into a document instead.
+func formatDiff(diff string, width int) string {
+	d := &renderedDoc{}
+	for _, line := range strings.Split(diff, "\n") {
+		appendDiffLineDoc(d, line, width, diffUnchanged)
+	}
+	return d.String()
 }

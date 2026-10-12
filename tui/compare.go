@@ -19,8 +19,7 @@ const (
 )
 
 type compareCacheEntry struct {
-	lines [2][]string
-	kinds [2][]diffLineKind
+	docs [2]*renderedDoc
 }
 
 func (m *Model) buildCompareContent() {
@@ -42,8 +41,7 @@ func (m *Model) buildCompareContent() {
 	if m.compareDiffCache != nil {
 		if entry, ok := m.compareDiffCache[cacheKey]; ok {
 			for i := range m.compare {
-				m.compare[i].lines = entry.lines[i]
-				m.compare[i].kinds = entry.kinds[i]
+				m.compare[i].doc = entry.docs[i]
 			}
 			return
 		}
@@ -51,33 +49,32 @@ func (m *Model) buildCompareContent() {
 
 	if !have[0] || !have[1] {
 		// Fall back to non-diff rendering when content is missing.
-		var parts [2][3][]string
+		var parts [2][3]*renderedDoc
 		for i := range m.compare {
 			if have[i] {
-				h, b, d := FormatMboxParts(parsed[i], colWidth, collapse)
-				parts[i][0] = splitLines(h)
-				parts[i][1] = splitLines(b)
-				parts[i][2] = splitLines(d)
-			} else {
-				parts[i][0] = []string{"(no content)"}
+				h, b, d := formatMboxDoc(parsed[i], colWidth, collapse)
+				parts[i] = [3]*renderedDoc{h, b, d}
+				continue
+			}
+			parts[i] = [3]*renderedDoc{
+				docFromLines("(no content)"), {}, {},
 			}
 		}
-		padToEqual(&parts[0][0], &parts[1][0])
-		padToEqual(&parts[0][1], &parts[1][1])
-		padToEqual(&parts[0][2], &parts[1][2])
+		for s := 0; s < 3; s++ {
+			padDocsToEqual(parts[0][s], parts[1][s])
+		}
 		for i := range m.compare {
-			m.compare[i].lines = concat(parts[i][0], parts[i][1], parts[i][2])
-			m.compare[i].kinds = nil
+			doc := &renderedDoc{}
+			for _, part := range parts[i] {
+				doc.appendDoc(part)
+			}
+			m.compare[i].doc = doc
 		}
 		return
 	}
 
 	// Diff each section on raw lines, then style with bg tint.
-	type section struct {
-		lines [2][]string
-		kinds [2][]diffLineKind
-	}
-	sections := make([]section, 3)
+	sections := make([][2]*renderedDoc, 3)
 
 	// Headers: compare raw values directly.
 	sections[0] = m.diffHeaders(parsed, colWidth, collapse)
@@ -85,28 +82,23 @@ func (m *Model) buildCompareContent() {
 	// Body: diff raw lines, then wrap+style.
 	leftBody := splitRawLines(replaceControlChars(parsed[0].Body))
 	rightBody := splitRawLines(replaceControlChars(parsed[1].Body))
-	sections[1] = diffAndStyle(leftBody, rightBody, colWidth, styleBodyLine)
+	sections[1] = diffAndStyle(leftBody, rightBody, colWidth, appendBodyLineDoc)
 
 	// Diff section: diff raw lines, then wrap+style.
 	leftDiff := splitRawLines(replaceControlChars(parsed[0].Diff))
 	rightDiff := splitRawLines(replaceControlChars(parsed[1].Diff))
-	sections[2] = diffAndStyle(leftDiff, rightDiff, colWidth, styleDiffLine)
+	sections[2] = diffAndStyle(leftDiff, rightDiff, colWidth, appendDiffLineDoc)
 
 	// Pad headers and body for section alignment.
-	padToEqualWithKinds(
-		&sections[0].lines[0], &sections[0].kinds[0],
-		&sections[0].lines[1], &sections[0].kinds[1])
-	padToEqualWithKinds(
-		&sections[1].lines[0], &sections[1].kinds[0],
-		&sections[1].lines[1], &sections[1].kinds[1])
+	padDocsToEqual(sections[0][0], sections[0][1])
+	padDocsToEqual(sections[1][0], sections[1][1])
 
 	for i := range m.compare {
-		m.compare[i].lines = nil
-		m.compare[i].kinds = nil
+		doc := &renderedDoc{}
 		for _, sec := range sections {
-			m.compare[i].lines = append(m.compare[i].lines, sec.lines[i]...)
-			m.compare[i].kinds = append(m.compare[i].kinds, sec.kinds[i]...)
+			doc.appendDoc(sec[i])
 		}
+		m.compare[i].doc = doc
 	}
 
 	// Cache the result.
@@ -114,8 +106,7 @@ func (m *Model) buildCompareContent() {
 		m.compareDiffCache = map[[2]int]*compareCacheEntry{}
 	}
 	m.compareDiffCache[cacheKey] = &compareCacheEntry{
-		lines: [2][]string{m.compare[0].lines, m.compare[1].lines},
-		kinds: [2][]diffLineKind{m.compare[0].kinds, m.compare[1].kinds},
+		docs: [2]*renderedDoc{m.compare[0].doc, m.compare[1].doc},
 	}
 }
 
@@ -134,15 +125,8 @@ func compareParsedMbox(
 // diffHeaders compares header values directly and renders with bg tint.
 func (m *Model) diffHeaders(
 	parsed [2]ParsedMbox, width int, collapse bool,
-) struct {
-	lines [2][]string
-	kinds [2][]diffLineKind
-} {
-	type section struct {
-		lines [2][]string
-		kinds [2][]diffLineKind
-	}
-	labelWidth := 9
+) [2]*renderedDoc {
+	labelWidth := headerLabelWidth
 	valWidth := width - labelWidth
 	if valWidth < 20 {
 		valWidth = 20
@@ -161,7 +145,7 @@ func (m *Model) diffHeaders(
 		{"Date:    ", [2]string{parsed[0].Date, parsed[1].Date}, false},
 	}
 
-	var result section
+	docs := [2]*renderedDoc{{}, {}}
 	for _, h := range headers {
 		changed := h.vals[0] != h.vals[1]
 		for i := 0; i < 2; i++ {
@@ -177,29 +161,17 @@ func (m *Model) diffHeaders(
 					kind = diffAdded
 				}
 			}
-			var b strings.Builder
-			writeHeader(&b, h.label, h.vals[i], h.coll, labelWidth, valWidth, kind)
-			rendered := b.String()
-			if rendered == "" {
+			if h.vals[i] == "" {
 				if kind == diffPadding {
-					result.lines[i] = append(result.lines[i],
-						comparePaddingMarker())
-					result.kinds[i] = append(result.kinds[i], diffPadding)
+					docs[i].addPaddingMarker()
 				}
 				continue
 			}
-			hlines := splitLines(rendered)
-			// Remove trailing empty line from writeHeader's trailing \n.
-			if len(hlines) > 0 && hlines[len(hlines)-1] == "" {
-				hlines = hlines[:len(hlines)-1]
-			}
-			for _, l := range hlines {
-				result.lines[i] = append(result.lines[i], l)
-				result.kinds[i] = append(result.kinds[i], kind)
-			}
+			appendHeaderDoc(docs[i], h.label, h.vals[i], h.coll,
+				labelWidth, valWidth, kind)
 		}
 	}
-	return result
+	return docs
 }
 
 // splitRawLines splits text into lines, returning nil for empty text.
@@ -270,7 +242,12 @@ func alignDiffLines(
 ) (alignedL, alignedR []string, kindsL, kindsR []diffLineKind) {
 	if classes == "" {
 		// No diff result — show side by side with no highlighting.
-		padToEqual(&left, &right)
+		for len(left) < len(right) {
+			left = append(left, "")
+		}
+		for len(right) < len(left) {
+			right = append(right, "")
+		}
 		kindsL = make([]diffLineKind, len(left))
 		kindsR = make([]diffLineKind, len(right))
 		return left, right, kindsL, kindsR
@@ -343,31 +320,24 @@ func alignDiffLines(
 	return
 }
 
-type lineStyler func(line string, width int, kind diffLineKind) []string
+// lineStyler appends one raw line to a document, wrapped and styled.
+type lineStyler func(d *renderedDoc, line string, width int, kind diffLineKind)
 
 // diffAndStyle diffs raw lines and produces styled output with
-// background tinting for changed lines. The styleFn wraps and
-// styles each raw line (e.g. styleBodyLine or styleDiffLine).
-// When wrapping produces different line counts on each side,
-// the shorter side is padded so both stay vertically aligned.
+// background tinting for changed lines. The styleFn wraps and styles
+// each raw line (e.g. appendBodyLineDoc or appendDiffLineDoc).
+// When wrapping produces different row counts on each side, the
+// shorter side is padded so both stay vertically aligned.
 func diffAndStyle(
 	leftRaw, rightRaw []string, width int, styleFn lineStyler,
-) struct {
-	lines [2][]string
-	kinds [2][]diffLineKind
-} {
-	type result struct {
-		lines [2][]string
-		kinds [2][]diffLineKind
-	}
-	var res result
+) [2]*renderedDoc {
+	docs := [2]*renderedDoc{{}, {}}
 	if len(leftRaw) == 0 && len(rightRaw) == 0 {
-		return res
+		return docs
 	}
-	// Leading blank line to match FormatMboxParts.
+	// Leading blank line to match formatMboxDoc.
 	for i := 0; i < 2; i++ {
-		res.lines[i] = append(res.lines[i], "")
-		res.kinds[i] = append(res.kinds[i], diffUnchanged)
+		docs[i].addBlank()
 	}
 
 	classes := runCompareDiff(leftRaw, rightRaw)
@@ -378,51 +348,25 @@ func diffAndStyle(
 		raws := [2]string{alignedL[idx], alignedR[idx]}
 		ks := [2]diffLineKind{kindsL[idx], kindsR[idx]}
 
-		var styled [2][]string
+		var added [2]int
 		for i := 0; i < 2; i++ {
+			before := docs[i].Len()
 			if ks[i] == diffPadding {
-				styled[i] = []string{comparePaddingMarker()}
+				docs[i].addPaddingMarker()
 			} else {
-				styled[i] = styleFn(raws[i], width, ks[i])
+				styleFn(docs[i], raws[i], width, ks[i])
 			}
+			added[i] = docs[i].Len() - before
 		}
-		// Pad the shorter side so both produce equal rendered
-		// lines for this raw line pair (wrapping alignment).
-		for len(styled[0]) < len(styled[1]) {
-			styled[0] = append(styled[0], "")
+		// Pad the shorter side so both produce equal rendered rows
+		// for this raw line pair (wrapping alignment). The filler
+		// keeps the tint of the side it belongs to.
+		for ; added[0] < added[1]; added[0]++ {
+			docs[0].addPad(ks[0])
 		}
-		for len(styled[1]) < len(styled[0]) {
-			styled[1] = append(styled[1], "")
-		}
-
-		for i := 0; i < 2; i++ {
-			for _, sl := range styled[i] {
-				res.lines[i] = append(res.lines[i], sl)
-				res.kinds[i] = append(res.kinds[i], ks[i])
-			}
+		for ; added[1] < added[0]; added[1]++ {
+			docs[1].addPad(ks[1])
 		}
 	}
-	return res
-}
-
-func padToEqualWithKinds(
-	linesA *[]string, kindsA *[]diffLineKind,
-	linesB *[]string, kindsB *[]diffLineKind,
-) {
-	diff := len(*linesA) - len(*linesB)
-	if diff < 0 {
-		*linesA = append(*linesA, make([]string, -diff)...)
-		*kindsA = append(*kindsA, make([]diffLineKind, -diff)...)
-	} else if diff > 0 {
-		*linesB = append(*linesB, make([]string, diff)...)
-		*kindsB = append(*kindsB, make([]diffLineKind, diff)...)
-	}
-}
-
-func padToEqual(a, b *[]string) {
-	if len(*a) < len(*b) {
-		*a = append(*a, make([]string, len(*b)-len(*a))...)
-	} else if len(*b) < len(*a) {
-		*b = append(*b, make([]string, len(*a)-len(*b))...)
-	}
+	return docs
 }

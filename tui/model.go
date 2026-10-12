@@ -142,8 +142,7 @@ type compareMark struct {
 
 type compareSide struct {
 	mark    compareMark
-	lines   []string
-	kinds   []diffLineKind
+	doc     *renderedDoc
 	patches []comparePatch
 	cover   *ParsedMbox
 	idx     int    // -1 = cover, 0+ = patch index
@@ -221,7 +220,7 @@ type Model struct {
 	viewComments    []CommentInfo
 	viewCommentIdx  int // -1 = patch/cover, 0+ = comment
 	viewSourceLines map[string]bool
-	viewportLines   []string
+	viewportDoc     *renderedDoc
 	viewportLoading bool
 	viewportOffset  int
 	viewExpanded    bool
@@ -716,6 +715,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// setViewportDoc replaces the content of the patch view. It exists
+// so that there is one place to hook anything that has to follow the
+// content around; the search added later rescans from here.
+func (m *Model) setViewportDoc(d *renderedDoc) {
+	m.viewportDoc = d
+}
+
 func (m *Model) refreshViewport() {
 	if m.db == nil {
 		return
@@ -724,9 +730,8 @@ func (m *Model) refreshViewport() {
 	// If viewing a comment, re-render at the new width
 	if m.viewCommentIdx >= 0 && m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
-		formatted := FormatComment(
-			comment, m.width, !m.viewExpanded, m.viewSourceLines)
-		m.viewportLines = splitLines(formatted)
+		m.setViewportDoc(formatCommentDoc(
+			comment, m.width, !m.viewExpanded, m.viewSourceLines))
 		return
 	}
 	if m.viewingCoverID != 0 {
@@ -794,10 +799,6 @@ func (m *Model) refreshViewportComments() {
 			}
 		}
 	}
-}
-
-func splitLines(content string) []string {
-	return strings.Split(content, "\n")
 }
 
 func (m *Model) getVisibleItems() []visibleItem {

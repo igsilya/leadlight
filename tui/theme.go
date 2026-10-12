@@ -45,6 +45,11 @@ type theme struct {
 	CompareSepFg string // separator line between compare columns
 	CompareAddBg string // background tint for lines added on this side
 	CompareDelBg string // background tint for lines removed (only on other side)
+
+	SearchCurrentBg string // background for the active search match
+	SearchCurrentFg string
+	SearchOtherBg   string // background for non-active search matches
+	SearchOtherFg   string
 }
 
 // Dark theme FG colors inspired by the Catppuccin Mocha palette.
@@ -118,6 +123,11 @@ var darkTheme = theme{
 	CompareSepFg: "#585b70", // catppuccin Surface2
 	CompareAddBg: "#1a2e1a", // subtle dark green
 	CompareDelBg: "#2e1a1a", // subtle dark red
+
+	SearchCurrentBg: "#fdfd96", // bright pastel yellow
+	SearchCurrentFg: "#000000",
+	SearchOtherBg:   "#5e5820", // muted olive
+	SearchOtherFg:   "#f0e8c0",
 }
 
 var lightTheme = theme{
@@ -189,4 +199,9 @@ var lightTheme = theme{
 	CompareSepFg: "#9ca0b0", // catppuccin Overlay0
 	CompareAddBg: "#d0f0d0", // light green
 	CompareDelBg: "#f0d0d0", // light rose
+
+	SearchCurrentBg: "#ffbb30", // warm orange-yellow
+	SearchCurrentFg: "#000000",
+	SearchOtherBg:   "#fffa69", // yellow
+	SearchOtherFg:   "#333000",
 }
