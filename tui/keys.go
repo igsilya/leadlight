@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,7 +25,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.applyState != applyIdle {
 		return m.handleApplyKey(msg)
 	}
-	if key == "`" && !m.filterEditing {
+	if key == "`" && !m.filterEditing && !m.searchInput {
 		m.logConsole = !m.logConsole
 		m.logFocused = false
 		if m.logConsole && m.LogBuf != nil {
@@ -34,7 +36,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateAllCaches()
 		return m, nil
 	}
-	if m.logConsole && key == "tab" {
+	if m.logConsole && key == "tab" && !m.searchInput {
 		m.logFocused = !m.logFocused
 		return m, nil
 	}
@@ -392,9 +394,85 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleSearchInputKey handles keys typed at the "/" prompt, before the
+// query has been committed. Every key goes to the prompt; none of them
+// reach the bindings of the view underneath.
+func (m *Model) handleSearchInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Dispatch on the key type rather than on its printed name.
+	// Bubbletea reports every rune it can read at once as a single
+	// KeyRunes message, so typing "up" quickly arrives as one message
+	// whose name is "up"; matching on names would take that for the
+	// arrow key and recall a query instead of inserting the text.
+	if msg.Alt {
+		return m, nil
+	}
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.commitSearch()
+	case tea.KeyEsc:
+		m.cancelSearch()
+	case tea.KeyBackspace:
+		if m.searchText == "" {
+			m.cancelSearch()
+			break
+		}
+		_, size := utf8.DecodeLastRuneInString(m.searchText)
+		m.searchText = m.searchText[:len(m.searchText)-size]
+		m.updateSearchMatches()
+	case tea.KeyRunes, tea.KeySpace:
+		// Typed characters and pasted text both arrive as runes; a
+		// paste just carries more than one of them. Anything that is
+		// not printable (control characters, newlines in a multi-line
+		// paste) has no place in a single-line query.
+		var b strings.Builder
+		b.WriteString(m.searchText)
+		added := 0
+		for _, r := range msg.Runes {
+			if unicode.IsPrint(r) {
+				b.WriteRune(r)
+				added++
+			}
+		}
+		if added == 0 {
+			break
+		}
+		m.searchText = b.String()
+		m.updateSearchMatches()
+	}
+	return m, nil
+}
+
+// handleSearchNavKey handles the keys that open the search prompt and
+// step through the matches of a committed query. It reports whether the
+// key was consumed; a key that would do nothing is left for the view to
+// bind to something else.
+func (m *Model) handleSearchNavKey(key string) bool {
+	switch key {
+	case "/":
+		m.startSearch()
+		return true
+	case "n", "N":
+		switch {
+		case len(m.searchOrder) > 0:
+			if key == "n" {
+				m.nextSearchMatch()
+			} else {
+				m.prevSearchMatch()
+			}
+		case m.searchText != "":
+			// A search that matched nothing still owns n and N.
+		default:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 // exitPatchView returns to the patch list, dropping everything that
 // only describes the item being viewed.
 func (m *Model) exitPatchView() {
+	m.clearSearch()
 	m.viewMode = viewTable
 	m.viewingPatchID = 0
 	m.viewingCoverID = 0
@@ -406,6 +484,7 @@ func (m *Model) exitPatchView() {
 
 // exitCompareView returns to the patch list and unmarks both sides.
 func (m *Model) exitCompareView() {
+	m.clearSearch()
 	m.viewMode = viewTable
 	m.compareCount = 0
 }
@@ -413,8 +492,21 @@ func (m *Model) exitCompareView() {
 func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	if m.searchInput {
+		return m.handleSearchInputKey(msg)
+	}
+	if m.handleSearchNavKey(key) {
+		return m, nil
+	}
+
 	switch key {
 	case "q":
+		// First press of q drops a search that is showing matches;
+		// only the second one leaves the view. esc always leaves.
+		if m.searchText != "" && len(m.searchOrder) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
 		m.exitPatchView()
 	case "esc":
 		m.exitPatchView()
@@ -1001,8 +1093,21 @@ func (m *Model) compareMinIdx() int {
 func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	if m.searchInput {
+		return m.handleSearchInputKey(msg)
+	}
+	if m.handleSearchNavKey(key) {
+		return m, nil
+	}
+
 	switch key {
 	case "q":
+		// First press of q drops a search that is showing matches;
+		// only the second one leaves the view. esc always leaves.
+		if m.searchText != "" && len(m.searchOrder) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
 		m.exitCompareView()
 		return m, nil
 	case "esc":
