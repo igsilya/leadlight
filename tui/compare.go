@@ -23,6 +23,10 @@ type compareCacheEntry struct {
 }
 
 func (m *Model) buildCompareContent() {
+	// Whatever path this takes, the matches have to be recomputed
+	// against the documents it leaves behind.
+	defer m.rescanSearch()
+
 	colWidth := (m.width - 1) / 2 // 1 char for │ separator
 	if colWidth < 20 {
 		colWidth = 20

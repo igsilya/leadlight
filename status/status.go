@@ -24,6 +24,7 @@ const (
 	Archive         Key = "archive"
 	Update          Key = "update"
 	Info            Key = "info"
+	Search          Key = "search"
 )
 
 type entry struct {

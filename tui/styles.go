@@ -54,6 +54,7 @@ var (
 	helpDimStyle           lipgloss.Style
 	statusStyle            lipgloss.Style
 	normalOptionStyle      lipgloss.Style
+	searchCursorStyle      lipgloss.Style
 	highlightedOptionStyle lipgloss.Style
 	optionNumStyle         lipgloss.Style
 	cellHighlightStyle     lipgloss.Style
@@ -141,6 +142,11 @@ func buildStyles(t *theme) {
 	helpDimStyle = fg(t.HelpDimFg)
 	statusStyle = fg(t.StatusFg)
 	normalOptionStyle = fg(t.NormalOptionFg)
+	// Underline rather than a colour of its own, so the cursor is the
+	// same mark the filter prompt appends as a literal "_": past the
+	// end of the query it underlines a space and looks identical,
+	// and inside the query it underlines the rune it sits on.
+	searchCursorStyle = normalOptionStyle.Underline(true)
 	highlightedOptionStyle = hlStyle
 	optionNumStyle = fg(t.OptionNumFg)
 	cellHighlightStyle = hlStyle

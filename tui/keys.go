@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,7 +24,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.applyState != applyIdle {
 		return m.handleApplyKey(msg)
 	}
-	if key == "`" && !m.filterEditing {
+	if key == "`" && !m.filterEditing && !m.searchInput {
 		m.logConsole = !m.logConsole
 		m.logFocused = false
 		if m.logConsole && m.LogBuf != nil {
@@ -34,7 +35,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateAllCaches()
 		return m, nil
 	}
-	if m.logConsole && key == "tab" {
+	if m.logConsole && key == "tab" && !m.searchInput {
 		m.logFocused = !m.logFocused
 		return m, nil
 	}
@@ -392,9 +393,115 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleSearchInputKey handles keys typed at the "/" prompt, before the
+// query has been committed. Every key goes to the prompt; none of them
+// reach the bindings of the view underneath.
+func (m *Model) handleSearchInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Dispatch on the key type rather than on its printed name.
+	// Bubbletea reports every rune it can read at once as a single
+	// KeyRunes message, so typing "up" quickly arrives as one message
+	// whose name is "up"; matching on names would take that for the
+	// arrow key and recall a query instead of inserting the text.
+	// Alt is how a terminal sends the readline word motions this
+	// prompt does not implement, so it is ignored -- except that
+	// urxvt reports ctrl+arrow with Alt set, and those do mean
+	// something here.
+	if msg.Alt && msg.Type != tea.KeyCtrlLeft && msg.Type != tea.KeyCtrlRight {
+		return m, nil
+	}
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.commitSearch()
+	case tea.KeyEsc:
+		m.cancelSearch()
+	// Moving the cursor leaves the query alone, so none of these
+	// re-run the search: updateSearchMatches would drop back to the
+	// first match and scroll the body out from under the reader.
+	case tea.KeyLeft:
+		m.moveSearchCursor(m.searchCursor - 1)
+	case tea.KeyRight:
+		m.moveSearchCursor(m.searchCursor + 1)
+	case tea.KeyCtrlLeft:
+		m.moveSearchCursor(wordStart(m.searchText, m.searchCursor))
+	case tea.KeyCtrlRight:
+		m.moveSearchCursor(wordEnd(m.searchText, m.searchCursor))
+	case tea.KeyHome, tea.KeyCtrlA:
+		m.moveSearchCursor(0)
+	case tea.KeyEnd, tea.KeyCtrlE:
+		m.moveSearchCursor(runeLen(m.searchText))
+
+	case tea.KeyBackspace:
+		// Backspace leaves the prompt only when there is nothing left
+		// to delete. At the left edge of a query that still has text
+		// it does nothing: the cursor only gets there by deliberate
+		// motion, and throwing the query away would be a surprise.
+		if m.searchText == "" {
+			m.cancelSearch()
+			break
+		}
+		m.editSearchText(deleteRange(m.searchText,
+			m.searchCursor-1, m.searchCursor))
+	case tea.KeyDelete:
+		m.editSearchText(deleteRange(m.searchText,
+			m.searchCursor, m.searchCursor+1))
+	case tea.KeyCtrlW:
+		m.editSearchText(deleteRange(m.searchText,
+			wordStart(m.searchText, m.searchCursor), m.searchCursor))
+	case tea.KeyCtrlU:
+		m.editSearchText(deleteRange(m.searchText, 0, m.searchCursor))
+	case tea.KeyCtrlK:
+		m.editSearchText(deleteRange(m.searchText,
+			m.searchCursor, runeLen(m.searchText)))
+	case tea.KeyRunes, tea.KeySpace:
+		// Typed characters and pasted text both arrive as runes; a
+		// paste just carries more than one of them. Anything that is
+		// not printable (control characters, newlines in a multi-line
+		// paste) has no place in a single-line query.
+		var b strings.Builder
+		for _, r := range msg.Runes {
+			if unicode.IsPrint(r) {
+				b.WriteRune(r)
+			}
+		}
+		if b.Len() == 0 {
+			break
+		}
+		m.editSearchText(insertAt(m.searchText, m.searchCursor, b.String()))
+	}
+	return m, nil
+}
+
+// handleSearchNavKey handles the keys that open the search prompt and
+// step through the matches of a committed query. It reports whether the
+// key was consumed; a key that would do nothing is left for the view to
+// bind to something else.
+func (m *Model) handleSearchNavKey(key string) bool {
+	switch key {
+	case "/":
+		m.startSearch()
+		return true
+	case "n", "N":
+		switch {
+		case len(m.searchOrder) > 0:
+			if key == "n" {
+				m.nextSearchMatch()
+			} else {
+				m.prevSearchMatch()
+			}
+		case m.searchText != "":
+			// A search that matched nothing still owns n and N.
+		default:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 // exitPatchView returns to the patch list, dropping everything that
 // only describes the item being viewed.
 func (m *Model) exitPatchView() {
+	m.clearSearch()
 	m.viewMode = viewTable
 	m.viewingPatchID = 0
 	m.viewingCoverID = 0
@@ -406,6 +513,7 @@ func (m *Model) exitPatchView() {
 
 // exitCompareView returns to the patch list and unmarks both sides.
 func (m *Model) exitCompareView() {
+	m.clearSearch()
 	m.viewMode = viewTable
 	m.compareCount = 0
 }
@@ -413,8 +521,21 @@ func (m *Model) exitCompareView() {
 func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	if m.searchInput {
+		return m.handleSearchInputKey(msg)
+	}
+	if m.handleSearchNavKey(key) {
+		return m, nil
+	}
+
 	switch key {
 	case "q":
+		// First press of q drops a search that is showing matches;
+		// only the second one leaves the view. esc always leaves.
+		if m.searchText != "" && len(m.searchOrder) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
 		m.exitPatchView()
 	case "esc":
 		m.exitPatchView()
@@ -1001,8 +1122,21 @@ func (m *Model) compareMinIdx() int {
 func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	if m.searchInput {
+		return m.handleSearchInputKey(msg)
+	}
+	if m.handleSearchNavKey(key) {
+		return m, nil
+	}
+
 	switch key {
 	case "q":
+		// First press of q drops a search that is showing matches;
+		// only the second one leaves the view. esc always leaves.
+		if m.searchText != "" && len(m.searchOrder) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
 		m.exitCompareView()
 		return m, nil
 	case "esc":
