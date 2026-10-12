@@ -5,6 +5,8 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	"leadlight/db"
 	"leadlight/status"
 )
 
@@ -162,6 +165,111 @@ func TestMultipleOccurrencesOnSameLine(t *testing.T) {
 	}
 }
 
+func TestSearchHistory(t *testing.T) {
+	m := &Model{
+		viewportDoc: docFromLines(
+			"foo bar baz",
+			"hello world",
+			"foo again",
+		),
+	}
+
+	// Commit a few searches
+	m.searchText = "foo"
+	m.commitSearch()
+	m.searchText = "bar"
+	m.commitSearch()
+	m.searchText = "hello"
+	m.commitSearch()
+
+	if len(m.searchHistory) != 3 {
+		t.Fatalf("Expected 3 history entries, got %d", len(m.searchHistory))
+	}
+	if m.searchHistory[0] != "hello" || m.searchHistory[1] != "bar" || m.searchHistory[2] != "foo" {
+		t.Errorf("History order wrong: %v", m.searchHistory)
+	}
+
+	// Duplicate should move to front, not add again
+	m.searchText = "foo"
+	m.commitSearch()
+	if len(m.searchHistory) != 3 {
+		t.Fatalf("Expected 3 history entries after dedup, got %d", len(m.searchHistory))
+	}
+	if m.searchHistory[0] != "foo" {
+		t.Errorf("Expected 'foo' at front, got %q", m.searchHistory[0])
+	}
+
+	// Start a new search and browse history with up arrow
+	m.startSearch()
+	if m.searchHistoryIdx != -1 {
+		t.Errorf("Expected historyIdx -1 at start, got %d", m.searchHistoryIdx)
+	}
+
+	// Simulate up arrow — should recall most recent ("foo")
+	m.searchHistoryIdx = 0
+	m.searchText = m.searchHistory[0]
+	if m.searchText != "foo" {
+		t.Errorf("Expected 'foo' on first up, got %q", m.searchText)
+	}
+
+	// Another up — should get "hello"
+	m.searchHistoryIdx = 1
+	m.searchText = m.searchHistory[1]
+	if m.searchText != "hello" {
+		t.Errorf("Expected 'hello' on second up, got %q", m.searchText)
+	}
+
+	// Down arrow — back to "foo"
+	m.searchHistoryIdx = 0
+	m.searchText = m.searchHistory[0]
+	if m.searchText != "foo" {
+		t.Errorf("Expected 'foo' on down, got %q", m.searchText)
+	}
+}
+
+func TestRecallLastSearch(t *testing.T) {
+	m := &Model{
+		viewportDoc: docFromLines(
+			"foo bar foo",
+			"no match",
+			"another foo",
+		),
+	}
+
+	// Search and commit
+	m.searchText = "foo"
+	m.updateSearchMatches()
+	m.commitSearch()
+
+	// Clear search
+	m.clearSearch()
+	if len(m.searchOrder) != 0 {
+		t.Fatal("Expected no matches after clear")
+	}
+
+	// Recall via n
+	m.recallLastSearch(false)
+	if m.searchText != "foo" {
+		t.Errorf("Expected recalled text 'foo', got %q", m.searchText)
+	}
+	if len(m.searchOrder) != 3 {
+		t.Errorf("Expected 3 matches after recall, got %d", len(m.searchOrder))
+	}
+	if m.searchIdx != 0 {
+		t.Errorf("n should land on the first match, got %d", m.searchIdx)
+	}
+
+	// Recall via N goes to the last match instead.
+	m.clearSearch()
+	m.recallLastSearch(true)
+	if len(m.searchOrder) != 3 {
+		t.Fatalf("Expected 3 matches after recall, got %d", len(m.searchOrder))
+	}
+	if m.searchIdx != 2 {
+		t.Errorf("N should land on the last match, got %d", m.searchIdx)
+	}
+}
+
 func TestSearchNavKeyFallsThroughWhenIdle(t *testing.T) {
 	m := &Model{viewportDoc: docFromLines("foo bar")}
 
@@ -191,6 +299,74 @@ func TestSearchNavKeyFallsThroughWhenIdle(t *testing.T) {
 		}
 	}
 
+	// With history available, n recalls the last query.
+	m.clearSearch()
+	m.searchHistory = []string{"foo"}
+	if !m.handleSearchNavKey("n") {
+		t.Error(`"n" should be consumed when history can be recalled`)
+	}
+	if m.searchText != "foo" {
+		t.Errorf("searchText = %q, want %q", m.searchText, "foo")
+	}
+}
+
+func TestSearchHistoryKeepsTypedDraft(t *testing.T) {
+	m := &Model{}
+	for _, q := range []string{"older", "newer"} {
+		m.startSearch()
+		typeSearch(m, q)
+		m.commitSearch()
+	}
+
+	up := tea.KeyMsg{Type: tea.KeyUp}
+	down := tea.KeyMsg{Type: tea.KeyDown}
+
+	m.startSearch()
+	typeSearch(m, "fo")
+
+	m.handleSearchInputKey(up)
+	if m.searchText != "newer" {
+		t.Fatalf("after up searchText = %q, want %q", m.searchText, "newer")
+	}
+	m.handleSearchInputKey(up)
+	if m.searchText != "older" {
+		t.Fatalf("after second up searchText = %q, want %q", m.searchText, "older")
+	}
+
+	m.handleSearchInputKey(down)
+	if m.searchText != "newer" {
+		t.Fatalf("after down searchText = %q, want %q", m.searchText, "newer")
+	}
+	m.handleSearchInputKey(down)
+	if m.searchText != "fo" {
+		t.Errorf("returning to the draft gave %q, want %q", m.searchText, "fo")
+	}
+	if m.searchHistoryIdx != -1 {
+		t.Errorf("searchHistoryIdx = %d, want -1", m.searchHistoryIdx)
+	}
+}
+
+func TestSearchHistoryIsCapped(t *testing.T) {
+	m := &Model{}
+	for i := 0; i < searchHistoryMax+10; i++ {
+		m.startSearch()
+		typeSearch(m, fmt.Sprintf("q%d", i))
+		m.commitSearch()
+	}
+
+	if len(m.searchHistory) != searchHistoryMax {
+		t.Errorf("history length = %d, want %d",
+			len(m.searchHistory), searchHistoryMax)
+	}
+	newest := fmt.Sprintf("q%d", searchHistoryMax+9)
+	if m.searchHistory[0] != newest {
+		t.Errorf("newest entry = %q, want %q", m.searchHistory[0], newest)
+	}
+	for _, h := range m.searchHistory {
+		if h == "q0" {
+			t.Error("oldest entry should have been dropped")
+		}
+	}
 }
 
 func TestExtractCaseFlags(t *testing.T) {
@@ -636,6 +812,192 @@ func TestCompareSearchMatchesAtEndOfLine(t *testing.T) {
 	got, want := ansi.Strip(rendered), ansi.Strip(m.compare[0].doc.Line(row))
 	if got != want {
 		t.Errorf("highlighting changed the text\n got %q\nwant %q", got, want)
+	}
+}
+
+// searchHistoryDB opens an empty in-memory database for history tests.
+func searchHistoryDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
+
+func TestSearchHistoryPersistsAcrossSessions(t *testing.T) {
+	d := searchHistoryDB(t)
+
+	// First session: run a few searches.
+	first := &Model{db: d}
+	first.loadSearchHistory()
+	if len(first.searchHistory) != 0 {
+		t.Fatalf("a fresh database should have no history, got %v",
+			first.searchHistory)
+	}
+	for _, q := range []string{"alpha", "beta", "gamma"} {
+		first.startSearch()
+		typeSearch(first, q)
+		first.commitSearch()
+	}
+
+	// Second session over the same database.
+	second := &Model{db: d}
+	second.loadSearchHistory()
+
+	want := []string{"gamma", "beta", "alpha"}
+	if !reflect.DeepEqual(second.searchHistory, want) {
+		t.Errorf("restored history = %v, want %v", second.searchHistory, want)
+	}
+
+	// And it is usable, not just present.
+	second.viewportDoc = docFromLines("alpha beta gamma")
+	if !second.handleSearchNavKey("n") {
+		t.Fatal("n should recall the restored history")
+	}
+	if second.searchText != "gamma" {
+		t.Errorf("recalled %q, want %q", second.searchText, "gamma")
+	}
+}
+
+func TestSearchHistoryPersistsDeduplicatedAndCapped(t *testing.T) {
+	d := searchHistoryDB(t)
+
+	m := &Model{db: d}
+	m.loadSearchHistory()
+	for i := 0; i < searchHistoryMax+20; i++ {
+		m.startSearch()
+		typeSearch(m, fmt.Sprintf("q%d", i))
+		m.commitSearch()
+	}
+	// Re-running an old query moves it to the front rather than
+	// adding a duplicate.
+	m.startSearch()
+	typeSearch(m, fmt.Sprintf("q%d", searchHistoryMax+5))
+	m.commitSearch()
+
+	restored := &Model{db: d}
+	restored.loadSearchHistory()
+
+	if len(restored.searchHistory) != searchHistoryMax {
+		t.Errorf("restored %d entries, want %d",
+			len(restored.searchHistory), searchHistoryMax)
+	}
+	if got := restored.searchHistory[0]; got !=
+		fmt.Sprintf("q%d", searchHistoryMax+5) {
+		t.Errorf("newest entry = %q, want the re-run query", got)
+	}
+	seen := map[string]bool{}
+	for _, q := range restored.searchHistory {
+		if seen[q] {
+			t.Errorf("duplicate entry %q in restored history", q)
+		}
+		seen[q] = true
+	}
+	if seen["q0"] {
+		t.Error("oldest entry should have been dropped by the cap")
+	}
+}
+
+func TestSearchHistoryHandlesUnusableStoredValue(t *testing.T) {
+	d := searchHistoryDB(t)
+	d.SetSyncState(searchHistoryKey, "{not json")
+
+	m := &Model{db: d}
+	m.loadSearchHistory()
+	if len(m.searchHistory) != 0 {
+		t.Errorf("history = %v, want empty after an unreadable value",
+			m.searchHistory)
+	}
+
+	// A new search still saves, overwriting the bad value.
+	m.startSearch()
+	typeSearch(m, "alpha")
+	m.commitSearch()
+
+	restored := &Model{db: d}
+	restored.loadSearchHistory()
+	if !reflect.DeepEqual(restored.searchHistory, []string{"alpha"}) {
+		t.Errorf("restored = %v, want [alpha]", restored.searchHistory)
+	}
+}
+
+func TestSearchHistoryWithoutDatabase(t *testing.T) {
+	// The compare and patch views are usable without a database in
+	// tests and in NewModelWithData; history just stays in memory.
+	m := &Model{}
+	m.loadSearchHistory()
+	m.startSearch()
+	typeSearch(m, "alpha")
+	m.commitSearch()
+
+	if !reflect.DeepEqual(m.searchHistory, []string{"alpha"}) {
+		t.Errorf("history = %v, want [alpha]", m.searchHistory)
+	}
+}
+
+func TestSearchHistoryRoundTripsAwkwardQueries(t *testing.T) {
+	d := searchHistoryDB(t)
+
+	queries := []string{
+		`needle`,
+		`"quoted"`,
+		`back\slash`,
+		`a|b.*[0-9]+`,
+		`ünïcödé ☕`,
+		`  leading and trailing  `,
+		`tab	separated`,
+	}
+	m := &Model{db: d}
+	m.loadSearchHistory()
+	for _, q := range queries {
+		m.searchText = q
+		m.commitSearch()
+	}
+
+	restored := &Model{db: d}
+	restored.loadSearchHistory()
+
+	want := make([]string, len(queries))
+	for i, q := range queries {
+		want[len(queries)-1-i] = q
+	}
+	if !reflect.DeepEqual(restored.searchHistory, want) {
+		t.Errorf("restored = %q\n    want = %q", restored.searchHistory, want)
+	}
+}
+
+func TestSearchHistorySurvivesDatabaseReopen(t *testing.T) {
+	// The in-memory tests share one connection. This is the real
+	// case: quit leadlight and start it again in the same directory.
+	path := filepath.Join(t.TempDir(), "leadlight.db")
+
+	first, err := db.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Model{db: first}
+	m.loadSearchHistory()
+	for _, q := range []string{"alpha", "beta"} {
+		m.startSearch()
+		typeSearch(m, q)
+		m.commitSearch()
+	}
+	first.Close()
+
+	second, err := db.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	restored := &Model{db: second}
+	restored.loadSearchHistory()
+	if want := []string{"beta", "alpha"}; !reflect.DeepEqual(
+		restored.searchHistory, want) {
+		t.Errorf("after reopen history = %v, want %v",
+			restored.searchHistory, want)
 	}
 }
 
@@ -1280,6 +1642,54 @@ func TestSearchWithNoMatchesIsDroppedOnCommit(t *testing.T) {
 	}
 }
 
+func TestSearchWithNoMatchesIsStillRemembered(t *testing.T) {
+	// Dropping the search must not lose the query: a typo is exactly
+	// what you want to recall and correct.
+	m := &Model{width: 80, height: 24, viewMode: viewPatch}
+	m.setViewportDoc(searchDoc("alpha\nbeta\n", 80))
+
+	m.startSearch()
+	typeSearch(m, "nomatch")
+	m.handleSearchInputKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if want := []string{"nomatch"}; !reflect.DeepEqual(m.searchHistory, want) {
+		t.Errorf("history = %v, want %v", m.searchHistory, want)
+	}
+
+	// Arrowing up at the prompt brings it back for editing.
+	m.startSearch()
+	m.handleSearchInputKey(keySpecial("up"))
+	if m.searchText != "nomatch" {
+		t.Errorf("recalled %q, want %q", m.searchText, "nomatch")
+	}
+}
+
+func TestSearchRecallWithNoMatchesIsDropped(t *testing.T) {
+	// n recalls the last query; if it no longer matches anything in
+	// this content, it should not leave a dead search behind either.
+	m := &Model{width: 80, height: 24, viewMode: viewPatch}
+	m.setViewportDoc(searchDoc("alpha needle\n", 80))
+	m.startSearch()
+	typeSearch(m, "needle")
+	m.handleSearchInputKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(m.searchOrder) != 1 {
+		t.Fatalf("expected the search to match, got %d", len(m.searchOrder))
+	}
+
+	// Move to content the query does not match, then clear and recall.
+	m.setViewportDoc(searchDoc("nothing of interest\n", 80))
+	m.clearSearch()
+	m.handleSearchNavKey("n")
+
+	if m.searchText != "" {
+		t.Errorf("searchText = %q, want a failed recall to leave nothing",
+			m.searchText)
+	}
+	if m.searchIdx != -1 {
+		t.Errorf("searchIdx = %d, want -1", m.searchIdx)
+	}
+}
+
 func TestSearchHelpDropsNavWhenContentLosesMatches(t *testing.T) {
 	// A search can also end up with no matches because the content
 	// changed under it. It stays active, so that going back restores
@@ -1404,6 +1814,7 @@ func TestSearchPromptTakesCoalescedRunes(t *testing.T) {
 	for _, typed := range []string{"up", "down", "enter", "esc", "tab"} {
 		m := &Model{width: 80, height: 24, viewMode: viewPatch}
 		m.setViewportDoc(docFromLines("nothing of interest"))
+		m.searchHistory = []string{"PREVIOUS"}
 		m.startSearch()
 
 		m.handleSearchInputKey(tea.KeyMsg{

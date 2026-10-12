@@ -411,6 +411,29 @@ func (m *Model) handleSearchInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.commitSearch()
 	case tea.KeyEsc:
 		m.cancelSearch()
+	case tea.KeyUp:
+		if len(m.searchHistory) > 0 {
+			if m.searchHistoryIdx == -1 {
+				// Leaving the query being typed: keep it so that
+				// browsing back down restores it.
+				m.searchDraft = m.searchText
+			}
+			if m.searchHistoryIdx < len(m.searchHistory)-1 {
+				m.searchHistoryIdx++
+			}
+			m.searchText = m.searchHistory[m.searchHistoryIdx]
+			m.updateSearchMatches()
+		}
+	case tea.KeyDown:
+		if m.searchHistoryIdx > 0 {
+			m.searchHistoryIdx--
+			m.searchText = m.searchHistory[m.searchHistoryIdx]
+			m.updateSearchMatches()
+		} else if m.searchHistoryIdx == 0 {
+			m.searchHistoryIdx = -1
+			m.searchText = m.searchDraft
+			m.updateSearchMatches()
+		}
 	case tea.KeyBackspace:
 		if m.searchText == "" {
 			m.cancelSearch()
@@ -418,6 +441,7 @@ func (m *Model) handleSearchInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		_, size := utf8.DecodeLastRuneInString(m.searchText)
 		m.searchText = m.searchText[:len(m.searchText)-size]
+		m.searchHistoryIdx = -1
 		m.updateSearchMatches()
 	case tea.KeyRunes, tea.KeySpace:
 		// Typed characters and pasted text both arrive as runes; a
@@ -437,6 +461,7 @@ func (m *Model) handleSearchInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.searchText = b.String()
+		m.searchHistoryIdx = -1
 		m.updateSearchMatches()
 	}
 	return m, nil
@@ -461,6 +486,8 @@ func (m *Model) handleSearchNavKey(key string) bool {
 			}
 		case m.searchText != "":
 			// A search that matched nothing still owns n and N.
+		case len(m.searchHistory) > 0:
+			m.recallLastSearch(key == "N")
 		default:
 			return false
 		}

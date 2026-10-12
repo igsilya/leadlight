@@ -246,13 +246,16 @@ type Model struct {
 	// searchInput is true only while the query is being typed; an
 	// active search is one with searchRegex != nil, which outlives
 	// the prompt and keeps the matches highlighted.
-	searchInput     bool
-	searchText      string
-	searchRegex     *regexp.Regexp
-	viewportMatcher searchMatcher
-	searchOrder     []matchRef // every match, in reading order
-	searchIdx       int        // index into searchOrder, -1 when none
-	searchOrigin    int        // viewport offset when the prompt opened
+	searchInput      bool
+	searchText       string
+	searchRegex      *regexp.Regexp
+	viewportMatcher  searchMatcher
+	searchOrder      []matchRef // every match, in reading order
+	searchIdx        int        // index into searchOrder, -1 when none
+	searchHistory    []string
+	searchHistoryIdx int    // -1 = typing new query, 0+ = browsing history
+	searchDraft      string // query being typed, stashed while browsing
+	searchOrigin     int    // viewport offset when the prompt opened
 
 	logConsole   bool
 	logFocused   bool
@@ -304,6 +307,7 @@ func NewModel(d *db.DB, states []string, token string) *Model {
 		highlightAnimating:   true,
 		cachedRenderedRows:   map[int]*seriesRowCache{},
 	}
+	m.loadSearchHistory()
 	m.reloadData()
 	return m
 }

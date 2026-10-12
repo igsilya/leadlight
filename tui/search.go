@@ -4,7 +4,9 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,10 +18,60 @@ import (
 	"leadlight/status"
 )
 
+// searchHistoryMax caps the number of remembered queries. The list is
+// only ever walked one entry at a time, so a long tail is of no use to
+// anyone and would just sit in the database.
+const searchHistoryMax = 50
+
+// searchHistoryKey is where the history lives in the sync_state table.
+// It is stored in the project database rather than in the config,
+// which leadlight only ever reads, and which is shared between
+// projects where searches would mean little.
+const searchHistoryKey = "search_history"
+
+// loadSearchHistory restores the history saved by a previous session.
+// A value that cannot be read is dropped rather than reported: an
+// unusable history is not worth interrupting startup over.
+func (m *Model) loadSearchHistory() {
+	m.searchHistory = nil
+	if m.db == nil {
+		return
+	}
+	stored := m.db.GetSyncState(searchHistoryKey)
+	if stored == "" {
+		return
+	}
+	var history []string
+	if err := json.Unmarshal([]byte(stored), &history); err != nil {
+		log.Printf("search: discarding unreadable history: %v", err)
+		return
+	}
+	for _, q := range history {
+		if q != "" && len(m.searchHistory) < searchHistoryMax {
+			m.searchHistory = append(m.searchHistory, q)
+		}
+	}
+}
+
+// saveSearchHistory persists the history for the next session.
+func (m *Model) saveSearchHistory() {
+	if m.db == nil {
+		return
+	}
+	encoded, err := json.Marshal(m.searchHistory)
+	if err != nil {
+		log.Printf("search: cannot save history: %v", err)
+		return
+	}
+	m.db.SetSyncState(searchHistoryKey, string(encoded))
+}
+
 func (m *Model) startSearch() {
 	m.searchInput = true
 	m.searchOrigin = m.viewportOffset
 	m.searchText = ""
+	m.searchDraft = ""
+	m.searchHistoryIdx = -1
 	m.searchRegex = nil
 	m.searchOrder = nil
 	m.searchIdx = -1
@@ -37,6 +89,7 @@ func (m *Model) cancelSearch() {
 func (m *Model) clearSearch() {
 	m.searchInput = false
 	m.searchText = ""
+	m.searchDraft = ""
 	m.searchRegex = nil
 	m.searchOrder = nil
 	m.searchIdx = -1
@@ -68,6 +121,21 @@ func (m *Model) reportNoResults(query string) {
 func (m *Model) commitSearch() {
 	m.searchInput = false
 	query := m.searchText
+	m.searchDraft = ""
+	if m.searchText != "" {
+		// Deduplicate: remove previous occurrence so the latest is always at front.
+		for i, h := range m.searchHistory {
+			if h == m.searchText {
+				m.searchHistory = append(m.searchHistory[:i], m.searchHistory[i+1:]...)
+				break
+			}
+		}
+		m.searchHistory = append([]string{m.searchText}, m.searchHistory...)
+		if len(m.searchHistory) > searchHistoryMax {
+			m.searchHistory = m.searchHistory[:searchHistoryMax]
+		}
+		m.saveSearchHistory()
+	}
 	if m.dropSearchIfUnmatched() {
 		// Nothing was found, so the incremental scrolling done while
 		// the query was typed is undone too.
@@ -82,13 +150,33 @@ func (m *Model) commitSearch() {
 // was given found nothing, and reports whether it did. There is
 // nothing to step through or highlight, so staying in it would only
 // offer an n and N that do nothing and make q take two presses to
-// leave the view.
+// leave the view. The query is in the history either way, so it can
+// still be recalled and corrected.
 func (m *Model) dropSearchIfUnmatched() bool {
 	if len(m.searchOrder) > 0 {
 		return false
 	}
 	m.clearSearch()
 	return true
+}
+
+// recallLastSearch re-runs the most recent query, as vim does when n
+// or N is pressed with no search active. backward puts the cursor on
+// the last match rather than the first, so that N goes backwards from
+// where the view is rather than jumping to the top.
+func (m *Model) recallLastSearch(backward bool) {
+	if len(m.searchHistory) == 0 {
+		return
+	}
+	m.searchText = m.searchHistory[0]
+	m.updateSearchMatches()
+	if m.dropSearchIfUnmatched() {
+		return
+	}
+	if backward && len(m.searchOrder) > 0 {
+		m.searchIdx = len(m.searchOrder) - 1
+		m.scrollToMatch(m.searchIdx)
+	}
 }
 
 // searchMatcher holds every match of one pattern in one document.
