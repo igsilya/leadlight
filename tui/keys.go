@@ -392,16 +392,32 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// exitPatchView returns to the patch list, dropping everything that
+// only describes the item being viewed.
+func (m *Model) exitPatchView() {
+	m.viewMode = viewTable
+	m.viewingPatchID = 0
+	m.viewingCoverID = 0
+	m.viewComments = nil
+	m.viewCommentIdx = -1
+	m.setViewportDoc(nil)
+	m.viewExpanded = false
+}
+
+// exitCompareView returns to the patch list and unmarks both sides.
+func (m *Model) exitCompareView() {
+	m.viewMode = viewTable
+	m.compareCount = 0
+}
+
 func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc":
-		m.viewMode = viewTable
-		m.viewingPatchID = 0
-		m.viewingCoverID = 0
-		m.viewComments = nil
-		m.viewCommentIdx = -1
-		m.viewportLines = nil
-		m.viewExpanded = false
+	key := msg.String()
+
+	switch key {
+	case "q":
+		m.exitPatchView()
+	case "esc":
+		m.exitPatchView()
 	case "e":
 		m.viewExpanded = !m.viewExpanded
 		m.switchToComment()
@@ -655,7 +671,7 @@ func (m *Model) viewportScroll(delta int) {
 	if m.viewportOffset < 0 {
 		m.viewportOffset = 0
 	}
-	maxOffset := len(m.viewportLines) - m.viewportVisibleLines()
+	maxOffset := m.viewportDoc.Len() - m.viewportVisibleLines()
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -665,7 +681,7 @@ func (m *Model) viewportScroll(delta int) {
 }
 
 func (m *Model) viewportScrollToEnd() {
-	m.viewportOffset = len(m.viewportLines) - m.viewportVisibleLines()
+	m.viewportOffset = m.viewportDoc.Len() - m.viewportVisibleLines()
 	if m.viewportOffset < 0 {
 		m.viewportOffset = 0
 	}
@@ -674,12 +690,15 @@ func (m *Model) viewportScrollToEnd() {
 func (m *Model) buildViewportContent(
 	parsed ParsedMbox, checks []CheckInfo,
 ) {
-	formatted := FormatMbox(parsed, m.width, !m.viewExpanded)
-	checksSection := FormatChecks(checks, m.width, !m.viewExpanded)
-	if checksSection != "" {
-		formatted = checksSection + "\n" + formatted
+	doc := formatChecksDoc(checks, m.width, !m.viewExpanded)
+	if doc.Len() > 0 {
+		doc.addBlank()
 	}
-	m.viewportLines = splitLines(formatted)
+	headers, body, diff := formatMboxDoc(parsed, m.width, !m.viewExpanded)
+	doc.appendDoc(headers)
+	doc.appendDoc(body)
+	doc.appendDoc(diff)
+	m.setViewportDoc(doc)
 }
 
 func (m *Model) nextComment() {
@@ -734,9 +753,8 @@ func (m *Model) switchToComment() {
 	}
 	if m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
-		formatted := FormatComment(
-			comment, m.width, !m.viewExpanded, m.viewSourceLines)
-		m.viewportLines = splitLines(formatted)
+		m.setViewportDoc(formatCommentDoc(
+			comment, m.width, !m.viewExpanded, m.viewSourceLines))
 	}
 }
 
@@ -760,7 +778,7 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 			m.viewportOffset = 0
 			m.viewSourceLines = nil
 			m.viewportLoading = true
-			m.viewportLines = []string{"Fetching series details..."}
+			m.setViewportDoc(docFromLines("Fetching series details..."))
 			m.FetchSeriesDetail(seriesID)
 			return nil
 		}
@@ -790,7 +808,7 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 			m.buildViewportContent(parsed, nil)
 		} else {
 			m.viewportLoading = true
-			m.viewportLines = []string{"Fetching..."}
+			m.setViewportDoc(docFromLines("Fetching..."))
 			if m.FetchCoverDetail != nil {
 				m.FetchCoverDetail(cover.ID)
 			}
@@ -867,7 +885,7 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 		log.Printf("TUI: detail not fetched for patch %d %q",
 			patchID, row.Name)
 		m.viewportLoading = true
-		m.viewportLines = []string{"Fetching..."}
+		m.setViewportDoc(docFromLines("Fetching..."))
 		if m.FetchPatchDetail != nil {
 			m.FetchPatchDetail(patchID)
 		}
@@ -984,9 +1002,11 @@ func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch key {
-	case "q", "esc":
-		m.viewMode = viewTable
-		m.compareCount = 0
+	case "q":
+		m.exitCompareView()
+		return m, nil
+	case "esc":
+		m.exitCompareView()
 		return m, nil
 
 	case "up", "k":
@@ -1059,7 +1079,7 @@ func (m *Model) clampCompareIdx(idx int, patches []comparePatch, cover *ParsedMb
 }
 
 func (m *Model) compareMaxLines() int {
-	return max(len(m.compare[0].lines), len(m.compare[1].lines))
+	return max(m.compare[0].doc.Len(), m.compare[1].doc.Len())
 }
 
 func (m *Model) compareScroll(delta int) {

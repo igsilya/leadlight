@@ -58,7 +58,7 @@ func (m *Model) viewportVisibleLines() int {
 
 func (m *Model) renderPatchView() string {
 	visible := m.viewportVisibleLines()
-	total := len(m.viewportLines)
+	total := m.viewportDoc.Len()
 
 	start := m.viewportOffset
 	if start > total {
@@ -69,10 +69,10 @@ func (m *Model) renderPatchView() string {
 		end = total
 	}
 
-	// Assemble exactly `visible` lines separated by newlines.
 	lines := make([]string, visible)
 	for i := 0; i < end-start; i++ {
-		lines[i] = m.viewportLines[start+i]
+		lineIdx := start + i
+		lines[i] = m.viewportDoc.Line(lineIdx)
 	}
 	body := strings.Join(lines, "\n")
 
@@ -85,6 +85,7 @@ func (m *Model) renderPatchView() string {
 	bright, desc, sep := m.helpStyles()
 
 	var status string
+
 	expandKey := func(hb *strings.Builder) {
 		hb.WriteString(helpSepStr(sep))
 		if m.viewExpanded {
@@ -93,6 +94,7 @@ func (m *Model) renderPatchView() string {
 			hb.WriteString(helpKey(bright, desc, "e", "expand"))
 		}
 	}
+
 	if len(m.viewComments) > 0 {
 		var hb strings.Builder
 		hb.WriteString(sep.Render(" "))
@@ -160,18 +162,11 @@ func (m *Model) renderCompareView() string {
 	lines := make([]string, visible)
 	for i := 0; i < visible; i++ {
 		idx := start + i
-		left := ""
-		if idx < len(m.compare[0].lines) {
-			left = m.compare[0].lines[idx]
-		}
-		right := ""
-		if idx < len(m.compare[1].lines) {
-			right = m.compare[1].lines[idx]
-		}
-		left = comparePadLine(left, leftWidth,
-			compareDiffKind(m.compare[0].kinds, idx))
-		right = comparePadLine(right, rightWidth,
-			compareDiffKind(m.compare[1].kinds, idx))
+		left := comparePadLine(m.compare[0].doc.Line(idx), leftWidth,
+			m.compare[0].doc.kindAt(idx))
+		right := comparePadLine(m.compare[1].doc.Line(idx), rightWidth,
+			m.compare[1].doc.kindAt(idx))
+
 		lines[i] = left + sep + right
 	}
 	body := strings.Join(lines, "\n")
@@ -183,6 +178,8 @@ func (m *Model) renderCompareView() string {
 	}
 
 	bright, desc, sepS := m.helpStyles()
+
+	var helpText string
 	var hb strings.Builder
 	labelL := comparePositionLabel(
 		m.compare[0].idx, len(m.compare[0].patches), m.compare[0].ver)
@@ -205,7 +202,7 @@ func (m *Model) renderCompareView() string {
 	hb.WriteString(helpSepStr(sepS))
 	hb.WriteString(helpKey(bright, desc, "esc", "back"))
 	hb.WriteString(desc.Render(fmt.Sprintf("  %d%%", pct)))
-	helpText := hb.String()
+	helpText = hb.String()
 
 	var statusLine string
 	msg, spinning := m.Status.Active()
@@ -226,13 +223,6 @@ func comparePositionLabel(idx, total int, ver string) string {
 		return fmt.Sprintf("%s [0/%d]", ver, total)
 	}
 	return fmt.Sprintf("%s [%d/%d]", ver, idx+1, total)
-}
-
-func compareDiffKind(kinds []diffLineKind, idx int) diffLineKind {
-	if idx < len(kinds) {
-		return kinds[idx]
-	}
-	return diffUnchanged
 }
 
 // comparePadLine pads a rendered line to the given width. When the

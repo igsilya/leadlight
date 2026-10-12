@@ -232,180 +232,113 @@ func extractHeader(headers, name string) string {
 	return strings.Join(result, " ")
 }
 
-// writeHeader renders a labeled header value, optionally collapsing
+// headerLabelWidth is the width of a header label ("Subject: ").
+const headerLabelWidth = 9
+
+// appendHeaderDoc appends a labeled header value, optionally collapsing
 // long recipient lists to collapseHeaderMax lines with a count marker.
-func writeHeader(
-	b *strings.Builder, label, value string, collapse bool,
-	labelWidth, valWidth int, kind ...diffLineKind,
+//
+// The label is part of the logical line, so that searching for
+// "Subject: foo" matches the way the header reads on screen. The indent
+// that lines up continuation rows underneath it is chrome.
+func appendHeaderDoc(
+	d *renderedDoc, label, value string, collapse bool,
+	labelWidth, valWidth int, kind diffLineKind,
 ) {
 	if value == "" {
 		return
 	}
-	k := diffUnchanged
-	if len(kind) > 0 {
-		k = kind[0]
-	}
-	labelStyle := withDiffBg(mboxHeaderLabel, k)
-	valueStyle := withDiffBg(mboxHeaderValue, k)
-	markerStyle := withDiffBg(collapseMarkerStyle, k)
+	labelStyle := withDiffBg(mboxHeaderLabel, kind)
+	valueStyle := withDiffBg(mboxHeaderValue, kind)
+	markerStyle := withDiffBg(collapseMarkerStyle, kind)
+	indent := strings.Repeat(" ", labelWidth)
 
-	b.WriteString(labelStyle.Render(label))
-	lines := wrapHeaderValue(value, valWidth)
-	if collapse && len(lines) > collapseHeaderMax {
-		for i := 0; i < collapseHeaderMax; i++ {
-			if i > 0 {
-				b.WriteString(strings.Repeat(" ", labelWidth))
-			}
-			b.WriteString(valueStyle.Render(lines[i]))
-			b.WriteByte('\n')
+	labelLen := utf8.RuneCountInString(label)
+	segs := wrapHeaderValueSegs(value, valWidth)
+
+	collapsed := collapse && len(segs) > collapseHeaderMax
+	shown := value
+	if collapsed {
+		segs = segs[:collapseHeaderMax]
+		// The source line is what ends up on screen, so it stops
+		// where the last surviving row does. Keeping the whole value
+		// would leave the hidden tail searchable, and a match in it
+		// could be stepped to but never seen.
+		last := segs[len(segs)-1]
+		shown = string([]rune(value)[:last.off+
+			utf8.RuneCountInString(last.text)])
+	}
+	logical := d.addLogical(label + shown)
+	for i, seg := range segs {
+		var spans []styledSpan
+		// The label is source text and leads the first row, so that
+		// row starts at offset 0. The indent under it is chrome, so
+		// those rows start where their slice of the value does.
+		off := labelLen + seg.off
+		if i == 0 {
+			spans = append(spans, plainSpan(label, labelStyle))
+			off = 0
+		} else {
+			spans = append(spans, chromeSpan(indent, lipgloss.Style{}))
 		}
-		total := strings.Count(value, ", ") + 1
-		marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
-		b.WriteString(strings.Repeat(" ", labelWidth))
-		b.WriteString(markerStyle.Render(marker))
-		b.WriteByte('\n')
+		spans = append(spans, plainSpan(seg.text, valueStyle))
+		d.addRow(logical, off, spans...)
+		d.visual[len(d.visual)-1].kind = kind
+	}
+	if !collapsed {
 		return
 	}
-	for i, line := range lines {
-		if i > 0 {
-			b.WriteString(strings.Repeat(" ", labelWidth))
-		}
-		b.WriteString(valueStyle.Render(line))
-		b.WriteByte('\n')
-	}
+
+	// The marker is text the formatter invented rather than part of
+	// the header, so it gets a logical line of its own and stays
+	// searchable.
+	total := strings.Count(value, ", ") + 1
+	marker := fmt.Sprintf("··· %d total (e to expand) ···", total)
+	mi := d.addLogical(marker)
+	d.addRow(mi, 0,
+		chromeSpan(indent, lipgloss.Style{}),
+		plainSpan(marker, markerStyle),
+	)
+	d.visual[len(d.visual)-1].kind = kind
 }
 
-func FormatMbox(p ParsedMbox, width int, collapse bool) string {
-	headers, body, diff := FormatMboxParts(p, width, collapse)
-	var b strings.Builder
-	b.WriteString(headers)
-	b.WriteString(body)
-	b.WriteString(diff)
-	return b.String()
-}
-
-// FormatMboxParts returns the three sections of a formatted mbox
-// separately so the compare view can align them between two patches.
-func FormatMboxParts(
-	p ParsedMbox, width int, collapse bool,
-) (headers, body, diff string) {
-	labelWidth := 9 // "Subject: " length
-	valWidth := width - labelWidth
-	if valWidth < 20 {
-		valWidth = 20
-	}
-
-	var hb strings.Builder
-	writeHeader(&hb, "Subject: ", p.Subject, false, labelWidth, valWidth)
-	writeHeader(&hb, "From:    ", p.From, false, labelWidth, valWidth)
-	writeHeader(&hb, "To:      ", p.To, collapse, labelWidth, valWidth)
-	writeHeader(&hb, "Cc:      ", p.Cc, collapse, labelWidth, valWidth)
-	writeHeader(&hb, "Date:    ", p.Date, false, labelWidth, valWidth)
-	writeHeader(&hb, "URL:     ", p.URL, false, labelWidth, valWidth)
-	writeHeader(&hb, "Series:  ", p.SeriesURL, false, labelWidth, valWidth)
-	headers = hb.String()
-
-	if p.Body != "" {
-		var bb strings.Builder
-		bb.WriteByte('\n')
-		cleaned := replaceControlChars(p.Body)
-		for _, line := range strings.Split(cleaned, "\n") {
-			line = expandTabs(line, 8) // widths must be final before wrapping
-			depth := quoteDepth(line)
-			for _, wl := range wrapLine(line, width) {
-				writeStyledLine(&bb, wl, depth)
-				bb.WriteByte('\n')
-			}
-		}
-		body = bb.String()
-	}
-
-	if p.Diff != "" {
-		var df strings.Builder
-		df.WriteByte('\n')
-		df.WriteString(formatDiff(replaceControlChars(p.Diff), width))
-		diff = df.String()
-	}
-
-	return headers, body, diff
-}
-
-func formatDiff(diff string, width int) string {
-	var b strings.Builder
-	for _, line := range strings.Split(diff, "\n") {
-		line = expandTabs(line, 8)
-		var style lipgloss.Style
-		switch {
-		case strings.HasPrefix(line, "+++ ") ||
-			strings.HasPrefix(line, "--- "):
-			style = diffHeaderStyle
-		case strings.HasPrefix(line, "+"):
-			style = diffAddStyle
-		case strings.HasPrefix(line, "-"):
-			style = diffDelStyle
-		case strings.HasPrefix(line, "@@"):
-			style = diffHunkStyle
-		case strings.HasPrefix(line, "diff --git"):
-			style = diffHeaderStyle
-		default:
-			style = plainTextStyle
-		}
-		for _, wl := range wrapLine(line, width) {
-			b.WriteString(style.Render(wl))
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
-
-// withDiffBg returns a copy of the style with the appropriate
-// background color for the given diff classification.
-func withDiffBg(style lipgloss.Style, kind diffLineKind) lipgloss.Style {
-	switch kind {
-	case diffAdded:
-		return style.Background(compareAddBg)
-	case diffRemoved, diffPadding:
-		return style.Background(compareDelBg)
-	}
-	return style
-}
-
-// comparePaddingMarker returns a styled "~" marker for diff padding
-// lines where content exists only on the other side.
-func comparePaddingMarker() string {
-	return withDiffBg(collapseMarkerStyle, diffPadding).Render("~")
-}
-
-// styleBodyLine wraps and styles a single raw body line, applying
-// the diff background tint to all wrapped segments.
-func styleBodyLine(line string, width int, kind diffLineKind) []string {
-	var result []string
+// appendBodyLineDoc appends one source line of message body, wrapped
+// and styled according to how deeply it is quoted.
+func appendBodyLineDoc(
+	d *renderedDoc, line string, width int, kind diffLineKind,
+) {
 	line = expandTabs(line, 8) // widths must be final before wrapping
 	depth := quoteDepth(line)
-	for _, wl := range wrapLine(line, width) {
-		var styled string
-		if depth > 0 {
-			if depth%2 == 1 {
-				styled = withDiffBg(quotedLineStyle, kind).Render(wl)
-			} else {
-				styled = withDiffBg(quotedLineEvenStyle, kind).Render(wl)
-			}
-		} else if strings.HasPrefix(wl, "  ···") {
-			styled = withDiffBg(collapseMarkerStyle, kind).Render(wl)
-		} else if strings.HasPrefix(wl, "↳ ") {
-			styled = withDiffBg(wrapIndicatorStyle, kind).Render("↳ ") +
-				withDiffBg(plainTextStyle, kind).Render(wl[len("↳ "):])
-		} else {
-			styled = withDiffBg(plainTextStyle, kind).Render(wl)
-		}
-		result = append(result, styled)
+
+	var style lipgloss.Style
+	switch {
+	case depth > 0 && depth%2 == 1:
+		style = quotedLineStyle
+	case depth > 0:
+		style = quotedLineEvenStyle
+	case strings.HasPrefix(line, "  ···"):
+		style = collapseMarkerStyle
+	default:
+		style = plainTextStyle
 	}
-	return result
+	style = withDiffBg(style, kind)
+
+	// A quoted line carries its colour across the continuation arrow;
+	// everything else marks the arrow as chrome.
+	preStyle := style
+	if depth == 0 {
+		preStyle = withDiffBg(wrapIndicatorStyle, kind)
+	}
+
+	logical := d.addLogical(line)
+	d.addWrapped(logical, wrapLineSegs(line, width), style, preStyle, kind)
 }
 
-// styleDiffLine wraps and styles a single raw diff-section line,
-// applying the diff background tint to all wrapped segments.
-func styleDiffLine(line string, width int, kind diffLineKind) []string {
+// appendDiffLineDoc appends one source line of a diff section, wrapped
+// and styled according to its leading marker.
+func appendDiffLineDoc(
+	d *renderedDoc, line string, width int, kind diffLineKind,
+) {
 	line = expandTabs(line, 8)
 	var style lipgloss.Style
 	switch {
@@ -423,52 +356,170 @@ func styleDiffLine(line string, width int, kind diffLineKind) []string {
 		style = plainTextStyle
 	}
 	style = withDiffBg(style, kind)
-	var result []string
-	for _, wl := range wrapLine(line, width) {
-		result = append(result, style.Render(wl))
+
+	logical := d.addLogical(line)
+	d.addWrapped(logical, wrapLineSegs(line, width), style, style, kind)
+}
+
+func FormatMbox(p ParsedMbox, width int, collapse bool) string {
+	headers, body, diff := formatMboxDoc(p, width, collapse)
+	var b strings.Builder
+	b.WriteString(headers.String())
+	b.WriteString(body.String())
+	b.WriteString(diff.String())
+	return b.String()
+}
+
+// FormatMboxParts returns the three sections of a formatted mbox
+// separately so the compare view can align them between two patches.
+func FormatMboxParts(
+	p ParsedMbox, width int, collapse bool,
+) (headers, body, diff string) {
+	h, b, d := formatMboxDoc(p, width, collapse)
+	return h.String(), b.String(), d.String()
+}
+
+// formatMboxDoc lays out the three sections of an mbox.
+func formatMboxDoc(
+	p ParsedMbox, width int, collapse bool,
+) (headers, body, diff *renderedDoc) {
+	labelWidth := headerLabelWidth
+	valWidth := width - labelWidth
+	if valWidth < 20 {
+		valWidth = 20
 	}
-	return result
+
+	headers = &renderedDoc{}
+	for _, h := range []struct {
+		label    string
+		value    string
+		collapse bool
+	}{
+		{"Subject: ", p.Subject, false},
+		{"From:    ", p.From, false},
+		{"To:      ", p.To, collapse},
+		{"Cc:      ", p.Cc, collapse},
+		{"Date:    ", p.Date, false},
+		{"URL:     ", p.URL, false},
+		{"Series:  ", p.SeriesURL, false},
+	} {
+		appendHeaderDoc(headers, h.label, h.value, h.collapse,
+			labelWidth, valWidth, diffUnchanged)
+	}
+
+	body = &renderedDoc{}
+	if p.Body != "" {
+		body.addBlank()
+		for _, line := range splitRawLines(replaceControlChars(p.Body)) {
+			appendBodyLineDoc(body, line, width, diffUnchanged)
+		}
+	}
+
+	diff = &renderedDoc{}
+	if p.Diff != "" {
+		diff.addBlank()
+		for _, line := range splitRawLines(replaceControlChars(p.Diff)) {
+			appendDiffLineDoc(diff, line, width, diffUnchanged)
+		}
+	}
+
+	return headers, body, diff
+}
+
+// withDiffBg returns a copy of the style with the appropriate
+// background color for the given diff classification.
+func withDiffBg(style lipgloss.Style, kind diffLineKind) lipgloss.Style {
+	switch kind {
+	case diffAdded:
+		return style.Background(compareAddBg)
+	case diffRemoved, diffPadding:
+		return style.Background(compareDelBg)
+	}
+	return style
+}
+
+// addPaddingMarker appends the "~" marker shown on diff padding rows,
+// where content exists only on the other side. The marker is chrome,
+// not something the search should ever match.
+func (d *renderedDoc) addPaddingMarker() {
+	d.addChrome(chromeSpan("~", withDiffBg(collapseMarkerStyle, diffPadding)))
+	d.visual[len(d.visual)-1].kind = diffPadding
 }
 
 // wrapHeaderValue wraps a header value to fit within the given width.
 // Splits on commas first (natural delimiter for email lists), then
 // falls back to spaces for long segments without commas. Accumulates
 // chunks until adding the next one would exceed the width.
-func wrapHeaderValue(s string, width int) []string {
-	if len(s) <= width {
-		return []string{s}
+// wrapHeaderValueSegs wraps a header value to width, reporting where
+// each segment starts in the original. Every segment is a contiguous
+// run of the source: the comma a flushed line ends with is the source's
+// own separator comma, only the space after it is dropped.
+func wrapHeaderValueSegs(s string, width int) []wrapSeg {
+	if utf8.RuneCountInString(s) <= width {
+		return []wrapSeg{{text: s}}
 	}
-	// Split on ", " to get natural chunks (email addresses)
+	// Split on ", " to get natural chunks (email addresses).
 	parts := strings.Split(s, ", ")
-	var lines []string
-	var current string
-	for _, part := range parts {
-		if current == "" {
-			current = part
-		} else if len(current)+len(", ")+len(part) <= width-1 {
+	offs := make([]int, len(parts))
+	at := 0
+	for i, part := range parts {
+		offs[i] = at
+		at += utf8.RuneCountInString(part) + len(", ")
+	}
+
+	var lines []wrapSeg
+	current, currentOff, currentLen := "", 0, 0
+	for i, part := range parts {
+		partLen := utf8.RuneCountInString(part)
+		switch {
+		case current == "":
+			current, currentOff, currentLen = part, offs[i], partLen
+		case currentLen+len(", ")+partLen <= width-1:
 			// -1 reserves space for trailing comma on flush
 			current += ", " + part
-		} else {
-			lines = append(lines, current+",")
-			current = part
+			currentLen += len(", ") + partLen
+		default:
+			// The comma is the separator that precedes this part,
+			// so the flushed line is still a run of the source.
+			lines = append(lines, wrapSeg{
+				text: current + ",", off: currentOff,
+			})
+			current, currentOff, currentLen = part, offs[i], partLen
 		}
 	}
 	if current != "" {
-		lines = append(lines, current)
+		lines = append(lines, wrapSeg{text: current, off: currentOff})
 	}
+
 	// Handle individual lines that are still too long (single
-	// very long email address or non-comma-separated value)
-	var result []string
+	// very long email address or non-comma-separated value).
+	var result []wrapSeg
 	for _, line := range lines {
-		for len(line) > width {
+		runes := []rune(line.text)
+		off := line.off
+		for len(runes) > width {
 			cut := width
-			if idx := strings.LastIndex(line[:width], " "); idx > width/2 {
-				cut = idx
+			for i := width - 1; i > width/2; i-- {
+				if runes[i] == ' ' {
+					cut = i
+					break
+				}
 			}
-			result = append(result, line[:cut])
-			line = strings.TrimSpace(line[cut:])
+			result = append(result, wrapSeg{
+				text: string(runes[:cut]), off: off,
+			})
+			runes, off = runes[cut:], off+cut
+			// Drop the whitespace the break landed on.
+			n := 0
+			for n < len(runes) && unicode.IsSpace(runes[n]) {
+				n++
+			}
+			runes, off = runes[n:], off+n
+			for len(runes) > 0 && unicode.IsSpace(runes[len(runes)-1]) {
+				runes = runes[:len(runes)-1]
+			}
 		}
-		result = append(result, line)
+		result = append(result, wrapSeg{text: string(runes), off: off})
 	}
 	return result
 }
@@ -531,26 +582,6 @@ func expandTabs(s string, tabWidth int) string {
 		}
 	}
 	return buf.String()
-}
-
-// writeStyledLine styles one already-wrapped segment. Callers expand
-// tabs on the whole line before wrapping it, so that wrapping sees the
-// final widths.
-func writeStyledLine(b *strings.Builder, line string, depth int) {
-	if depth > 0 {
-		if depth%2 == 1 {
-			b.WriteString(quotedLineStyle.Render(line))
-		} else {
-			b.WriteString(quotedLineEvenStyle.Render(line))
-		}
-	} else if strings.HasPrefix(line, "  ···") {
-		b.WriteString(collapseMarkerStyle.Render(line))
-	} else if strings.HasPrefix(line, "↳ ") {
-		b.WriteString(wrapIndicatorStyle.Render("↳ "))
-		b.WriteString(plainTextStyle.Render(line[len("↳ "):]))
-	} else {
-		b.WriteString(plainTextStyle.Render(line))
-	}
 }
 
 const (
@@ -635,20 +666,42 @@ func collapseTail(block []string, maxLines int, useAnchors bool) []string {
 	return block[len(block)-maxLines:]
 }
 
-func wrapLine(s string, width int) []string {
+// wrapIndicator marks a line that is the continuation of the one above.
+const wrapIndicator = "↳ "
+
+// wrapSeg is one visual segment of a wrapped source line. text is a
+// contiguous run of the source line starting at rune offset off, and
+// pre is the chrome the wrapper puts in front of it, which is not part
+// of the source. Keeping the two apart lets callers map a position in
+// the source line onto the segment that displays it.
+//
+// The one exception is a line too narrow to wrap at all (width < 5),
+// which comes back as a single truncated segment. Callers that need
+// source positions should treat that text as the source line.
+type wrapSeg struct {
+	text string
+	pre  string
+	off  int
+}
+
+// wrapLineSegs wraps a line to width, reporting where each segment
+// starts in the original.
+func wrapLineSegs(s string, width int) []wrapSeg {
 	runes := []rune(s)
 	if len(runes) <= width {
-		return []string{s}
+		return []wrapSeg{{text: s}}
 	}
 	if width < 5 {
-		return []string{truncateLine(s, width)}
+		return []wrapSeg{{text: truncateLine(s, width)}}
 	}
-	var lines []string
-	first := true
+	var segs []wrapSeg
+	off := 0
 	for len(runes) > 0 {
 		limit := width
-		if !first {
-			limit = width - 2
+		pre := ""
+		if off > 0 {
+			limit = width - len([]rune(wrapIndicator))
+			pre = wrapIndicator
 		}
 		if limit > len(runes) {
 			limit = len(runes)
@@ -662,15 +715,13 @@ func wrapLine(s string, width int) []string {
 				}
 			}
 		}
-		seg := string(runes[:limit])
-		if !first {
-			seg = "↳ " + seg
-		}
-		lines = append(lines, seg)
+		segs = append(segs, wrapSeg{
+			text: string(runes[:limit]), pre: pre, off: off,
+		})
 		runes = runes[limit:]
-		first = false
+		off += limit
 	}
-	return lines
+	return segs
 }
 
 func wrapLogLine(s string, width int) []string {
@@ -724,11 +775,16 @@ type CheckInfo struct {
 	Description string
 }
 
-func FormatChecks(
+func FormatChecks(checks []CheckInfo, width int, collapse bool) string {
+	return formatChecksDoc(checks, width, collapse).String()
+}
+
+func formatChecksDoc(
 	checks []CheckInfo, width int, collapse bool,
-) string {
+) *renderedDoc {
+	d := &renderedDoc{}
 	if len(checks) == 0 {
-		return ""
+		return d
 	}
 
 	// Sort into groups, alphabetical by context within each.
@@ -762,9 +818,12 @@ func FormatChecks(
 		}
 	}
 
-	var b strings.Builder
-	b.WriteString(mboxHeaderLabel.Render("Checks:"))
-	b.WriteByte('\n')
+	addLine := func(text string, style lipgloss.Style, pre ...styledSpan) {
+		i := d.addLogical(text)
+		d.addRow(i, 0, append(pre, plainSpan(text, style))...)
+	}
+
+	addLine("Checks:", mboxHeaderLabel)
 
 	indent := "      "
 	writeCheck := func(c CheckInfo) {
@@ -781,26 +840,29 @@ func FormatChecks(
 			icon = "!"
 			style = checksWarnStyle
 		}
-		prefix := fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context)
-		b.WriteString(style.Render(prefix))
+		addLine(fmt.Sprintf("  %s %-*s", icon, maxCtx, c.Context), style)
 		if c.TargetURL != "" {
-			b.WriteByte('\n')
-			url := indent + c.TargetURL
-			b.WriteString(plainTextStyle.Render(
-				truncateLine(url, width)))
+			// The ellipsis a truncated URL ends with is part of
+			// what is on screen, so it is part of the source line.
+			addLine(truncateLine(indent+c.TargetURL, width), plainTextStyle)
 		}
-		b.WriteByte('\n')
-		if c.Description != "" {
-			for _, dl := range strings.Split(c.Description, "\n") {
-				dl = strings.TrimSpace(dl)
-				if dl == "" {
-					continue
+		if c.Description == "" {
+			return
+		}
+		for _, dl := range strings.Split(c.Description, "\n") {
+			dl = strings.TrimSpace(dl)
+			if dl == "" {
+				continue
+			}
+			li := d.addLogical(dl)
+			for _, seg := range wrapLineSegs(dl, width-len(indent)) {
+				spans := []styledSpan{chromeSpan(indent, plainTextStyle)}
+				if seg.pre != "" {
+					spans = append(spans,
+						chromeSpan(seg.pre, plainTextStyle))
 				}
-				for _, wl := range wrapLine(dl, width-len(indent)) {
-					b.WriteString(
-						plainTextStyle.Render(indent + wl))
-					b.WriteByte('\n')
-				}
+				spans = append(spans, plainSpan(seg.text, plainTextStyle))
+				d.addRow(li, seg.off, spans...)
 			}
 		}
 	}
@@ -813,16 +875,19 @@ func FormatChecks(
 		writeCheck(c)
 	}
 
+	addMarker := func(marker string) {
+		addLine(marker, collapseMarkerStyle,
+			chromeSpan("  ", lipgloss.Style{}))
+	}
+
 	// Successes — collapse to 3 when there are many.
 	if collapse && len(succs) > collapseHeaderMax {
 		for _, c := range succs[:collapseHeaderMax] {
 			writeCheck(c)
 		}
-		marker := fmt.Sprintf(
+		addMarker(fmt.Sprintf(
 			"··· %d successful checks total (e to expand) ···",
-			len(succs))
-		b.WriteString("  " + collapseMarkerStyle.Render(marker))
-		b.WriteByte('\n')
+			len(succs)))
 	} else {
 		for _, c := range succs {
 			writeCheck(c)
@@ -831,18 +896,15 @@ func FormatChecks(
 
 	// Pending — hide entirely when collapsed.
 	if collapse && len(pends) > 0 {
-		marker := fmt.Sprintf(
-			"··· %d checks pending (e to expand) ···",
-			len(pends))
-		b.WriteString("  " + collapseMarkerStyle.Render(marker))
-		b.WriteByte('\n')
+		addMarker(fmt.Sprintf(
+			"··· %d checks pending (e to expand) ···", len(pends)))
 	} else {
 		for _, c := range pends {
 			writeCheck(c)
 		}
 	}
 
-	return b.String()
+	return d
 }
 
 type CommentInfo struct {
@@ -1007,19 +1069,31 @@ func rejoinQuoteContinuations(lines []string, sourceLines map[string]bool) []str
 	return result
 }
 
-func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[string]bool) string {
-	var b strings.Builder
-	labelWidth := 9
+func FormatComment(
+	c CommentInfo, width int, collapse bool, sourceLines map[string]bool,
+) string {
+	return formatCommentDoc(c, width, collapse, sourceLines).String()
+}
+
+func formatCommentDoc(
+	c CommentInfo, width int, collapse bool, sourceLines map[string]bool,
+) *renderedDoc {
+	d := &renderedDoc{}
+	labelWidth := headerLabelWidth
 	valWidth := width - labelWidth
 	if valWidth < 20 {
 		valWidth = 20
+	}
+	header := func(label, value string, coll bool) {
+		appendHeaderDoc(d, label, value, coll,
+			labelWidth, valWidth, diffUnchanged)
 	}
 
 	subject := decodeHeader(compactHeader(extractHeader(c.Headers, "Subject")))
 	if subject == "" {
 		subject = compactHeader(c.Subject)
 	}
-	writeHeader(&b, "Subject: ", subject, false, labelWidth, valWidth)
+	header("Subject: ", subject, false)
 
 	// Reply-To → API submitter → From. The raw From header is often
 	// mangled by mailing lists ("Name via dev <list@example>"), so
@@ -1032,28 +1106,28 @@ func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[stri
 	if from == "" {
 		from = decodeHeader(compactHeader(extractHeader(c.Headers, "From")))
 	}
-	writeHeader(&b, "From:    ", from, false, labelWidth, valWidth)
+	header("From:    ", from, false)
 
 	to := decodeHeader(compactHeader(extractHeader(c.Headers, "To")))
-	writeHeader(&b, "To:      ", to, collapse, labelWidth, valWidth)
+	header("To:      ", to, collapse)
 
 	cc := decodeHeader(compactHeader(extractHeader(c.Headers, "Cc")))
-	writeHeader(&b, "Cc:      ", cc, collapse, labelWidth, valWidth)
+	header("Cc:      ", cc, collapse)
 
 	date := compactHeader(extractHeader(c.Headers, "Date"))
 	if date == "" {
 		date = formatDate(c.Date)
 	}
-	writeHeader(&b, "Date:    ", date, false, labelWidth, valWidth)
+	header("Date:    ", date, false)
 
 	url := c.ListArchiveURL
 	if url == "" {
 		url = c.WebURL
 	}
-	writeHeader(&b, "URL:     ", upgradeHTTP(url), false, labelWidth, valWidth)
+	header("URL:     ", upgradeHTTP(url), false)
 
 	if c.Content != "" {
-		b.WriteByte('\n')
+		d.addBlank()
 		content := replaceControlChars(c.Content)
 		contentLines := strings.Split(content, "\n")
 		contentLines = rejoinQuoteContinuations(contentLines, sourceLines)
@@ -1061,14 +1135,9 @@ func FormatComment(c CommentInfo, width int, collapse bool, sourceLines map[stri
 			contentLines = collapseQuotedBlocks(contentLines)
 		}
 		for _, line := range contentLines {
-			line = expandTabs(line, 8) // widths must be final before wrapping
-			depth := quoteDepth(line)
-			for _, wl := range wrapLine(line, width) {
-				writeStyledLine(&b, wl, depth)
-				b.WriteByte('\n')
-			}
+			appendBodyLineDoc(d, line, width, diffUnchanged)
 		}
 	}
 
-	return b.String()
+	return d
 }
