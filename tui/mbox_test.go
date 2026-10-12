@@ -1006,6 +1006,43 @@ func TestFormatMbox_LineWidths(t *testing.T) {
 	}
 }
 
+func TestFormatMbox_BodyTabsWrapWithinWidth(t *testing.T) {
+	// Tabs grow to the next 8-column stop, so a line has to be
+	// expanded before it is wrapped. Wrapping the unexpanded line
+	// undercounts its width and lets the result overflow.
+	body := strings.Repeat("\tlorem ipsum dolor sit amet ", 6)
+
+	for _, width := range []int{40, 60, 80, 120} {
+		p := ParsedMbox{
+			Subject: "Lorem ipsum",
+			From:    "Lorem <lorem@ipsum.example>",
+			Body:    body,
+		}
+		for i, line := range strings.Split(FormatMbox(p, width, false), "\n") {
+			if vw := lipgloss.Width(line); vw > width {
+				t.Errorf("width=%d line %d visual width %d > %d: %q",
+					width, i, vw, width, line)
+			}
+		}
+	}
+}
+
+func TestFormatComment_ContentTabsWrapWithinWidth(t *testing.T) {
+	c := CommentInfo{
+		Content: strings.Repeat("\tlorem ipsum dolor sit amet ", 6),
+	}
+
+	for _, width := range []int{40, 60, 80, 120} {
+		result := FormatComment(c, width, false, nil)
+		for i, line := range strings.Split(result, "\n") {
+			if vw := lipgloss.Width(line); vw > width {
+				t.Errorf("width=%d line %d visual width %d > %d: %q",
+					width, i, vw, width, line)
+			}
+		}
+	}
+}
+
 func TestFormatMbox_CollapseLongCc(t *testing.T) {
 	// Build a Cc with enough addresses to wrap to >3 lines at width 80
 	var addrs []string
