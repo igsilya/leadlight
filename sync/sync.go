@@ -255,11 +255,11 @@ func (s *Syncer) RequestSync() {
 }
 
 const (
-	syncInterval      = 5 * time.Minute // check for new events
-	activeInterval    = 5 * time.Second // poll interval for all background loops
-	terminalInterval  = 5 * time.Minute // cooldown between terminal-state fetches
-	archiveInterval   = 5 * time.Minute // poll mail archive (Patchwork < 1.3)
-	maintainerRefresh = 24 * time.Hour  // re-fetch project maintainer list
+	syncInterval      = 10 * time.Minute // check for new events
+	activeInterval    = 10 * time.Second // poll interval for all background loops
+	terminalInterval  = 10 * time.Minute // cooldown between terminal-state fetches
+	archiveInterval   = 10 * time.Minute // poll mail archive (Patchwork < 1.3)
+	maintainerRefresh = 24 * time.Hour   // re-fetch project maintainer list
 
 	// eventBackfillWindow caps how far back the first (cursorless) per-category
 	// event walk scans. Without it the walk would page through most of event
