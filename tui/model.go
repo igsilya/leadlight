@@ -248,14 +248,17 @@ type Model struct {
 	// the prompt and keeps the matches highlighted. searchCursor
 	// only means anything while the prompt is open: commitSearch
 	// leaves it stale and startSearch zeroes it again.
-	searchInput     bool
-	searchText      string
-	searchCursor    int // rune index into searchText, where inserts land
-	searchRegex     *regexp.Regexp
-	viewportMatcher searchMatcher
-	searchOrder     []matchRef // every match, in reading order
-	searchIdx       int        // index into searchOrder, -1 when none
-	searchOrigin    int        // viewport offset when the prompt opened
+	searchInput      bool
+	searchText       string
+	searchCursor     int // rune index into searchText, where inserts land
+	searchRegex      *regexp.Regexp
+	viewportMatcher  searchMatcher
+	searchOrder      []matchRef // every match, in reading order
+	searchIdx        int        // index into searchOrder, -1 when none
+	searchHistory    []string
+	searchHistoryIdx int    // -1 = typing new query, 0+ = browsing history
+	searchDraft      string // query being typed, stashed while browsing
+	searchOrigin     int    // viewport offset when the prompt opened
 
 	logConsole   bool
 	logFocused   bool
@@ -307,6 +310,7 @@ func NewModel(d *db.DB, states []string, token string) *Model {
 		highlightAnimating:   true,
 		cachedRenderedRows:   map[int]*seriesRowCache{},
 	}
+	m.loadSearchHistory()
 	m.reloadData()
 	return m
 }

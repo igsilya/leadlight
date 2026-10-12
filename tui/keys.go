@@ -414,6 +414,27 @@ func (m *Model) handleSearchInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.commitSearch()
 	case tea.KeyEsc:
 		m.cancelSearch()
+	case tea.KeyUp:
+		if len(m.searchHistory) > 0 {
+			if m.searchHistoryIdx == -1 {
+				// Leaving the query being typed: keep it so that
+				// browsing back down restores it.
+				m.searchDraft = m.searchText
+			}
+			if m.searchHistoryIdx < len(m.searchHistory)-1 {
+				m.searchHistoryIdx++
+			}
+			m.setSearchQuery(m.searchHistory[m.searchHistoryIdx])
+		}
+	case tea.KeyDown:
+		if m.searchHistoryIdx > 0 {
+			m.searchHistoryIdx--
+			m.setSearchQuery(m.searchHistory[m.searchHistoryIdx])
+		} else if m.searchHistoryIdx == 0 {
+			m.searchHistoryIdx = -1
+			m.setSearchQuery(m.searchDraft)
+		}
+
 	// Moving the cursor leaves the query alone, so none of these
 	// re-run the search: updateSearchMatches would drop back to the
 	// first match and scroll the body out from under the reader.
@@ -490,6 +511,8 @@ func (m *Model) handleSearchNavKey(key string) bool {
 			}
 		case m.searchText != "":
 			// A search that matched nothing still owns n and N.
+		case len(m.searchHistory) > 0:
+			m.recallLastSearch(key == "N")
 		default:
 			return false
 		}
