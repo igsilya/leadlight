@@ -6,6 +6,7 @@ package tui
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -142,12 +143,20 @@ type compareMark struct {
 
 type compareSide struct {
 	mark    compareMark
-	lines   []string
-	kinds   []diffLineKind
+	doc     *renderedDoc
+	matcher searchMatcher
 	patches []comparePatch
 	cover   *ParsedMbox
 	idx     int    // -1 = cover, 0+ = patch index
 	ver     string // "v1", "v2", etc.
+}
+
+// searchMatch is one match in logical coordinates: a rune range
+// inside an unwrapped source line of a renderedDoc.
+type searchMatch struct {
+	line  int
+	start int // rune offset, inclusive
+	end   int // rune offset, exclusive
 }
 
 func highlightAnimTickCmd() tea.Cmd {
@@ -221,7 +230,7 @@ type Model struct {
 	viewComments    []CommentInfo
 	viewCommentIdx  int // -1 = patch/cover, 0+ = comment
 	viewSourceLines map[string]bool
-	viewportLines   []string
+	viewportDoc     *renderedDoc
 	viewportLoading bool
 	viewportOffset  int
 	viewExpanded    bool
@@ -232,6 +241,21 @@ type Model struct {
 	compareCount     int // 0, 1, or 2
 	comparePrefix    int // 0=none, 1=left, 2=right (for 1/2+arrow)
 	compareDiffCache map[[2]int]*compareCacheEntry
+
+	// Search state, shared by the patch and compare views.
+	// searchInput is true only while the query is being typed; an
+	// active search is one with searchRegex != nil, which outlives
+	// the prompt and keeps the matches highlighted.
+	searchInput      bool
+	searchText       string
+	searchRegex      *regexp.Regexp
+	viewportMatcher  searchMatcher
+	searchOrder      []matchRef // every match, in reading order
+	searchIdx        int        // index into searchOrder, -1 when none
+	searchHistory    []string
+	searchHistoryIdx int    // -1 = typing new query, 0+ = browsing history
+	searchDraft      string // query being typed, stashed while browsing
+	searchOrigin     int    // viewport offset when the prompt opened
 
 	logConsole   bool
 	logFocused   bool
@@ -283,6 +307,7 @@ func NewModel(d *db.DB, states []string, token string) *Model {
 		highlightAnimating:   true,
 		cachedRenderedRows:   map[int]*seriesRowCache{},
 	}
+	m.loadSearchHistory()
 	m.reloadData()
 	return m
 }
@@ -696,6 +721,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.invalidateAllCaches()
 		if m.viewMode == viewPatch {
 			m.refreshViewport()
+			// Rewrapping moved every row, so the match the counter
+			// points at is no longer where it was.
+			m.scrollToMatch(m.searchIdx)
 		} else if m.viewMode == viewCompare {
 			m.compareDiffCache = nil
 			m.buildCompareContent()
@@ -706,6 +734,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.viewportOffset > maxOffset {
 				m.viewportOffset = maxOffset
 			}
+			m.scrollToMatch(m.searchIdx)
 		}
 		return m, nil
 
@@ -716,6 +745,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// setViewportDoc replaces the content of the patch view. Going
+// through here rather than assigning the field means the search
+// cannot be left holding matches from a document that is no longer
+// on screen.
+func (m *Model) setViewportDoc(d *renderedDoc) {
+	m.viewportDoc = d
+	m.rescanSearch()
+}
+
 func (m *Model) refreshViewport() {
 	if m.db == nil {
 		return
@@ -724,9 +762,8 @@ func (m *Model) refreshViewport() {
 	// If viewing a comment, re-render at the new width
 	if m.viewCommentIdx >= 0 && m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
-		formatted := FormatComment(
-			comment, m.width, !m.viewExpanded, m.viewSourceLines)
-		m.viewportLines = splitLines(formatted)
+		m.setViewportDoc(formatCommentDoc(
+			comment, m.width, !m.viewExpanded, m.viewSourceLines))
 		return
 	}
 	if m.viewingCoverID != 0 {
@@ -794,10 +831,6 @@ func (m *Model) refreshViewportComments() {
 			}
 		}
 	}
-}
-
-func splitLines(content string) []string {
-	return strings.Split(content, "\n")
 }
 
 func (m *Model) getVisibleItems() []visibleItem {

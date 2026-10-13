@@ -1520,8 +1520,8 @@ func TestOpenSeriesView_CoverLetter(t *testing.T) {
 	if m.viewingCoverID == 0 {
 		t.Error("viewingCoverID should be set")
 	}
-	if len(m.viewportLines) == 0 {
-		t.Error("viewportLines should have content")
+	if m.viewportDoc.Len() == 0 {
+		t.Error("viewportDoc should have content")
 	}
 }
 
@@ -1584,7 +1584,7 @@ func TestCommentNavigation(t *testing.T) {
 		{ID: 2, Submitter: "Dolor", Date: "2026-03-14",
 			Subject: "Re: patch", Content: "Agreed"},
 	}
-	m.viewportLines = []string{"patch content"}
+	m.viewportDoc = docFromLines("patch content")
 
 	// Right → first comment
 	m = pressSpecialKey(m, tea.KeyRight)
@@ -1617,7 +1617,7 @@ func TestCommentNavigation_NoComments(t *testing.T) {
 	m.viewingPatchID = 100
 	m.viewCommentIdx = -1
 	m.viewComments = nil
-	m.viewportLines = []string{"content"}
+	m.viewportDoc = docFromLines("content")
 
 	// Right should do nothing
 	m = pressSpecialKey(m, tea.KeyRight)
@@ -2347,7 +2347,7 @@ func TestSeriesRowCache_StaleAge(t *testing.T) {
 
 func TestRenderPatchView_NoTrailingSpaces(t *testing.T) {
 	m := testModel()
-	m.viewportLines = []string{
+	m.viewportDoc = docFromLines(
 		"Subject: Lorem ipsum dolor sit amet",
 		"From: Lorem <lorem@ipsum.example>",
 		"",
@@ -2356,7 +2356,7 @@ func TestRenderPatchView_NoTrailingSpaces(t *testing.T) {
 		"  indented context line",
 		"+ added line",
 		"- removed line",
-	}
+	)
 
 	output := m.renderPatchView()
 	// The status bar is the last line — check all lines above it
@@ -2387,10 +2387,11 @@ func TestRenderPatchView_LineCount(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m.viewportOffset = 0
-			m.viewportLines = make([]string, tt.numLines)
-			for i := range m.viewportLines {
-				m.viewportLines[i] = fmt.Sprintf("line %d", i)
+			docLines := make([]string, tt.numLines)
+			for i := range docLines {
+				docLines[i] = fmt.Sprintf("line %d", i)
 			}
+			m.viewportDoc = docFromLines(docLines...)
 
 			output := m.renderPatchView()
 			lines := strings.Split(output, "\n")
@@ -2537,14 +2538,14 @@ func TestComparePrefixRight(t *testing.T) {
 }
 
 func TestCompareAlignSections(t *testing.T) {
-	a := []string{"line1", "line2"}
-	b := []string{"line1", "line2", "line3", "line4"}
-	padToEqual(&a, &b)
-	if len(a) != len(b) {
-		t.Errorf("len(a)=%d, len(b)=%d, should be equal", len(a), len(b))
+	a := docFromLines("line1", "line2")
+	b := docFromLines("line1", "line2", "line3", "line4")
+	padDocsToEqual(a, b)
+	if a.Len() != b.Len() {
+		t.Errorf("a.Len()=%d, b.Len()=%d, should be equal", a.Len(), b.Len())
 	}
-	if len(a) != 4 {
-		t.Errorf("len(a)=%d, want 4", len(a))
+	if a.Len() != 4 {
+		t.Errorf("a.Len()=%d, want 4", a.Len())
 	}
 }
 
@@ -2766,14 +2767,14 @@ func TestResizePreservesCommentView(t *testing.T) {
 	m.viewCommentIdx = 0
 	m.switchToComment()
 
-	contentBefore := strings.Join(m.viewportLines, "\n")
+	contentBefore := m.viewportDoc.String()
 	if !strings.Contains(contentBefore, "Ipsum dolor") {
 		t.Fatal("should be showing comment content")
 	}
 
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 
-	contentAfter := strings.Join(m.viewportLines, "\n")
+	contentAfter := m.viewportDoc.String()
 	if !strings.Contains(contentAfter, "Ipsum dolor") {
 		t.Error("resize should preserve comment view")
 	}
@@ -2798,11 +2799,11 @@ func TestResizePreservesCoverView(t *testing.T) {
 	m.width = 40 // narrow — forces wrapping
 	m.refreshViewport()
 
-	linesBefore := len(m.viewportLines)
+	linesBefore := m.viewportDoc.Len()
 	if linesBefore == 0 {
 		t.Fatal("should have viewport content")
 	}
-	contentBefore := strings.Join(m.viewportLines, "\n")
+	contentBefore := m.viewportDoc.String()
 	if !strings.Contains(contentBefore, "Amet consectetur") {
 		t.Fatal("should be showing cover content")
 	}
@@ -2810,8 +2811,8 @@ func TestResizePreservesCoverView(t *testing.T) {
 	// Resize wider — content should re-wrap with fewer lines
 	m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
 
-	linesAfter := len(m.viewportLines)
-	contentAfter := strings.Join(m.viewportLines, "\n")
+	linesAfter := m.viewportDoc.Len()
+	contentAfter := m.viewportDoc.String()
 	if !strings.Contains(contentAfter, "Amet consectetur") {
 		t.Error("resize should preserve cover view")
 	}
@@ -2877,10 +2878,10 @@ func TestOpenSeriesView_PlaceholderWhenNoDetail(t *testing.T) {
 	if !m.viewportLoading {
 		t.Error("viewportLoading should be true")
 	}
-	if len(m.viewportLines) != 1 ||
-		m.viewportLines[0] != "Fetching series details..." {
-		t.Errorf("viewport = %v, want placeholder",
-			m.viewportLines)
+	if m.viewportDoc.Len() != 1 ||
+		m.viewportDoc.Line(0) != "Fetching series details..." {
+		t.Errorf("viewport = %q, want placeholder",
+			m.viewportDoc.String())
 	}
 	if !fetchCalled {
 		t.Error("FetchSeriesDetail should have been called")
@@ -2893,7 +2894,7 @@ func TestSyncUpdateMsg_RefreshesLoadingViewport(t *testing.T) {
 	m.viewMode = viewPatch
 	m.viewingCoverID = 50
 	m.viewportLoading = true
-	m.viewportLines = []string{"Fetching series details..."}
+	m.viewportDoc = docFromLines("Fetching series details...")
 
 	// Save a cover so refreshViewport can load it
 	d.SaveCover(db.CoverRow{
@@ -2908,7 +2909,7 @@ func TestSyncUpdateMsg_RefreshesLoadingViewport(t *testing.T) {
 	if m.viewportLoading {
 		t.Error("viewportLoading should be cleared")
 	}
-	content := strings.Join(m.viewportLines, "\n")
+	content := m.viewportDoc.String()
 	if !strings.Contains(content, "Lorem cover content") {
 		t.Error("viewport should show cover content after refresh")
 	}
@@ -2919,11 +2920,11 @@ func TestSyncUpdateMsg_NoRefreshWhenNotLoading(t *testing.T) {
 	m.viewMode = viewPatch
 	m.viewingPatchID = 100
 	m.viewportLoading = false
-	m.viewportLines = []string{"Existing content"}
+	m.viewportDoc = docFromLines("Existing content")
 
 	m.Update(SyncUpdateMsg{SeriesIDs: []int{50}})
 
-	if m.viewportLines[0] != "Existing content" {
+	if m.viewportDoc.Line(0) != "Existing content" {
 		t.Error("viewport should not be refreshed when not loading")
 	}
 }
@@ -2955,14 +2956,14 @@ func TestCompareView_RefreshesOnSync(t *testing.T) {
 	if m.viewMode != viewCompare {
 		t.Fatal("should be in compare view")
 	}
-	linesBefore := len(m.compare[0].lines)
+	linesBefore := m.compare[0].doc.Len()
 
 	// Simulate fetching detail for a patch
 	d.UpdatePatchDetail(100, "Lorem ipsum dolor sit amet.",
 		"diff --git a/lorem b/lorem", "", "")
 	m.Update(SyncUpdateMsg{SeriesIDs: []int{50}})
 
-	linesAfter := len(m.compare[0].lines)
+	linesAfter := m.compare[0].doc.Len()
 	if linesAfter <= linesBefore {
 		t.Errorf("compare content should have more lines after detail fetch: %d -> %d",
 			linesBefore, linesAfter)
@@ -3032,22 +3033,23 @@ func TestCompareView_DiffKindsPopulated(t *testing.T) {
 	if m.viewMode != viewCompare {
 		t.Fatal("should be in compare view")
 	}
-	// Both sides should have kinds populated.
-	if len(m.compare[0].kinds) == 0 {
-		t.Fatal("left side kinds should be populated")
+	// Both sides should have rows.
+	if m.compare[0].doc.Len() == 0 {
+		t.Fatal("left side should be populated")
 	}
-	if len(m.compare[1].kinds) == 0 {
-		t.Fatal("right side kinds should be populated")
+	if m.compare[1].doc.Len() == 0 {
+		t.Fatal("right side should be populated")
 	}
-	if len(m.compare[0].kinds) != len(m.compare[0].lines) {
-		t.Errorf("left kinds/lines mismatch: %d vs %d",
-			len(m.compare[0].kinds), len(m.compare[0].lines))
+	// The two columns must stay row-aligned.
+	if m.compare[0].doc.Len() != m.compare[1].doc.Len() {
+		t.Errorf("column row counts differ: %d vs %d",
+			m.compare[0].doc.Len(), m.compare[1].doc.Len())
 	}
 	// There should be at least some non-unchanged lines since
 	// the body and diff sections differ.
 	hasChanged := false
-	for _, k := range m.compare[0].kinds {
-		if k != diffUnchanged {
+	for row := 0; row < m.compare[0].doc.Len(); row++ {
+		if m.compare[0].doc.kindAt(row) != diffUnchanged {
 			hasChanged = true
 			break
 		}
@@ -3099,9 +3101,9 @@ func TestCompareView_DiffCacheHit(t *testing.T) {
 		t.Fatal("cache should be populated after buildCompareContent")
 	}
 	// Rebuild should use cache (same idx pair).
-	linesBefore := m.compare[0].lines
+	linesBefore := m.compare[0].doc.Len()
 	m.buildCompareContent()
-	if len(m.compare[0].lines) != len(linesBefore) {
+	if m.compare[0].doc.Len() != linesBefore {
 		t.Error("cache rebuild should produce same result")
 	}
 }
@@ -3148,21 +3150,21 @@ func TestCompareView_CacheInvalidatedOnResize(t *testing.T) {
 		t.Fatal("cache should be populated")
 	}
 
-	linesBefore := make([]string, len(m.compare[0].lines))
-	copy(linesBefore, m.compare[0].lines)
+	linesBefore := splitLines(m.compare[0].doc.String())
 
 	// Resize to a much narrower width — wrapping changes the output.
 	result, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 20})
 	m = result.(*Model)
 
-	if len(m.compare[0].lines) == 0 {
-		t.Fatal("lines should be populated after resize")
+	if m.compare[0].doc.Len() == 0 {
+		t.Fatal("rows should be populated after resize")
 	}
 	// Content should differ: narrower width produces more wrapped lines.
-	same := len(linesBefore) == len(m.compare[0].lines)
+	linesAfter := splitLines(m.compare[0].doc.String())
+	same := len(linesBefore) == len(linesAfter)
 	if same {
 		for i := range linesBefore {
-			if linesBefore[i] != m.compare[0].lines[i] {
+			if linesBefore[i] != linesAfter[i] {
 				same = false
 				break
 			}

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,7 +25,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.applyState != applyIdle {
 		return m.handleApplyKey(msg)
 	}
-	if key == "`" && !m.filterEditing {
+	if key == "`" && !m.filterEditing && !m.searchInput {
 		m.logConsole = !m.logConsole
 		m.logFocused = false
 		if m.logConsole && m.LogBuf != nil {
@@ -34,7 +36,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateAllCaches()
 		return m, nil
 	}
-	if m.logConsole && key == "tab" {
+	if m.logConsole && key == "tab" && !m.searchInput {
 		m.logFocused = !m.logFocused
 		return m, nil
 	}
@@ -392,16 +394,149 @@ func (m *Model) handleSelectorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleSearchInputKey handles keys typed at the "/" prompt, before the
+// query has been committed. Every key goes to the prompt; none of them
+// reach the bindings of the view underneath.
+func (m *Model) handleSearchInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Dispatch on the key type rather than on its printed name.
+	// Bubbletea reports every rune it can read at once as a single
+	// KeyRunes message, so typing "up" quickly arrives as one message
+	// whose name is "up"; matching on names would take that for the
+	// arrow key and recall a query instead of inserting the text.
+	if msg.Alt {
+		return m, nil
+	}
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.commitSearch()
+	case tea.KeyEsc:
+		m.cancelSearch()
+	case tea.KeyUp:
+		if len(m.searchHistory) > 0 {
+			if m.searchHistoryIdx == -1 {
+				// Leaving the query being typed: keep it so that
+				// browsing back down restores it.
+				m.searchDraft = m.searchText
+			}
+			if m.searchHistoryIdx < len(m.searchHistory)-1 {
+				m.searchHistoryIdx++
+			}
+			m.searchText = m.searchHistory[m.searchHistoryIdx]
+			m.updateSearchMatches()
+		}
+	case tea.KeyDown:
+		if m.searchHistoryIdx > 0 {
+			m.searchHistoryIdx--
+			m.searchText = m.searchHistory[m.searchHistoryIdx]
+			m.updateSearchMatches()
+		} else if m.searchHistoryIdx == 0 {
+			m.searchHistoryIdx = -1
+			m.searchText = m.searchDraft
+			m.updateSearchMatches()
+		}
+	case tea.KeyBackspace:
+		if m.searchText == "" {
+			m.cancelSearch()
+			break
+		}
+		_, size := utf8.DecodeLastRuneInString(m.searchText)
+		m.searchText = m.searchText[:len(m.searchText)-size]
+		m.searchHistoryIdx = -1
+		m.updateSearchMatches()
+	case tea.KeyRunes, tea.KeySpace:
+		// Typed characters and pasted text both arrive as runes; a
+		// paste just carries more than one of them. Anything that is
+		// not printable (control characters, newlines in a multi-line
+		// paste) has no place in a single-line query.
+		var b strings.Builder
+		b.WriteString(m.searchText)
+		added := 0
+		for _, r := range msg.Runes {
+			if unicode.IsPrint(r) {
+				b.WriteRune(r)
+				added++
+			}
+		}
+		if added == 0 {
+			break
+		}
+		m.searchText = b.String()
+		m.searchHistoryIdx = -1
+		m.updateSearchMatches()
+	}
+	return m, nil
+}
+
+// handleSearchNavKey handles the keys that open the search prompt and
+// step through the matches of a committed query. It reports whether the
+// key was consumed; a key that would do nothing is left for the view to
+// bind to something else.
+func (m *Model) handleSearchNavKey(key string) bool {
+	switch key {
+	case "/":
+		m.startSearch()
+		return true
+	case "n", "N":
+		switch {
+		case len(m.searchOrder) > 0:
+			if key == "n" {
+				m.nextSearchMatch()
+			} else {
+				m.prevSearchMatch()
+			}
+		case m.searchText != "":
+			// A search that matched nothing still owns n and N.
+		case len(m.searchHistory) > 0:
+			m.recallLastSearch(key == "N")
+		default:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// exitPatchView returns to the patch list, dropping everything that
+// only describes the item being viewed.
+func (m *Model) exitPatchView() {
+	m.clearSearch()
+	m.viewMode = viewTable
+	m.viewingPatchID = 0
+	m.viewingCoverID = 0
+	m.viewComments = nil
+	m.viewCommentIdx = -1
+	m.setViewportDoc(nil)
+	m.viewExpanded = false
+}
+
+// exitCompareView returns to the patch list and unmarks both sides.
+func (m *Model) exitCompareView() {
+	m.clearSearch()
+	m.viewMode = viewTable
+	m.compareCount = 0
+}
+
 func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc":
-		m.viewMode = viewTable
-		m.viewingPatchID = 0
-		m.viewingCoverID = 0
-		m.viewComments = nil
-		m.viewCommentIdx = -1
-		m.viewportLines = nil
-		m.viewExpanded = false
+	key := msg.String()
+
+	if m.searchInput {
+		return m.handleSearchInputKey(msg)
+	}
+	if m.handleSearchNavKey(key) {
+		return m, nil
+	}
+
+	switch key {
+	case "q":
+		// First press of q drops a search that is showing matches;
+		// only the second one leaves the view. esc always leaves.
+		if m.searchText != "" && len(m.searchOrder) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
+		m.exitPatchView()
+	case "esc":
+		m.exitPatchView()
 	case "e":
 		m.viewExpanded = !m.viewExpanded
 		m.switchToComment()
@@ -655,7 +790,7 @@ func (m *Model) viewportScroll(delta int) {
 	if m.viewportOffset < 0 {
 		m.viewportOffset = 0
 	}
-	maxOffset := len(m.viewportLines) - m.viewportVisibleLines()
+	maxOffset := m.viewportDoc.Len() - m.viewportVisibleLines()
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -665,7 +800,7 @@ func (m *Model) viewportScroll(delta int) {
 }
 
 func (m *Model) viewportScrollToEnd() {
-	m.viewportOffset = len(m.viewportLines) - m.viewportVisibleLines()
+	m.viewportOffset = m.viewportDoc.Len() - m.viewportVisibleLines()
 	if m.viewportOffset < 0 {
 		m.viewportOffset = 0
 	}
@@ -674,12 +809,15 @@ func (m *Model) viewportScrollToEnd() {
 func (m *Model) buildViewportContent(
 	parsed ParsedMbox, checks []CheckInfo,
 ) {
-	formatted := FormatMbox(parsed, m.width, !m.viewExpanded)
-	checksSection := FormatChecks(checks, m.width, !m.viewExpanded)
-	if checksSection != "" {
-		formatted = checksSection + "\n" + formatted
+	doc := formatChecksDoc(checks, m.width, !m.viewExpanded)
+	if doc.Len() > 0 {
+		doc.addBlank()
 	}
-	m.viewportLines = splitLines(formatted)
+	headers, body, diff := formatMboxDoc(parsed, m.width, !m.viewExpanded)
+	doc.appendDoc(headers)
+	doc.appendDoc(body)
+	doc.appendDoc(diff)
+	m.setViewportDoc(doc)
 }
 
 func (m *Model) nextComment() {
@@ -734,9 +872,8 @@ func (m *Model) switchToComment() {
 	}
 	if m.viewCommentIdx < len(m.viewComments) {
 		comment := m.viewComments[m.viewCommentIdx]
-		formatted := FormatComment(
-			comment, m.width, !m.viewExpanded, m.viewSourceLines)
-		m.viewportLines = splitLines(formatted)
+		m.setViewportDoc(formatCommentDoc(
+			comment, m.width, !m.viewExpanded, m.viewSourceLines))
 	}
 }
 
@@ -760,7 +897,7 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 			m.viewportOffset = 0
 			m.viewSourceLines = nil
 			m.viewportLoading = true
-			m.viewportLines = []string{"Fetching series details..."}
+			m.setViewportDoc(docFromLines("Fetching series details..."))
 			m.FetchSeriesDetail(seriesID)
 			return nil
 		}
@@ -790,7 +927,7 @@ func (m *Model) openSeriesView(item visibleItem) tea.Cmd {
 			m.buildViewportContent(parsed, nil)
 		} else {
 			m.viewportLoading = true
-			m.viewportLines = []string{"Fetching..."}
+			m.setViewportDoc(docFromLines("Fetching..."))
 			if m.FetchCoverDetail != nil {
 				m.FetchCoverDetail(cover.ID)
 			}
@@ -867,7 +1004,7 @@ func (m *Model) openPatchView(item visibleItem) tea.Cmd {
 		log.Printf("TUI: detail not fetched for patch %d %q",
 			patchID, row.Name)
 		m.viewportLoading = true
-		m.viewportLines = []string{"Fetching..."}
+		m.setViewportDoc(docFromLines("Fetching..."))
 		if m.FetchPatchDetail != nil {
 			m.FetchPatchDetail(patchID)
 		}
@@ -983,10 +1120,25 @@ func (m *Model) compareMinIdx() int {
 func (m *Model) handleCompareKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	if m.searchInput {
+		return m.handleSearchInputKey(msg)
+	}
+	if m.handleSearchNavKey(key) {
+		return m, nil
+	}
+
 	switch key {
-	case "q", "esc":
-		m.viewMode = viewTable
-		m.compareCount = 0
+	case "q":
+		// First press of q drops a search that is showing matches;
+		// only the second one leaves the view. esc always leaves.
+		if m.searchText != "" && len(m.searchOrder) > 0 {
+			m.clearSearch()
+			return m, nil
+		}
+		m.exitCompareView()
+		return m, nil
+	case "esc":
+		m.exitCompareView()
 		return m, nil
 
 	case "up", "k":
@@ -1059,7 +1211,7 @@ func (m *Model) clampCompareIdx(idx int, patches []comparePatch, cover *ParsedMb
 }
 
 func (m *Model) compareMaxLines() int {
-	return max(len(m.compare[0].lines), len(m.compare[1].lines))
+	return max(m.compare[0].doc.Len(), m.compare[1].doc.Len())
 }
 
 func (m *Model) compareScroll(delta int) {
