@@ -214,6 +214,35 @@ func (m *Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		log.Println("TUI: key 's' pressed")
 		m.openStateSelector()
 
+	case "w":
+		items := m.getVisibleItems()
+		if m.selectedRow < len(items) {
+			item := items[m.selectedRow]
+			if item.isSubRow {
+				// Save single patch
+				patchID, _ := strconv.Atoi(item.data[ColID])
+				filepath, err := m.savePatch(patchID, "")
+				if err != nil {
+					m.Status.SetTimed(status.Info,
+						fmt.Sprintf("Save failed: %v", err), 5*time.Second)
+				} else {
+					m.Status.SetTimed(status.Info,
+						fmt.Sprintf("Saved %s", filepath), 3*time.Second)
+				}
+			} else {
+				// Save series
+				seriesID, _ := strconv.Atoi(item.data[ColID])
+				seriesDir, err := m.saveSeries(seriesID)
+				if err != nil {
+					m.Status.SetTimed(status.Info,
+						fmt.Sprintf("Save failed: %v", err), 5*time.Second)
+				} else {
+					m.Status.SetTimed(status.Info,
+						fmt.Sprintf("Saved to %s/", seriesDir), 3*time.Second)
+				}
+			}
+		}
+
 	case "d":
 		log.Println("TUI: key 'd' pressed")
 		m.openDelegateSelector()
@@ -405,6 +434,17 @@ func (m *Model) handleViewportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		m.viewExpanded = !m.viewExpanded
 		m.switchToComment()
+	case "w":
+		if m.viewingPatchID != 0 {
+			filepath, err := m.savePatch(m.viewingPatchID, "")
+			if err != nil {
+				m.Status.SetTimed(status.Info,
+					fmt.Sprintf("Save failed: %v", err), 5*time.Second)
+			} else {
+				m.Status.SetTimed(status.Info,
+					fmt.Sprintf("Saved %s", filepath), 3*time.Second)
+			}
+		}
 	case "up", "k":
 		m.viewportScroll(-1)
 	case "down", "j":
