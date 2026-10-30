@@ -642,6 +642,7 @@ func (s *Syncer) incrementalSync(ctx context.Context) {
 
 func parseEventDate(s string) time.Time {
 	for _, layout := range []string{
+		time.RFC3339,
 		"2006-01-02T15:04:05.999999",
 		"2006-01-02T15:04:05",
 		"2006-01-02",

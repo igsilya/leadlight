@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -494,7 +493,7 @@ func replaceControlChars(s string) string {
 }
 
 func formatDate(s string) string {
-	t, err := time.Parse("2006-01-02T15:04:05", s)
+	t, err := parseDate(s)
 	if err != nil {
 		return s
 	}

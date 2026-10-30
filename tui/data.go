@@ -494,12 +494,26 @@ func aggregateState(patches []db.PatchRow) string {
 	return "mixed"
 }
 
+func parseDate(dateStr string) (time.Time, error) {
+	// Handles "2026-10-30T11:45:08+11:00" and "2026-10-30T11:45:08Z".
+	t, err := time.Parse(time.RFC3339, dateStr)
+	if err == nil {
+		return t, nil
+	}
+	// Handles "2026-10-30T11:45:08" (no zone, assumed UTC).
+	t, err = time.Parse("2006-01-02T15:04:05", dateStr)
+	if err == nil {
+		return t, nil
+	}
+	return time.Time{}, err
+}
+
 func formatAge(dateStr string) string {
-	t, err := time.Parse("2006-01-02T15:04:05", dateStr)
+	t, err := parseDate(dateStr)
 	if err != nil {
 		return "?"
 	}
-	now := time.Now().UTC()
+	now := time.Now()
 	d := now.Sub(t)
 	switch {
 	case d < time.Hour:
@@ -657,11 +671,6 @@ func formatSeriesChecks(patches []db.PatchRow) string {
 	return formatCount(pass) + " " + formatCount(fail) + " " + formatCount(warn)
 }
 
-func parseDate(dateStr string) time.Time {
-	t, _ := time.Parse("2006-01-02T15:04:05", dateStr)
-	return t
-}
-
 func colorForSeries(
 	s db.SeriesRow, patches []db.PatchRow,
 	tags []db.TagRow, commentCount int,
@@ -712,7 +721,8 @@ func commentReviewTags(tags []db.TagRow) map[string]bool {
 // activity. Called after terminal and reviewed states are ruled out.
 // Thresholds: >14 days = "old", >60 days = "very old" (likely abandoned).
 func colorByAge(date string, hasComments bool) string {
-	age := time.Since(parseDate(date))
+	t, _ := parseDate(date)
+	age := time.Since(t)
 	old := age > 14*24*time.Hour
 	veryOld := age > 60*24*time.Hour
 	switch {

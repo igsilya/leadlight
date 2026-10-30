@@ -41,6 +41,15 @@ func TestFormatAge_Hours(t *testing.T) {
 	}
 }
 
+func TestFormatAge_Hours_RFC3339_AEST(t *testing.T) {
+	d := time.Now().UTC().Add(-3 * time.Hour)
+	loc := time.FixedZone("AEST", 11*3600)
+	got := formatAge(d.In(loc).Format(time.RFC3339))
+	if got != "3h" {
+		t.Errorf("got %q, want 3h", got)
+	}
+}
+
 func TestFormatAge_Days(t *testing.T) {
 	d := time.Now().UTC().Add(-2 * 24 * time.Hour)
 	got := formatAge(d.Format("2006-01-02T15:04:05"))
