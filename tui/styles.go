@@ -54,6 +54,7 @@ var (
 	helpDimStyle           lipgloss.Style
 	statusStyle            lipgloss.Style
 	normalOptionStyle      lipgloss.Style
+	searchCursorStyle      lipgloss.Style
 	highlightedOptionStyle lipgloss.Style
 	optionNumStyle         lipgloss.Style
 	cellHighlightStyle     lipgloss.Style
@@ -87,6 +88,8 @@ var (
 	compareSepStyle        lipgloss.Style
 	compareAddBg           lipgloss.Color
 	compareDelBg           lipgloss.Color
+	searchCurrentStyle     lipgloss.Style
+	searchOtherStyle       lipgloss.Style
 )
 
 type gradientEntry struct{ bg, fg string }
@@ -139,6 +142,11 @@ func buildStyles(t *theme) {
 	helpDimStyle = fg(t.HelpDimFg)
 	statusStyle = fg(t.StatusFg)
 	normalOptionStyle = fg(t.NormalOptionFg)
+	// Underline rather than a colour of its own, so the cursor is the
+	// same mark the filter prompt appends as a literal "_": past the
+	// end of the query it underlines a space and looks identical,
+	// and inside the query it underlines the rune it sits on.
+	searchCursorStyle = normalOptionStyle.Underline(true)
 	highlightedOptionStyle = hlStyle
 	optionNumStyle = fg(t.OptionNumFg)
 	cellHighlightStyle = hlStyle
@@ -172,6 +180,13 @@ func buildStyles(t *theme) {
 	compareSepStyle = fg(t.CompareSepFg)
 	compareAddBg = lipgloss.Color(t.CompareAddBg)
 	compareDelBg = lipgloss.Color(t.CompareDelBg)
+	searchCurrentStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color(t.SearchCurrentBg)).
+		Foreground(lipgloss.Color(t.SearchCurrentFg)).
+		Bold(true)
+	searchOtherStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color(t.SearchOtherBg)).
+		Foreground(lipgloss.Color(t.SearchOtherFg))
 
 	bgStyles = map[string]*cachedBgStyle{}
 	gradientPalettes = map[string][256]gradientEntry{}
