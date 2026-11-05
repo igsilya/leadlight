@@ -550,3 +550,165 @@ func constructApplyMbox(patches []applyPatch) (string, error) {
 	}
 	return buf.String(), nil
 }
+
+// patchFilename generates a git format-patch style filename from a
+// patch subject, converting "[PATCH v2 3/5] Fix bug in parser" to
+// "0003-Fix-bug-in-parser.patch".
+func patchFilename(name string, num int) string {
+	// Extract just the subject, stripping [PATCH ...] prefix
+	subject := name
+	if idx := strings.Index(name, "]"); idx >= 0 && strings.HasPrefix(strings.TrimSpace(name), "[") {
+		subject = strings.TrimSpace(name[idx+1:])
+	}
+
+	// Replace spaces with hyphens, remove special chars
+	filename := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		if r == ' ' || r == '_' {
+			return '-'
+		}
+		return -1 // drop character
+	}, subject)
+
+	// Collapse multiple hyphens
+	for strings.Contains(filename, "--") {
+		filename = strings.ReplaceAll(filename, "--", "-")
+	}
+
+	// Trim hyphens from ends
+	filename = strings.Trim(filename, "-")
+
+	// Truncate if too long
+	if len(filename) > 72 {
+		filename = filename[:72]
+		filename = strings.TrimRight(filename, "-")
+	}
+
+	// Add numeric prefix if provided
+	if num > 0 {
+		return fmt.Sprintf("%04d-%s.patch", num, filename)
+	}
+	return filename + ".patch"
+}
+
+// savePatch saves a single patch to disk in mbox format.
+// If dirPath is empty, uses the configured patch directory or current directory.
+// Returns the full path to the saved file.
+func (m *Model) savePatch(patchID int, dirPath string) (string, error) {
+	row, err := m.db.GetPatch(patchID)
+	if err != nil {
+		return "", fmt.Errorf("get patch: %w", err)
+	}
+	if !row.DetailFetched {
+		return "", fmt.Errorf("patch detail not fetched")
+	}
+
+	// Get tags for this patch
+	patchTags := m.db.GetTagsForPatch(patchID)
+	var original, comment []db.TagRow
+	for _, t := range patchTags {
+		if t.Source == "original" {
+			original = append(original, t)
+		} else if t.Source == "comment" {
+			comment = append(comment, t)
+		}
+	}
+
+	// Build the patch data
+	parsed := BuildParsedMboxFromPatch(*row)
+	body := injectTags(row.Content, comment, original, "")
+
+	patch := applyPatch{
+		From:    parsed.From,
+		Date:    parsed.Date,
+		Subject: parsed.Subject,
+		MsgID:   row.MsgID,
+		Body:    body,
+		Diff:    row.Diff,
+	}
+
+	// Determine save directory
+	saveDir := dirPath
+	if saveDir == "" {
+		// Use configured patch directory
+		saveDir, err = gitops.PatchDirectory()
+		if err != nil {
+			return "", fmt.Errorf("get patch directory: %w", err)
+		}
+	}
+
+	// Generate filename
+	num := patchNumber(row.Name)
+	filename := patchFilename(row.Name, num)
+	filepath := filename
+	if saveDir != "." {
+		filepath = saveDir + "/" + filename
+	}
+
+	// Construct mbox content
+	mboxContent, err := constructApplyMbox([]applyPatch{patch})
+	if err != nil {
+		return "", fmt.Errorf("construct mbox: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(filepath, []byte(mboxContent), 0644); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+
+	log.Printf("[save] Saved patch %d to %s", patchID, filepath)
+	return filepath, nil
+}
+
+// saveSeries saves all patches in a series to a new subdirectory.
+// Returns the path to the series directory.
+func (m *Model) saveSeries(seriesID int) (string, error) {
+	// Get all patches in the series
+	patches := m.db.GetPatchesForSeries(seriesID)
+	if len(patches) == 0 {
+		return "", fmt.Errorf("no patches in series")
+	}
+
+	// Sort patches by number
+	sort.Slice(patches, func(i, j int) bool {
+		return patchNumber(patches[i].Name) < patchNumber(patches[j].Name)
+	})
+
+	// Check if all details are fetched
+	for _, p := range patches {
+		if !p.DetailFetched {
+			return "", fmt.Errorf("patch %d detail not fetched", p.ID)
+		}
+	}
+
+	// Get base patch directory (configured or current)
+	baseDir, err := gitops.PatchDirectory()
+	if err != nil {
+		return "", fmt.Errorf("get patch directory: %w", err)
+	}
+
+	// Create series subdirectory within the patch directory
+	seriesDirName := fmt.Sprintf("series-%d", seriesID)
+	var seriesDir string
+	if baseDir == "." {
+		seriesDir = seriesDirName
+	} else {
+		seriesDir = baseDir + "/" + seriesDirName
+	}
+
+	if err := os.Mkdir(seriesDir, 0755); err != nil {
+		return "", fmt.Errorf("create directory: %w", err)
+	}
+
+	// Save each patch to the series directory
+	for _, p := range patches {
+		if _, err := m.savePatch(p.ID, seriesDir); err != nil {
+			return "", fmt.Errorf("save patch %d: %w", p.ID, err)
+		}
+	}
+
+	log.Printf("[save] Saved %d patches to %s/", len(patches), seriesDir)
+	return seriesDir, nil
+}

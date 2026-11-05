@@ -304,3 +304,54 @@ func TestConstructApplyMbox_EmptyDiff(t *testing.T) {
 		t.Error("should error on empty diff")
 	}
 }
+
+func TestPatchFilename(t *testing.T) {
+	tests := []struct {
+		name string
+		num  int
+		want string
+	}{
+		{
+			"[PATCH 1/3] Fix bug in parser",
+			1,
+			"0001-Fix-bug-in-parser.patch",
+		},
+		{
+			"[PATCH v2 3/5] Add new feature",
+			3,
+			"0003-Add-new-feature.patch",
+		},
+		{
+			"[PATCH] Single patch without number",
+			0,
+			"Single-patch-without-number.patch",
+		},
+		{
+			"[PATCH 10/15] Fix memory leak",
+			10,
+			"0010-Fix-memory-leak.patch",
+		},
+		{
+			"[PATCH] Fix bug with spaces    and    multiple   spaces",
+			0,
+			"Fix-bug-with-spaces-and-multiple-spaces.patch",
+		},
+		{
+			"[PATCH] Fix bug (with) [special] chars! @#$%",
+			0,
+			"Fix-bug-with-special-chars.patch",
+		},
+		{
+			"[PATCH 2/2] " + strings.Repeat("Very long subject line that should be truncated because it exceeds the maximum allowed length for a filename", 2),
+			2,
+			"0002-Very-long-subject-line-that-should-be-truncated-because-it-exceeds-the-m.patch",
+		},
+	}
+	for _, tt := range tests {
+		got := patchFilename(tt.name, tt.num)
+		if got != tt.want {
+			t.Errorf("patchFilename(%q, %d)\n  got:  %q\n  want: %q",
+				tt.name, tt.num, got, tt.want)
+		}
+	}
+}
